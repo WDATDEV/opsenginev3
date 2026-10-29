@@ -1424,7 +1424,7 @@ export class TrackingService {
         })
         .returning();
       if (!created) throw new TrackingError("Could not open that load.");
-      return created;
+      return { id: created.id, message: `${created.reference} has arrived.` };
     });
   }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSession } from "@/components/shell";
 import { Field, Notice, PageTitle, useResource } from "@/components/ui";
 import { ApiError, canManage, post, when } from "@/lib/api";
@@ -41,6 +41,13 @@ export function UnloadingBoard({ client }: { client?: { id: string; name: string
   const [kind, setKind] = useState<"truck" | "container">("truck");
   const [jobId, setJobId] = useState("");
 
+  const openJobs = (jobs.data?.jobs ?? []).filter((job) => job.status !== "done" && (!client || job.clientId === client.id));
+
+  useEffect(() => {
+    if (openJobs.some((job) => job.id === jobId)) return;
+    setJobId(openJobs[0]?.id ?? "");
+  }, [jobId, openJobs]);
+
   async function act(path: string, body: unknown) {
     setError(null);
     setMessage(null);
@@ -48,8 +55,10 @@ export function UnloadingBoard({ client }: { client?: { id: string; name: string
       const result = await post<{ message?: string }>(path, body);
       setMessage(result.message ?? "Saved.");
       board.reload();
+      return true;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not update the load.");
+      return false;
     }
   }
 
@@ -72,20 +81,30 @@ export function UnloadingBoard({ client }: { client?: { id: string; name: string
           className="card mb-6 grid gap-3 p-4 md:grid-cols-5"
           onSubmit={(event) => {
             event.preventDefault();
-            const openJobs = (jobs.data?.jobs ?? []).filter((job) => job.status !== "done" && (!client || job.clientId === client.id));
+            const trailer = reference.trim();
+            if (!trailer) {
+              setMessage(null);
+              setError("Enter the trailer or container number.");
+              return;
+            }
+            if (!jobId) {
+              setMessage(null);
+              setError("Open a job for this client before a load can arrive.");
+              return;
+            }
             void act("/tracking/unloading", {
-              reference,
+              reference: trailer,
               kind,
               dock,
-              jobId: jobId || openJobs[0]?.id,
+              jobId,
+            }).then((saved) => {
+              if (saved) setReference("");
             });
           }}
         >
           <Field label="Job">
             <select className="field" value={jobId} onChange={(event) => setJobId(event.target.value)}>
-              {(jobs.data?.jobs ?? [])
-                .filter((job) => job.status !== "done" && (!client || job.clientId === client.id))
-                .map((job) => (
+              {openJobs.map((job) => (
                   <option key={job.id} value={job.id}>
                     {client ? job.reference : `${job.clientName} · ${job.reference}`}
                   </option>
@@ -93,7 +112,7 @@ export function UnloadingBoard({ client }: { client?: { id: string; name: string
             </select>
           </Field>
           <Field label="Trailer or container">
-            <input className="field" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="TRL-900" />
+            <input className="field" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Trailer number" />
           </Field>
           <Field label="Kind">
             <select className="field" value={kind} onChange={(event) => setKind(event.target.value as "truck" | "container")}>
@@ -131,7 +150,7 @@ function LoadCard({
   load: Board["loads"][number];
   people: { id: string; name: string }[];
   manage: boolean;
-  onAct: (path: string, body: unknown) => Promise<void>;
+  onAct: (path: string, body: unknown) => Promise<boolean>;
 }) {
   const [badge, setBadge] = useState("B-10448");
   const [employeeId, setEmployeeId] = useState(people[0]?.id ?? "");

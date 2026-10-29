@@ -207,8 +207,8 @@ export const receiptLineSchema = z.object({
 });
 
 export const createLoadSchema = z.object({
-  reference: code,
-  jobId: z.string().uuid(),
+  reference: z.string().trim().min(1, "Enter the trailer or container number.").max(40),
+  jobId: z.string().uuid("Choose a job for this load."),
   kind: z.enum(["truck", "container"]),
   dock: z.string().trim().min(1).max(40),
   seal: optionalText,

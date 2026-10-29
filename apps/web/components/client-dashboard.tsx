@@ -32,7 +32,7 @@ export function ClientDashboard() {
       <PageTitle
         kicker="Warehance"
         title="Clients"
-        detail="Add a client once. Turn on the services they use, then view the client. Their jobs, activities, equipment, people, and check-in stay with them."
+        detail="Add a client once, then view them. The menu switches to that client's active services. Main menu brings this list back."
       />
       {clients.error ? <Notice tone="bad">{clients.error}</Notice> : null}
       {message ? <Notice tone="ok">{message}</Notice> : null}

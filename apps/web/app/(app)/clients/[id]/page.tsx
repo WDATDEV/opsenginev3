@@ -1,11 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
-import { useSession } from "@/components/shell";
+import { useReloadClientNav, useSession } from "@/components/shell";
 import { Field, Notice, PageTitle, useResource } from "@/components/ui";
-import { ApiError, CLIENT_SERVICES, canManage, canManageJobs, canOpenService, money, post } from "@/lib/api";
+import { ApiError, CLIENT_SERVICES, canManage, canManageJobs, money, post } from "@/lib/api";
 import type { ClientRecord } from "@/components/client-dashboard";
 
 const UNITS = ["hour", "pallet", "carton", "unit", "sku", "flat"] as const;
@@ -17,6 +16,7 @@ export default function ClientHomePage() {
   const clients = useResource<ClientRecord[]>("/clients");
   const catalog = useResource<Activity[]>("/tracking/activities");
   const user = useSession();
+  const reloadClientNav = useReloadClientNav();
   const client = clients.data?.find((item) => item.id === params.id);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -29,6 +29,7 @@ export default function ClientHomePage() {
       const result = await post<{ message?: string }>(`/clients/${client.id}/services`, { service, enabled });
       setMessage(result.message ?? "Saved.");
       clients.reload();
+      reloadClientNav();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not update that service.");
     }
@@ -42,7 +43,7 @@ export default function ClientHomePage() {
       <PageTitle
         kicker="Warehance"
         title={client.name}
-        detail={`${client.code} uses the services turned on here. View opens that client's own jobs, activities, equipment, people, and check-in.`}
+        detail={`${client.code}: turn a service on and it shows in the menu. Main menu brings back Clients, Floor, and Follow-ups.`}
       />
       {message ? <Notice tone="ok">{message}</Notice> : null}
       {error ? <Notice tone="bad">{error}</Notice> : null}
@@ -51,19 +52,13 @@ export default function ClientHomePage() {
         <ul className="mt-3 divide-y divide-black/5">
           {CLIENT_SERVICES.map(([service, label]) => {
             const on = client.enabledServices.includes(service);
-            const open = on && canOpenService(user?.role, service);
             return (
               <li key={service} className="flex flex-wrap items-center justify-between gap-3 py-3">
                 <div>
                   <p className="font-medium">{label}</p>
-                  <p className="text-sm text-muted">{on ? "On for this client" : "Off"}</p>
+                  <p className="text-sm text-muted">{on ? "In the menu" : "Off"}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {open ? (
-                    <Link className="btn btn-ghost" href={`/clients/${client.id}/${service}`}>
-                      Open
-                    </Link>
-                  ) : null}
                   {canManage(user?.role) ? (
                     <button className="btn btn-primary" type="button" onClick={() => void toggle(service, !on)}>
                       {on ? "Turn off" : "Turn on"}

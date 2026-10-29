@@ -24,7 +24,8 @@ export class JobsController {
   @Post()
   create(
     @CurrentUser() ctx: RequestContext,
-    @Body(new ZodPipe(createJobSchema)) body: { clientId: string; reference: string; title: string },
+    @Body(new ZodPipe(createJobSchema))
+    body: { clientId: string; reference: string; title: string; billBasis?: "time" | "pallet" | "carton" | "sku" | "mixed" },
   ) {
     authorize(ctx, "job.manage");
     return this.jobs.create(ctx.principal, body);

@@ -14,4 +14,10 @@ export class BillingController {
     authorize(ctx, "billing.approve");
     return this.billing.approve(ctx.principal, id);
   }
+
+  @Post("invoices/:id/paid")
+  paid(@CurrentUser() ctx: RequestContext, @Param("id") id: string) {
+    authorize(ctx, "billing.approve");
+    return this.billing.markPaid(ctx.principal, id);
+  }
 }

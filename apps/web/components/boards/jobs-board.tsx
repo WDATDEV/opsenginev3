@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useSession } from "@/components/shell";
 import { Field, Notice, PageTitle, useResource } from "@/components/ui";
-import { ApiError, canApproveCharges, canManageJobs, money, post } from "@/lib/api";
+import { ApiError, BILL_BASES, billBasisLabel, canApproveCharges, canManageJobs, money, post } from "@/lib/api";
 
 type JobTask = {
   id: string;
@@ -24,6 +24,7 @@ type JobBoard = {
     reference: string;
     title: string;
     status: string;
+    billBasis: string;
     clientId: string;
     clientName: string;
     clientCode: string;
@@ -40,6 +41,14 @@ type JobBoard = {
   people: { id: string; name: string }[];
 };
 
+function billNote(basis: string) {
+  if (basis === "time") return "Billed by time. The timer is the bill.";
+  if (basis === "pallet") return "Billed by the pallet. The timer still records who worked, and that time stays off the bill.";
+  if (basis === "carton") return "Billed by the carton. The timer still records who worked, and that time stays off the bill.";
+  if (basis === "sku") return "Billed by each SKU. The timer still records who worked, and that time stays off the bill.";
+  return `Billed by ${billBasisLabel(basis).toLowerCase()}. Time and the count can both land on the bill.`;
+}
+
 function hours(minutes: number) {
   const whole = Math.floor(minutes / 60);
   const rest = minutes % 60;
@@ -55,6 +64,7 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
   const [clientId, setClientId] = useState("");
   const [reference, setReference] = useState("");
   const [title, setTitle] = useState("");
+  const [billBasis, setBillBasis] = useState("mixed");
 
   async function act(path: string, body: unknown) {
     setError(null);
@@ -81,8 +91,8 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
         title={client ? `Jobs for ${client.name}` : "One job per client"}
         detail={
           client
-            ? `${client.name} is already selected. Assign the crew, set a due date, and hold the next task until the earlier one is done.`
-            : "Assign the crew on the job, give each task a due date, and hold the next task until the one it depends on is done."
+            ? `${client.name} is already selected. Each job is a project. Say whether the bill uses time, a count, or both, then assign the crew.`
+            : "Each job is a project for one client. Say whether the bill uses time, a count, or both, then assign the crew."
         }
       />
       {board.error ? <Notice tone="bad">{board.error}</Notice> : null}
@@ -102,6 +112,7 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
               clientId: chosen,
               reference,
               title,
+              billBasis,
             }).then((ok) => {
               if (!ok) return;
               setReference("");
@@ -127,6 +138,15 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
           <Field label="Title">
             <input className="field" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Five pallets inbound" />
           </Field>
+          <Field label="Bill by">
+            <select className="field" value={billBasis} onChange={(event) => setBillBasis(event.target.value)}>
+              {BILL_BASES.map(([code, label]) => (
+                <option key={code} value={code}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </Field>
           <div className="flex items-end">
             <button className="btn btn-primary w-full" type="submit">
               Open job
@@ -148,6 +168,7 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                   <p className="font-mono text-sm text-muted">
                     {job.reference} · {job.status}
                   </p>
+                  <p className="mt-1 text-sm">{billNote(job.billBasis)}</p>
                 </div>
                 <div className="text-right text-sm">
                   <p className="font-medium">{hours(job.laborMinutes)} of labor</p>

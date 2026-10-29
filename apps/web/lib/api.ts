@@ -62,10 +62,24 @@ export const CLIENT_SERVICES = [
   ["equipment", "Equipment"],
   ["people", "People"],
   ["checkin", "Check-in"],
+  ["reports", "Report"],
+  ["invoices", "Invoices"],
 ] as const;
 
+export const BILL_BASES = [
+  ["mixed", "Time and quantity"],
+  ["time", "Time only"],
+  ["pallet", "Pallet count"],
+  ["carton", "Carton count"],
+  ["sku", "Each SKU"],
+] as const;
+
+export function billBasisLabel(basis: string) {
+  return BILL_BASES.find(([code]) => code === basis)?.[1] ?? "Time and quantity";
+}
+
 export function canOpenService(role: string | undefined, service: string) {
-  if (service === "jobs") {
+  if (service === "jobs" || service === "reports" || service === "invoices") {
     return (
       role === "owner" ||
       role === "warehouse_manager" ||

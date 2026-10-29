@@ -1,5 +1,5 @@
 import { Body, ConflictException, Controller, Get, Inject, NotFoundException, Param, Post, UseGuards } from "@nestjs/common";
-import { createClientSchema, createRateSchema, setClientServiceSchema, type ClientService } from "@opsengine/contracts";
+import { createClientSchema, createInvoiceSchema, createRateSchema, setClientServiceSchema, type ClientService } from "@opsengine/contracts";
 import { clientRecords, rateCards } from "@opsengine/db";
 import { eq } from "drizzle-orm";
 import { authorize, assertClientVisible, canSeeClient, type RequestContext } from "@opsengine/kernel";
@@ -87,6 +87,28 @@ export class ClientsController {
     await this.db.db.update(clientRecords).set({ enabledServices: next }).where(eq(clientRecords.id, client.id));
     const label = body.service.charAt(0).toUpperCase() + body.service.slice(1);
     return { message: body.enabled ? `${label} is on for ${client.name}.` : `${label} is off for ${client.name}.` };
+  }
+
+  @Get(":id/summary")
+  summary(@CurrentUser() ctx: RequestContext, @Param("id") id: string) {
+    authorize(ctx, "billing.read");
+    return this.billing.summary(ctx.principal, id);
+  }
+
+  @Get(":id/invoices")
+  invoices(@CurrentUser() ctx: RequestContext, @Param("id") id: string) {
+    authorize(ctx, "billing.read");
+    return this.billing.listInvoices(ctx.principal, id);
+  }
+
+  @Post(":id/invoices")
+  issue(
+    @CurrentUser() ctx: RequestContext,
+    @Param("id") id: string,
+    @Body(new ZodPipe(createInvoiceSchema)) body: { jobId?: string },
+  ) {
+    authorize(ctx, "billing.approve");
+    return this.billing.issueInvoice(ctx.principal, id, body.jobId);
   }
 
   @Post(":id/rates")

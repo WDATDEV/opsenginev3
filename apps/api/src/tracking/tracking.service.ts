@@ -355,14 +355,22 @@ export class TrackingService {
         paused: paused ? describe(paused) : null,
         jobs: jobRows
           .filter((row) => row.status !== "done")
-          .map((row) => ({
-            id: row.id,
-            reference: row.reference,
-            title: row.title,
-            status: row.status,
-            clientName: clientNameById.get(row.clientId) ?? "Client",
-            clientCode: clientRows.find((client) => client.id === row.clientId)?.code ?? "",
-          })),
+          .map((row) => {
+            const client = clientRows.find((item) => item.id === row.clientId);
+            const services = Array.isArray(client?.enabledServices)
+              ? client.enabledServices.filter((item): item is string => typeof item === "string")
+              : [];
+            return {
+              id: row.id,
+              reference: row.reference,
+              title: row.title,
+              status: row.status,
+              billBasis: row.billBasis,
+              clientName: client?.name ?? "Client",
+              clientCode: client?.code ?? "",
+              enabledServices: services,
+            };
+          }),
         activities: activities
           .filter((row) => row.active)
           .map((row) => ({
@@ -687,6 +695,25 @@ export class TrackingService {
         `${employee.name} paused ${open?.taskCode ?? "the current task"}.`,
       );
       return { message: `${employee.name} paused. The time already recorded stays on the job.` };
+    });
+  }
+
+  async stopTask(badge: string) {
+    return this.inTx(async (tx) => {
+      const employee = await this.employeeByBadge(tx, badge);
+      await this.requireReady(tx, employee);
+      const open = await this.openSegment(tx, employee.id);
+      if (!open) throw new TrackingError(`${employee.name} has nothing running to finish.`);
+      const now = new Date();
+      await tx.update(segments).set({ endedAt: now, endReason: "complete" }).where(eq(segments.id, open.id));
+      const minutes = Math.max(0, Math.round((now.getTime() - open.startedAt.getTime()) / 60_000));
+      const span = minutes === 0 ? "less than a minute" : `${minutes} min`;
+      const job = open.jobId ? await this.jobById(tx, open.jobId) : null;
+      const message = job
+        ? `${employee.name} finished. ${span} is on ${job.reference}.`
+        : `${employee.name} finished. ${span} recorded.`;
+      await this.audit(tx, employee.id, "tracking.task_stopped", "activity_segment", open.id, message);
+      return { message };
     });
   }
 

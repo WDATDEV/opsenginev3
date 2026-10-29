@@ -59,7 +59,17 @@ export const charges = clients.table("charges", {
   idempotencyKey: text("idempotency_key").notNull().unique(),
   sourceType: text("source_type").notNull(),
   sourceId: text("source_id").notNull(),
+  invoiceId: uuid("invoice_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const invoices = clients.table("invoices", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  clientId: uuid("client_id").notNull(),
+  number: text("number").notNull().unique(),
+  status: text("status").notNull().default("open"),
+  issuedAt: timestamp("issued_at", { withTimezone: true }).defaultNow().notNull(),
+  paidAt: timestamp("paid_at", { withTimezone: true }),
 });
 
 export const jobs = work.table("jobs", {
@@ -68,6 +78,7 @@ export const jobs = work.table("jobs", {
   reference: text("reference").notNull().unique(),
   title: text("title").notNull(),
   status: text("status").notNull().default("open"),
+  billBasis: text("bill_basis").notNull().default("mixed"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

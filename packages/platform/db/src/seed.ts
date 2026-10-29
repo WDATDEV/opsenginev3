@@ -64,10 +64,15 @@ async function upsertClient(name: string, code: string) {
   return created;
 }
 
-async function upsertJob(clientId: string, reference: string, title: string) {
+async function upsertJob(clientId: string, reference: string, title: string, billBasis = "mixed") {
   const [existing] = await db.select().from(jobs).where(eq(jobs.reference, reference)).limit(1);
-  if (existing) return existing;
-  const [created] = await db.insert(jobs).values({ clientId, reference, title, status: "open" }).returning();
+  if (existing) {
+    if (existing.billBasis !== billBasis) {
+      await db.update(jobs).set({ billBasis }).where(eq(jobs.id, existing.id));
+    }
+    return existing;
+  }
+  const [created] = await db.insert(jobs).values({ clientId, reference, title, status: "open", billBasis }).returning();
   if (!created) throw new Error(`Could not seed ${reference}`);
   return created;
 }
@@ -138,7 +143,7 @@ await upsertAccount("owen@opsengine.local", "Owen Blake", "client_services", [ja
 await upsertAccount("ice@opsengine.local", "IceCartel Ops", "external_customer", [icecartel.id]);
 await upsertAccount("jacob@opsengine.local", "Jacob Ops", "external_customer", [jacob.id]);
 
-await db.update(clientRecords).set({ enabledServices: ["jobs", "receiving", "unloading", "packing", "activities", "equipment", "people", "checkin"] }).where(eq(clientRecords.id, icecartel.id));
+await db.update(clientRecords).set({ enabledServices: ["jobs", "receiving", "unloading", "packing", "activities", "equipment", "people", "checkin", "reports", "invoices"] }).where(eq(clientRecords.id, icecartel.id));
 await db.update(clientRecords).set({ enabledServices: ["jobs", "receiving", "unloading", "picking", "activities", "people", "checkin"] }).where(eq(clientRecords.id, jacob.id));
 
 async function upsertOwnedActivity(clientId: string, code: string, name: string, department: string, billable: boolean) {
@@ -191,7 +196,8 @@ await upsertOwnedDevice(icecartel.id, "IC-SCN-1", "IceCartel scanner", "IceCarte
 await db.update(clientRecords).set({ enabledServices: ["jobs", "receiving", "unloading"] }).where(eq(clientRecords.id, northwind.id));
 await db.update(clientRecords).set({ enabledServices: ["jobs"] }).where(eq(clientRecords.id, brightline.id));
 
-const iceJob = await upsertJob(icecartel.id, "IC-1001", "Five pallets inbound");
+const iceJob = await upsertJob(icecartel.id, "IC-1001", "Five pallets inbound", "mixed");
+await upsertJob(icecartel.id, "IC-1002", "Unload one carton", "carton");
 const jacobJob = await upsertJob(jacob.id, "JB-2001", "Two pallets inbound");
 const northwindJob = await upsertJob(northwind.id, "NW-4401", "Northwind inbound");
 
@@ -240,6 +246,7 @@ await seedPlan();
 await upsertRate(icecartel.id, "unload_trailer", "hour", 4500, "Unload labor");
 await upsertRate(icecartel.id, "unload_trailer", "pallet", 1200, "Pallet unload");
 await upsertRate(icecartel.id, "receive_shipment", "hour", 4000, "Receiving labor");
+await upsertRate(icecartel.id, "unload_trailer", "carton", 250, "Carton unload");
 await upsertRate(jacob.id, "unload_trailer", "hour", 3800, "Unload labor");
 await upsertRate(jacob.id, "unload_trailer", "carton", 150, "Carton unload");
 await upsertRate(jacob.id, "receive_shipment", "hour", 3600, "Receiving labor");

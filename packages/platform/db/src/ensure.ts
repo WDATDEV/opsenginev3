@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS work.jobs (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE work.jobs ADD COLUMN IF NOT EXISTS bill_basis text NOT NULL DEFAULT 'mixed';
+
 CREATE TABLE IF NOT EXISTS clients.rate_cards (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   client_id uuid NOT NULL REFERENCES clients.clients(id),
@@ -74,6 +76,17 @@ CREATE TABLE IF NOT EXISTS clients.charges (
   source_type text NOT NULL,
   source_id text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE clients.charges ADD COLUMN IF NOT EXISTS invoice_id uuid;
+
+CREATE TABLE IF NOT EXISTS clients.invoices (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id uuid NOT NULL REFERENCES clients.clients(id),
+  number text NOT NULL UNIQUE,
+  status text NOT NULL DEFAULT 'open',
+  issued_at timestamptz NOT NULL DEFAULT now(),
+  paid_at timestamptz
 );
 
 CREATE TABLE IF NOT EXISTS work.tasks (

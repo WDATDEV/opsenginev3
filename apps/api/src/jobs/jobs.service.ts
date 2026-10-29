@@ -62,6 +62,7 @@ export class JobsService {
             reference: job.reference,
             title: job.title,
             status: job.status,
+            billBasis: job.billBasis,
             clientId: job.clientId,
             clientName: client?.name ?? "Client",
             clientCode: client?.code ?? "",
@@ -127,7 +128,7 @@ export class JobsService {
     };
   }
 
-  async create(principal: Principal, input: { clientId: string; reference: string; title: string }) {
+  async create(principal: Principal, input: { clientId: string; reference: string; title: string; billBasis?: string }) {
     assertClientVisible(principal, input.clientId);
     const [client] = await this.db.db.select().from(clientRecords).where(eq(clientRecords.id, input.clientId)).limit(1);
     if (!client) throw new NotFoundException("That client is not on file.");
@@ -140,6 +141,7 @@ export class JobsService {
           reference: input.reference.trim(),
           title: input.title.trim(),
           status: "open",
+          billBasis: input.billBasis ?? "mixed",
         })
         .returning();
       if (!created) throw new ConflictException("Could not open that job.");

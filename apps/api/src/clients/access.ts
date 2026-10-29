@@ -14,6 +14,8 @@ const labels: Record<ClientService, string> = {
   equipment: "Equipment",
   people: "People",
   checkin: "Check-in",
+  reports: "Report",
+  invoices: "Invoices",
 };
 
 export function enabledServiceList(value: unknown) {

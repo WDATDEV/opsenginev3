@@ -1,9 +1,11 @@
-import { Inject, Injectable, NotFoundException } from "@nestjs/common";
-import { eq } from "drizzle-orm";
+import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { and, eq, isNull } from "drizzle-orm";
 import {
   activityTypes,
   charges,
   clientRecords,
+  employees,
+  invoices,
   jobs,
   loads,
   packEvents,
@@ -13,6 +15,7 @@ import {
   shipments,
 } from "@opsengine/db";
 import { assertClientVisible, type Principal } from "@opsengine/kernel";
+import { assertClientService } from "../clients/access.js";
 import { DbService } from "../db.service.js";
 
 type Rate = typeof rateCards.$inferSelect;
@@ -72,6 +75,7 @@ export class BillingService {
       orm.select().from(shipments).where(eq(shipments.jobId, job.id)),
       orm.select().from(packEvents),
     ]);
+    const basis = job.billBasis || "mixed";
     const names = new Map(activities.map((activity) => [activity.code, activity.name]));
     const shipmentIds = new Set(jobShipments.map((shipment) => shipment.id));
     const lines = shipmentIds.size
@@ -112,7 +116,7 @@ export class BillingService {
     };
 
     for (const segment of jobSegments) {
-      if (!segment.endedAt) continue;
+      if (!billsUnit(basis, "hour") || !segment.endedAt) continue;
       const minutes = Math.max(0, Math.round((segment.endedAt.getTime() - segment.startedAt.getTime()) / 60_000));
       const rate = latest(rates, segment.taskCode, "hour");
       if (!rate || minutes === 0) continue;
@@ -130,7 +134,7 @@ export class BillingService {
     for (const load of jobLoads) {
       if (load.status !== "done") continue;
       const palletRate = latest(rates, "unload_trailer", "pallet");
-      if (palletRate && load.palletCount) {
+      if (billsUnit(basis, "pallet") && palletRate && load.palletCount) {
         await draft({
           description: `${load.reference}, ${load.palletCount} pallets`,
           quantity: load.palletCount,
@@ -141,7 +145,7 @@ export class BillingService {
         });
       }
       const cartonRate = latest(rates, "unload_trailer", "carton");
-      if (cartonRate && load.cartonCount) {
+      if (billsUnit(basis, "carton") && cartonRate && load.cartonCount) {
         await draft({
           description: `${load.reference}, ${load.cartonCount} cartons`,
           quantity: load.cartonCount,
@@ -154,8 +158,10 @@ export class BillingService {
     }
 
     for (const line of lines) {
-      const rate = latest(rates, "receive_shipment", "unit") ?? latest(rates, "receive_shipment", "sku");
-      if (!rate) continue;
+      const skuRate = latest(rates, "receive_shipment", "sku");
+      const unitRate = latest(rates, "receive_shipment", "unit");
+      const rate = basis === "sku" ? skuRate : basis === "mixed" ? unitRate ?? skuRate : null;
+      if (!rate || !billsUnit(basis, rate.unit)) continue;
       const quantity = rate.unit === "sku" ? 1 : line.receivedQty;
       await draft({
         description: `${line.sku} on receiving`,
@@ -170,7 +176,7 @@ export class BillingService {
     for (const pack of packs) {
       if (!pack.segmentId || !segmentIds.has(pack.segmentId)) continue;
       const rate = latest(rates, "pack_orders", "unit");
-      if (!rate) continue;
+      if (!rate || !billsUnit(basis, "unit")) continue;
       await draft({
         description: `Packed ${pack.orderNumber}`,
         quantity: pack.units,
@@ -181,7 +187,7 @@ export class BillingService {
       });
     }
 
-    for (const rate of rates.filter((item) => item.unit === "flat")) {
+    for (const rate of rates.filter((item) => item.unit === "flat" && billsUnit(basis, "flat"))) {
       await draft({
         description: rate.label,
         quantity: 1,
@@ -207,6 +213,140 @@ export class BillingService {
     await this.db.db.update(charges).set({ status: "approved" }).where(eq(charges.id, charge.id));
     return { message: "Charge approved." };
   }
+
+  async summary(principal: Principal, clientId: string) {
+    const client = await assertClientService(this.db.db, clientId, "reports");
+    assertClientVisible(principal, client.id);
+    const orm = this.db.db;
+    const [jobRows, segmentRows, people, activities, chargeRows] = await Promise.all([
+      orm.select().from(jobs).where(eq(jobs.clientId, client.id)),
+      orm.select().from(segments),
+      orm.select().from(employees),
+      orm.select().from(activityTypes),
+      orm.select().from(charges).where(eq(charges.clientId, client.id)),
+    ]);
+    const jobIds = new Set(jobRows.map((job) => job.id));
+    const nameById = new Map(people.map((person) => [person.id, person.name]));
+    const taskName = new Map(activities.map((activity) => [activity.code, activity.name]));
+    const showPeople = principal.role !== "external_customer";
+    const now = Date.now();
+    const lines = segmentRows
+      .filter((segment) => segment.jobId && jobIds.has(segment.jobId))
+      .map((segment) => {
+        const end = segment.endedAt ? segment.endedAt.getTime() : now;
+        const minutes = Math.max(0, Math.round((end - segment.startedAt.getTime()) / 60_000));
+        const job = jobRows.find((item) => item.id === segment.jobId);
+        return {
+          employeeName: showPeople ? nameById.get(segment.employeeId) ?? "Someone" : "Staff",
+          jobId: segment.jobId,
+          jobReference: job?.reference ?? "",
+          jobTitle: job?.title ?? "",
+          taskName: taskName.get(segment.taskCode) ?? segment.taskCode,
+          minutes,
+          running: !segment.endedAt,
+        };
+      })
+      .filter((line) => line.minutes > 0 || line.running);
+    const projects = jobRows.map((job) => {
+      const jobLines = lines.filter((line) => line.jobId === job.id);
+      const jobCharges = chargeRows.filter((charge) => charge.jobId === job.id);
+      return {
+        id: job.id,
+        reference: job.reference,
+        title: job.title,
+        status: job.status,
+        billBasis: job.billBasis,
+        minutes: jobLines.reduce((sum, line) => sum + line.minutes, 0),
+        running: jobLines.some((line) => line.running),
+        employees: showPeople ? [...new Set(jobLines.map((line) => line.employeeName))] : [],
+        draftCents: jobCharges.filter((charge) => charge.status === "draft").reduce((sum, charge) => sum + charge.amountCents, 0),
+        approvedCents: jobCharges.filter((charge) => charge.status === "approved").reduce((sum, charge) => sum + charge.amountCents, 0),
+      };
+    });
+    return {
+      clientName: client.name,
+      minutes: lines.reduce((sum, line) => sum + line.minutes, 0),
+      lines: showPeople ? lines : [],
+      projects,
+    };
+  }
+
+  async listInvoices(principal: Principal, clientId: string) {
+    const client = await assertClientService(this.db.db, clientId, "invoices");
+    assertClientVisible(principal, client.id);
+    const orm = this.db.db;
+    const [invoiceRows, chargeRows] = await Promise.all([
+      orm.select().from(invoices).where(eq(invoices.clientId, client.id)),
+      orm.select().from(charges).where(eq(charges.clientId, client.id)),
+    ]);
+    const visibleCharges =
+      principal.role === "external_customer" ? chargeRows.filter((charge) => charge.status === "approved") : chargeRows;
+    const mapped = invoiceRows
+      .map((invoice) => {
+        const lines = visibleCharges.filter((charge) => charge.invoiceId === invoice.id);
+        return {
+          id: invoice.id,
+          number: invoice.number,
+          status: invoice.status,
+          issuedAt: invoice.issuedAt,
+          paidAt: invoice.paidAt,
+          amountCents: lines.reduce((sum, line) => sum + line.amountCents, 0),
+          lines: lines.map((line) => ({
+            description: line.description,
+            amountCents: line.amountCents,
+          })),
+        };
+      })
+      .sort((a, b) => b.issuedAt.getTime() - a.issuedAt.getTime());
+    const ready = visibleCharges.filter((charge) => charge.status === "approved" && !charge.invoiceId);
+    return {
+      clientName: client.name,
+      openCents: mapped.filter((invoice) => invoice.status === "open").reduce((sum, invoice) => sum + invoice.amountCents, 0),
+      paidCents: mapped.filter((invoice) => invoice.status === "paid").reduce((sum, invoice) => sum + invoice.amountCents, 0),
+      readyCents: ready.reduce((sum, charge) => sum + charge.amountCents, 0),
+      invoices: mapped,
+    };
+  }
+
+  async issueInvoice(principal: Principal, clientId: string, jobId?: string) {
+    const client = await assertClientService(this.db.db, clientId, "invoices");
+    assertClientVisible(principal, client.id);
+    const orm = this.db.db;
+    const ready = await orm
+      .select()
+      .from(charges)
+      .where(and(eq(charges.clientId, client.id), eq(charges.status, "approved"), isNull(charges.invoiceId)));
+    const chosen = jobId ? ready.filter((charge) => charge.jobId === jobId) : ready;
+    if (chosen.length === 0) {
+      throw new ConflictException("Approve the charges on a job before an invoice can be made.");
+    }
+    const existing = await orm.select({ id: invoices.id }).from(invoices).where(eq(invoices.clientId, client.id));
+    const number = `INV-${client.code}-${String(existing.length + 1).padStart(3, "0")}`;
+    const [created] = await orm.insert(invoices).values({ clientId: client.id, number, status: "open" }).returning();
+    if (!created) throw new ConflictException("Could not make that invoice.");
+    for (const charge of chosen) {
+      await orm.update(charges).set({ invoiceId: created.id }).where(eq(charges.id, charge.id));
+    }
+    const amount = chosen.reduce((sum, charge) => sum + charge.amountCents, 0);
+    const dollars = (amount / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+    return { id: created.id, message: `${created.number} is open for ${client.name}. ${dollars}.` };
+  }
+
+  async markPaid(principal: Principal, invoiceId: string) {
+    const [invoice] = await this.db.db.select().from(invoices).where(eq(invoices.id, invoiceId)).limit(1);
+    if (!invoice) throw new NotFoundException("That invoice is not on file.");
+    assertClientVisible(principal, invoice.clientId);
+    await assertClientService(this.db.db, invoice.clientId, "invoices");
+    if (invoice.status === "paid") return { message: `${invoice.number} is already paid.` };
+    await this.db.db.update(invoices).set({ status: "paid", paidAt: new Date() }).where(eq(invoices.id, invoice.id));
+    return { message: `${invoice.number} is paid.` };
+  }
+}
+
+function billsUnit(basis: string, unit: string) {
+  if (basis === "mixed") return true;
+  if (basis === "time") return unit === "hour";
+  return basis === unit;
 }
 
 function latest(rates: Rate[], activityCode: string, unit: string) {

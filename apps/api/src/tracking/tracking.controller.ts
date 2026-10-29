@@ -153,6 +153,11 @@ export class TrackingController {
     return this.tracking.resumeTask(body.badge);
   }
 
+  @Post("tasks/stop")
+  stop(@Body(new ZodPipe(badgeSchema)) body: { badge: string }) {
+    return this.tracking.stopTask(body.badge);
+  }
+
   @Post("stations/claim")
   claim(@Body(new ZodPipe(claimStationSchema)) body: { badge: string; deviceCode: string }) {
     return this.tracking.claimStation(body.badge, body.deviceCode);

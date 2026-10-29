@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Field, Notice } from "@/components/ui";
-import { ApiError, DEMO_BADGES, post } from "@/lib/api";
+import { ApiError, DEMO_BADGES, billBasisLabel, post, when } from "@/lib/api";
 
 type Context = {
   employee: {
@@ -28,7 +28,15 @@ type Context = {
     jobReference: string | null;
     clientName: string | null;
   } | null;
-  jobs: { id: string; reference: string; title: string; clientName: string; clientCode: string }[];
+  jobs: {
+    id: string;
+    reference: string;
+    title: string;
+    clientName: string;
+    clientCode: string;
+    billBasis: string;
+    enabledServices: string[];
+  }[];
   activities: { code: string; name: string; department: string; billable: boolean }[];
   station: string | null;
   checkout: string | null;
@@ -54,14 +62,24 @@ type Context = {
 
 const AREAS = ["packing", "picking", "receiving", "unloading", "sorting"] as const;
 
+const serviceForDepartment: Record<string, string> = {
+  packing: "packing",
+  picking: "picking",
+  receiving: "receiving",
+  unloading: "unloading",
+  sorting: "sorting",
+};
+
 export default function WarehousePage() {
   const [badge, setBadge] = useState("");
   const [context, setContext] = useState<Context | null>(null);
   const [area, setArea] = useState<(typeof AREAS)[number]>("packing");
   const [jobId, setJobId] = useState("");
+  const [taskCode, setTaskCode] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   async function load(nextBadge = badge) {
     setPending(true);
@@ -76,6 +94,7 @@ export default function WarehousePage() {
       setBadge(result.employee.badgeCode);
       if (result.task?.jobId) setJobId(result.task.jobId);
       else if (!jobId && result.jobs[0]) setJobId(result.jobs[0].id);
+      if (result.task?.taskCode) setTaskCode(result.task.taskCode);
       const department = result.task?.department;
       if (department && AREAS.includes(department as (typeof AREAS)[number])) {
         setArea(department as (typeof AREAS)[number]);
@@ -89,6 +108,8 @@ export default function WarehousePage() {
   }
 
   async function run(path: string, body: unknown) {
+    if (saving) return;
+    setSaving(true);
     setError(null);
     setMessage(null);
     try {
@@ -97,8 +118,18 @@ export default function WarehousePage() {
       await load(badge);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save that.");
+    } finally {
+      setSaving(false);
     }
   }
+
+  const chosen = context?.activities.find((item) => item.code === taskCode) ?? null;
+  const projects = chosen
+    ? (context?.jobs ?? []).filter((job) => {
+        const service = serviceForDepartment[chosen.department];
+        return !service || job.enabledServices.includes(service);
+      })
+    : [];
 
   return (
     <main className="mx-auto min-h-screen max-w-lg px-4 py-6">
@@ -184,31 +215,36 @@ export default function WarehousePage() {
             ) : null}
           </section>
           <section className="card space-y-3 p-4">
-            <Field label="Client job">
-              <select className="field" value={jobId} onChange={(event) => setJobId(event.target.value)}>
-                {context.jobs.map((job) => (
-                  <option key={job.id} value={job.id}>
-                    {job.clientName} · {job.reference} · {job.title}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            {context.task ? (
+              <div className="rounded-lg bg-black/[0.04] p-3 text-sm">
+                <p className="font-medium">Timer is running</p>
+                <p>
+                  {context.task.activityName}
+                  {context.task.jobReference ? ` · ${context.task.clientName ?? ""} ${context.task.jobReference}` : ""}
+                </p>
+                <p className="text-muted">Started {when(context.task.startedAt)}</p>
+              </div>
+            ) : null}
+            {context.paused ? (
+              <p className="text-sm text-muted">
+                Paused {context.paused.activityName}
+                {context.paused.jobReference ? ` on ${context.paused.jobReference}` : ""}. The minutes already kept stay on the project.
+              </p>
+            ) : null}
+            <p className="text-sm font-medium">1. Task type</p>
             <div className="grid grid-cols-2 gap-2">
               {(context.activities.length ? context.activities : AREAS.map((item) => ({ code: item, name: item, department: item, billable: true }))).map((activity) => (
                 <button
                   key={activity.code}
-                  className={`btn tap ${area === activity.department && context.task?.taskCode === activity.code ? "btn-primary" : "btn-ghost"}`}
+                  className={`btn tap ${taskCode === activity.code ? "btn-primary" : "btn-ghost"}`}
                   type="button"
                   onClick={() => {
+                    setTaskCode(activity.code);
                     if (AREAS.includes(activity.department as (typeof AREAS)[number])) {
                       setArea(activity.department as (typeof AREAS)[number]);
                     }
-                    if (context.employee.clockedIn && !context.employee.onMeal) {
-                      void run("/tracking/tasks/switch", {
-                        badge,
-                        activityCode: activity.code,
-                        jobId: activity.billable ? jobId : undefined,
-                      });
+                    if (!activity.billable && context.employee.clockedIn && !context.employee.onMeal) {
+                      void run("/tracking/tasks/switch", { badge, activityCode: activity.code });
                     }
                   }}
                 >
@@ -216,11 +252,38 @@ export default function WarehousePage() {
                 </button>
               ))}
             </div>
+            {chosen && chosen.billable ? (
+              <>
+                <p className="text-sm font-medium">2. Project</p>
+                <div className="space-y-2">
+                  {projects.length === 0 ? <p className="text-sm text-muted">No open project for this task type.</p> : null}
+                  {projects.map((job) => (
+                    <button
+                      key={job.id}
+                      className={`btn tap w-full ${context.task?.jobId === job.id && context.task.taskCode === chosen.code ? "btn-primary" : "btn-ghost"}`}
+                      type="button"
+                      onClick={() => {
+                        setJobId(job.id);
+                        if (context.employee.clockedIn && !context.employee.onMeal) {
+                          void run("/tracking/tasks/switch", { badge, activityCode: chosen.code, jobId: job.id });
+                        }
+                      }}
+                    >
+                      {job.clientName} · {job.reference}
+                      <span className="block text-xs font-normal">{job.title} · {billBasisLabel(job.billBasis)}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : null}
             <div className="flex gap-2">
-              <button className="btn btn-ghost tap flex-1" type="button" onClick={() => void run("/tracking/tasks/pause", { badge })}>
+              <button className="btn btn-ghost tap flex-1" type="button" disabled={saving} onClick={() => void run("/tracking/tasks/pause", { badge })}>
                 Pause
               </button>
-              <button className="btn btn-ghost tap flex-1" type="button" onClick={() => void run("/tracking/tasks/resume", { badge })}>
+              <button className="btn btn-ghost tap flex-1" type="button" disabled={saving} onClick={() => void run("/tracking/tasks/stop", { badge })}>
+                End
+              </button>
+              <button className="btn btn-ghost tap flex-1" type="button" disabled={saving} onClick={() => void run("/tracking/tasks/resume", { badge })}>
                 Resume
               </button>
             </div>

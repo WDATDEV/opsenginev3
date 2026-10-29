@@ -70,6 +70,8 @@ export const clientServices = [
   "equipment",
   "people",
   "checkin",
+  "reports",
+  "invoices",
 ] as const;
 export type ClientService = (typeof clientServices)[number];
 
@@ -93,6 +95,9 @@ export type LoginMode = (typeof loginModes)[number];
 
 export const ownerships = ["personal", "shared_pool"] as const;
 export type Ownership = (typeof ownerships)[number];
+
+export const billBases = ["time", "pallet", "carton", "sku", "mixed"] as const;
+export type BillBasis = (typeof billBases)[number];
 
 export const billingUnits = ["hour", "pallet", "carton", "unit", "sku", "flat"] as const;
 export type BillingUnit = (typeof billingUnits)[number];
@@ -271,8 +276,13 @@ export const setClientServiceSchema = z.object({
 
 export const createJobSchema = z.object({
   clientId: z.string().uuid(),
-  reference: code,
-  title: z.string().trim().min(1).max(120),
+  reference: z.string().trim().min(1, "Enter a job reference.").max(40),
+  title: z.string().trim().min(1, "Enter a title for the project.").max(120),
+  billBasis: z.enum(billBases).default("mixed"),
+});
+
+export const createInvoiceSchema = z.object({
+  jobId: z.string().uuid().optional(),
 });
 
 export const assignEmployeeSchema = z.object({

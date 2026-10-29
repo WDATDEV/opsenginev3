@@ -81,6 +81,7 @@ export default function WarehousePage() {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [finished, setFinished] = useState<string[]>([]);
 
   async function load(nextBadge = badge) {
     setPending(true);
@@ -124,8 +125,10 @@ export default function WarehousePage() {
   }
 
   async function finish() {
+    const ending = context?.task?.taskCode ?? context?.paused?.taskCode ?? null;
     const done = await run("/tracking/tasks/stop", { badge });
     if (done) {
+      if (ending) setFinished((list) => (list.includes(ending) ? list : [...list, ending]));
       setTaskCode("");
       setJobId("");
     }
@@ -153,6 +156,7 @@ export default function WarehousePage() {
     chosen && (AREAS as readonly string[]).includes(chosen.department)
       ? (chosen.department as (typeof AREAS)[number])
       : null;
+  const running = context?.task?.taskCode ?? context?.paused?.taskCode ?? null;
   const billableTypes = taskTypes.filter((activity) => activity.billable);
 
   return (
@@ -209,7 +213,11 @@ export default function WarehousePage() {
                   {context.checkout ? ` · holding ${context.checkout}` : ""}
                 </p>
               </div>
-              <button className="btn btn-ghost" type="button" onClick={() => setContext(null)}>
+              <button className="btn btn-ghost" type="button" onClick={() => {
+                  setContext(null);
+                  setFinished([]);
+                  setTaskCode("");
+                }}>
                 Change
               </button>
             </div>
@@ -266,7 +274,11 @@ export default function WarehousePage() {
                   key={activity.id}
                   className={`btn tap ${taskCode === activity.code ? "btn-primary" : "btn-ghost"}`}
                   type="button"
-                  disabled={saving}
+                  disabled={
+                    saving ||
+                    finished.includes(activity.code) ||
+                    (Boolean(running) && activity.code !== running)
+                  }
                   onClick={() => {
                     setTaskCode(activity.code);
                     setError(null);
@@ -276,9 +288,11 @@ export default function WarehousePage() {
                   }}
                 >
                   {activity.name}
+                  {finished.includes(activity.code) ? <span className="block text-xs font-normal">Finished</span> : null}
                 </button>
               ))}
             </div>
+            {running ? <p className="text-xs text-muted">End this task before choosing another type.</p> : null}
             {chosen && chosen.billable ? (
               <>
                 <p className="text-sm font-medium">2. Project</p>

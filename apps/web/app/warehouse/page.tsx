@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Field, Notice } from "@/components/ui";
 import { ApiError, billBasisLabel, post, when } from "@/lib/api";
+import { badgeFromScan } from "@/lib/qr";
 
 type Context = {
   employee: {
@@ -82,6 +83,59 @@ export default function WarehousePage() {
   const [pending, setPending] = useState(false);
   const [saving, setSaving] = useState(false);
   const [finished, setFinished] = useState<string[]>([]);
+  const [cameraOn, setCameraOn] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const scannerRef = useRef<{ stop: () => Promise<void>; clear: () => void } | null>(null);
+  const scanned = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      void scannerRef.current?.stop().catch(() => undefined);
+    };
+  }, []);
+
+  async function stopCamera() {
+    const scanner = scannerRef.current;
+    scannerRef.current = null;
+    setCameraOn(false);
+    try {
+      await scanner?.stop();
+      scanner?.clear();
+    } catch {
+      /* already stopped */
+    }
+  }
+
+  async function startCamera() {
+    setCameraError(null);
+    setError(null);
+    scanned.current = false;
+    try {
+      const { Html5Qrcode } = await import("html5-qrcode");
+      const scanner = new Html5Qrcode("floor-qr-reader");
+      scannerRef.current = scanner;
+      await scanner.start(
+        { facingMode: "environment" },
+        { fps: 8, qrbox: { width: 220, height: 220 } },
+        (decoded) => {
+          if (scanned.current) return;
+          const code = badgeFromScan(decoded);
+          if (!code) return;
+          scanned.current = true;
+          void stopCamera().then(() => {
+            setBadge(code);
+            void load(code);
+          });
+        },
+        () => undefined,
+      );
+      setCameraOn(true);
+    } catch {
+      scannerRef.current = null;
+      setCameraOn(false);
+      setCameraError("The camera did not start. Allow camera access, or type the badge below.");
+    }
+  }
 
   async function load(nextBadge = badge) {
     setPending(true);
@@ -180,16 +234,27 @@ export default function WarehousePage() {
             void load();
           }}
         >
+          <div id="floor-qr-reader" className="overflow-hidden rounded-xl bg-black/5" />
+          {cameraError ? <Notice tone="bad">{cameraError}</Notice> : null}
+          {cameraOn ? (
+            <button className="btn btn-ghost tap w-full" type="button" onClick={() => void stopCamera()}>
+              Stop camera
+            </button>
+          ) : (
+            <button className="btn btn-primary tap w-full" type="button" onClick={() => void startCamera()}>
+              Scan my QR code
+            </button>
+          )}
+          <p className="text-center text-sm text-muted">or type the badge</p>
           <Field label="Badge">
             <input
               className="field font-mono text-lg"
-              autoFocus
               value={badge}
               onChange={(event) => setBadge(event.target.value)}
               placeholder="Badge"
             />
           </Field>
-          <button className="btn btn-primary tap w-full" disabled={pending || badge.trim() === ""} type="submit">
+          <button className="btn btn-ghost tap w-full" disabled={pending || badge.trim() === ""} type="submit">
             {pending ? "Checking" : "Continue"}
           </button>
         </form>

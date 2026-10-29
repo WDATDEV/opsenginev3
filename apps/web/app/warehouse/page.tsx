@@ -106,7 +106,7 @@ export default function WarehousePage() {
   }
 
   async function run(path: string, body: unknown) {
-    if (saving) return;
+    if (saving) return false;
     setSaving(true);
     setError(null);
     setMessage(null);
@@ -114,10 +114,20 @@ export default function WarehousePage() {
       const result = await post<{ message: string }>(path, body);
       setMessage(result.message);
       await load(badge);
+      return true;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save that.");
+      return false;
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function finish() {
+    const done = await run("/tracking/tasks/stop", { badge });
+    if (done) {
+      setTaskCode("");
+      setJobId("");
     }
   }
 
@@ -246,7 +256,7 @@ export default function WarehousePage() {
             {context.activities.length > 0 && billableTypes.length === 0 ? (
               <p className="text-sm text-muted">
                 {jobs.length === 0
-                  ? "No open project yet. Open a project before the timer can start."
+                  ? `${context.employee.name} is not assigned to an open project. Ask a manager to assign you on the job.`
                   : "No open project has a task type turned on. Turn that service on for the client, then choose it here."}
               </p>
             ) : null}
@@ -292,17 +302,25 @@ export default function WarehousePage() {
                 </div>
               </>
             ) : null}
-            <div className="flex gap-2">
-              <button className="btn btn-ghost tap flex-1" type="button" disabled={saving} onClick={() => void run("/tracking/tasks/pause", { badge })}>
-                Pause
-              </button>
-              <button className="btn btn-ghost tap flex-1" type="button" disabled={saving} onClick={() => void run("/tracking/tasks/stop", { badge })}>
-                End
-              </button>
-              <button className="btn btn-ghost tap flex-1" type="button" disabled={saving} onClick={() => void run("/tracking/tasks/resume", { badge })}>
-                Resume
-              </button>
-            </div>
+            {context.task ? (
+              <div className="flex gap-2">
+                <button className="btn btn-ghost tap flex-1" type="button" disabled={saving} onClick={() => void run("/tracking/tasks/pause", { badge })}>
+                  Pause
+                </button>
+                <button className="btn btn-primary tap flex-1" type="button" disabled={saving} onClick={() => void finish()}>
+                  End
+                </button>
+              </div>
+            ) : context.paused ? (
+              <div className="flex gap-2">
+                <button className="btn btn-primary tap flex-1" type="button" disabled={saving} onClick={() => void run("/tracking/tasks/resume", { badge })}>
+                  Resume
+                </button>
+                <button className="btn btn-ghost tap flex-1" type="button" disabled={saving} onClick={() => void finish()}>
+                  End
+                </button>
+              </div>
+            ) : null}
           </section>
           {panel === "packing" ? (
             <PackPanel context={context} badge={badge} run={run} />
@@ -332,7 +350,7 @@ function PackPanel({
 }: {
   context: Context;
   badge: string;
-  run: (path: string, body: unknown) => Promise<void>;
+  run: (path: string, body: unknown) => Promise<boolean>;
 }) {
   const [deviceCode, setDeviceCode] = useState(context.station ?? context.stations[0]?.code ?? "");
   const [orderNumber, setOrderNumber] = useState("");
@@ -393,7 +411,7 @@ function PickPanel({
 }: {
   context: Context;
   badge: string;
-  run: (path: string, body: unknown) => Promise<void>;
+  run: (path: string, body: unknown) => Promise<boolean>;
 }) {
   const [deviceCode, setDeviceCode] = useState(context.checkout ?? context.scanners[0]?.code ?? "");
   const [sku, setSku] = useState("");
@@ -450,7 +468,7 @@ function ReceivePanel({
 }: {
   context: Context;
   badge: string;
-  run: (path: string, body: unknown) => Promise<void>;
+  run: (path: string, body: unknown) => Promise<boolean>;
 }) {
   const [shipmentId, setShipmentId] = useState(context.shipments[0]?.id ?? "");
   const [sku, setSku] = useState("");
@@ -514,7 +532,7 @@ function UnloadPanel({
 }: {
   context: Context;
   badge: string;
-  run: (path: string, body: unknown) => Promise<void>;
+  run: (path: string, body: unknown) => Promise<boolean>;
 }) {
   const [loadId, setLoadId] = useState(context.loads[0]?.id ?? "");
   const load = context.loads.find((item) => item.id === loadId);
@@ -553,7 +571,7 @@ function SortPanel({
 }: {
   context: Context;
   badge: string;
-  run: (path: string, body: unknown) => Promise<void>;
+  run: (path: string, body: unknown) => Promise<boolean>;
 }) {
   const [gaylordCode, setGaylordCode] = useState(context.gaylords[0]?.code ?? "");
   const [trackingNumber, setTrackingNumber] = useState("");

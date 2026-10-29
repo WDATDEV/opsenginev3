@@ -12,6 +12,7 @@ import {
   devices,
   employees,
   gaylords,
+  jobAssignees,
   jobs,
   loadCrew,
   loads,
@@ -341,8 +342,12 @@ export class TrackingService {
         };
       };
 
+      const assigned = new Set(
+        (await tx.select().from(jobAssignees).where(eq(jobAssignees.employeeId, employee.id))).map((row) => row.jobId),
+      );
       const owned = (clientId: string | null) => !employee.clientId || clientId === employee.clientId;
       const gear = (clientId: string | null) => owned(clientId) || clientId == null;
+      const mine = (jobId: string | null) => Boolean(jobId && assigned.has(jobId));
 
       return {
         employee: {
@@ -358,7 +363,7 @@ export class TrackingService {
         task: segment ? describe(segment) : null,
         paused: paused ? describe(paused) : null,
         jobs: jobRows
-          .filter((row) => row.status !== "done" && (!employee.clientId || row.clientId === employee.clientId))
+          .filter((row) => row.status !== "done" && mine(row.id))
           .map((row) => {
             const client = clientRows.find((item) => item.id === row.clientId);
             const services = Array.isArray(client?.enabledServices)
@@ -420,7 +425,7 @@ export class TrackingService {
             };
           }),
         shipments: shipmentRows
-          .filter((row) => row.status !== "closed" && owned(row.clientId))
+          .filter((row) => row.status !== "closed" && mine(row.jobId))
           .map((row) => ({
             id: row.id,
             reference: row.reference,
@@ -430,7 +435,7 @@ export class TrackingService {
               .map((worker) => nameById.get(worker.employeeId) ?? "Someone"),
           })),
         loads: loadRows
-          .filter((row) => row.status !== "done" && owned(row.clientId))
+          .filter((row) => row.status !== "done" && mine(row.jobId))
           .map((row) => ({
             id: row.id,
             reference: row.reference,
@@ -1954,6 +1959,12 @@ export class TrackingService {
     if (employee.clientId && job.clientId !== employee.clientId) {
       throw new TrackingError("That project belongs to another client.");
     }
+    const [assignment] = await tx
+      .select()
+      .from(jobAssignees)
+      .where(and(eq(jobAssignees.jobId, job.id), eq(jobAssignees.employeeId, employee.id)))
+      .limit(1);
+    if (!assignment) throw new TrackingError(`${employee.name} is not assigned to ${job.reference}.`);
     if (department !== "indirect") {
       await assertClientService(this.db.db, job.clientId, department);
     }

@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: opsengine
+      POSTGRES_PASSWORD: opsengine
+      POSTGRES_DB: opsengine
+    ports:
+      - "55433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opsengine"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - opsengine_v2_pg:/var/lib/postgresql/data
+
+volumes:
+  opsengine_v2_pg:

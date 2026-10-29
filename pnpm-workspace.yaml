@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "packages/platform/*"
+  - "packages/modules/*"
+
+allowBuilds:
+  esbuild: true

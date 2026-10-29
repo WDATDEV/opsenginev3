@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --bg: #f4f1ea;
+  --surface: #fffcf7;
+  --ink: #12201b;
+  --muted: #5c6b65;
+  --line: rgba(18, 32, 27, 0.1);
+  --moss: #0c7a5c;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+::selection {
+  background: #0c7a5c;
+  color: #f4f1ea;
+}
+
+input,
+button,
+textarea,
+select {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid #0c7a5c;
+  outline-offset: 2px;
+}
+
+@layer components {
+  .card {
+    border-radius: 0.9rem;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    box-shadow: 0 1px 2px rgba(18, 32, 27, 0.04);
+  }
+
+  .field {
+    width: 100%;
+    border-radius: 0.7rem;
+    border: 1px solid var(--line);
+    background: #fff;
+    padding: 0.7rem 0.8rem;
+    font-size: 15px;
+    min-height: 2.75rem;
+  }
+
+  .field:focus {
+    outline: none;
+    border-color: #0c7a5c;
+    box-shadow: 0 0 0 3px rgba(12, 122, 92, 0.14);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 0.7rem;
+    padding: 0 1rem;
+    min-height: 2.75rem;
+    font-size: 0.92rem;
+    font-weight: 600;
+  }
+
+  .btn-primary {
+    background: #0c7a5c;
+    color: #f4f1ea;
+  }
+
+  .btn-primary:hover {
+    background: #0a6850;
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid var(--line);
+  }
+
+  .btn-warn {
+    background: #c05621;
+    color: #fff;
+  }
+
+  .tap {
+    min-height: 3.25rem;
+    font-size: 1rem;
+  }
+}

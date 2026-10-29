@@ -1,0 +1,18 @@
+{
+  "name": "opsengine",
+  "private": true,
+  "packageManager": "pnpm@12.3.4",
+  "scripts": {
+    "dev": "turbo dev",
+    "dev:web": "pnpm --filter @opsengine/web dev",
+    "dev:api": "pnpm --filter @opsengine/api dev",
+    "dev:worker": "pnpm --filter @opsengine/worker dev",
+    "build": "turbo build",
+    "db:push": "pnpm --filter @opsengine/db push",
+    "db:seed": "pnpm --filter @opsengine/db seed",
+    "test": "pnpm --filter @opsengine/tracking test && pnpm --filter @opsengine/kernel test"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.4"
+  }
+}

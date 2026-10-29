@@ -27,17 +27,13 @@ const FLOOR_LINKS = [
 const ADMIN_LINKS = [
   ["/", "Clients"],
   ["/floor", "Floor"],
-  ["/activities", "Activities"],
-  ["/equipment", "Equipment"],
-  ["/people", "People"],
-  ["/checkin", "Check-in"],
   ["/work", "Follow-ups"],
 ] as const;
 
 function linksFor(role?: string): readonly (readonly [string, string])[] {
   if (role === "external_customer") return [["/", "Clients"]];
   if (role === "client_services") return [["/", "Clients"], ["/work", "Follow-ups"]];
-  if (role === "hr_finance") return [["/", "Clients"], ["/floor", "Floor"], ["/checkin", "Check-in"], ["/work", "Follow-ups"]];
+  if (role === "hr_finance") return [["/", "Clients"], ["/floor", "Floor"], ["/work", "Follow-ups"]];
   if (role === "owner" || role === "warehouse_manager") return ADMIN_LINKS;
   return FLOOR_LINKS;
 }

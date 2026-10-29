@@ -137,10 +137,12 @@ export class TrackingService {
         name: row.name,
         department: row.department,
         billable: row.billable,
+        clientId: row.clientId,
       }));
   }
 
-  async createActivity(input: { code: string; name: string; department: Department; billable: boolean }) {
+  async createActivity(input: { code: string; name: string; department: Department; billable: boolean; clientId?: string }) {
+    const owner = input.clientId ? await assertClientService(this.db.db, input.clientId, "activities") : null;
     try {
       const [created] = await this.db.db
         .insert(activityTypes)
@@ -150,10 +152,11 @@ export class TrackingService {
           department: input.department,
           billable: input.billable,
           active: true,
+          clientId: owner?.id ?? null,
         })
         .returning();
       if (!created) throw new TrackingError("Could not add that activity.");
-      return { message: `${created.name} is available on the floor.` };
+      return { message: owner ? `${created.name} is on ${owner.name}.` : `${created.name} is available on the floor.` };
     } catch (err) {
       if (isUnique(err)) throw new TrackingError("That activity code is already used.");
       throw err;
@@ -452,6 +455,7 @@ export class TrackingService {
         clockOutPlace: shifts.clockOutPlace,
         clockOutLat: shifts.clockOutLat,
         clockOutLng: shifts.clockOutLng,
+        clientId: employees.clientId,
       })
       .from(shifts)
       .innerJoin(employees, eq(employees.id, shifts.employeeId))
@@ -1081,7 +1085,9 @@ export class TrackingService {
     departmentHome: Department;
     employmentType: "employee" | "temp";
     warehanceUserId?: string;
+    clientId?: string;
   }) {
+    const owner = input.clientId ? await assertClientService(this.db.db, input.clientId, "people") : null;
     return this.inTx(async (tx) => {
       const [created] = await tx
         .insert(employees)
@@ -1091,6 +1097,7 @@ export class TrackingService {
           departmentHome: input.departmentHome,
           employmentType: input.employmentType,
           warehanceUserId: input.warehanceUserId ? clean(input.warehanceUserId) : null,
+          clientId: owner?.id ?? null,
         })
         .returning();
       if (!created) throw new TrackingError("Could not add that employee.");
@@ -1133,9 +1140,11 @@ export class TrackingService {
       warehanceLoginMode: LoginMode;
       location: string;
       assignedBadge?: string;
+      clientId?: string;
     },
     principal: Principal,
   ) {
+    const owner = input.clientId ? await assertClientService(this.db.db, input.clientId, "equipment") : null;
     return this.inTx(async (tx) => {
       const assigned = input.assignedBadge
         ? await this.employeeByBadge(tx, input.assignedBadge)
@@ -1157,6 +1166,7 @@ export class TrackingService {
           warehanceLoginMode: input.warehanceLoginMode,
           location: input.location.trim(),
           assignedEmployeeId: assigned?.id ?? null,
+          clientId: owner?.id ?? null,
           status: "available",
         })
         .returning();
@@ -1922,7 +1932,8 @@ export class TrackingService {
   }
 
   private async activityByCode(tx: Conn, code: string) {
-    const [activityType] = await tx.select().from(activityTypes).where(eq(activityTypes.code, code.trim())).limit(1);
+    const rows = await tx.select().from(activityTypes).where(eq(activityTypes.code, code.trim()));
+    const activityType = rows.find((row) => row.clientId == null) ?? rows[0];
     if (!activityType || !activityType.active) throw new TrackingError("That activity is not on file.");
     return activityType;
   }

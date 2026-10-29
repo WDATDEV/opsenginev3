@@ -58,6 +58,10 @@ export const CLIENT_SERVICES = [
   ["packing", "Packing"],
   ["picking", "Picking"],
   ["sorting", "Sorting"],
+  ["activities", "Activities"],
+  ["equipment", "Equipment"],
+  ["people", "People"],
+  ["checkin", "Check-in"],
 ] as const;
 
 export function canOpenService(role: string | undefined, service: string) {

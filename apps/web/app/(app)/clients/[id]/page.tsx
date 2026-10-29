@@ -10,12 +10,12 @@ import type { ClientRecord } from "@/components/client-dashboard";
 
 const UNITS = ["hour", "pallet", "carton", "unit", "sku", "flat"] as const;
 
-type Activities = { activities: { code: string; name: string }[] };
+type Activity = { code: string; name: string; clientId: string | null };
 
 export default function ClientHomePage() {
   const params = useParams<{ id: string }>();
   const clients = useResource<ClientRecord[]>("/clients");
-  const jobs = useResource<Activities>("/jobs");
+  const catalog = useResource<Activity[]>("/tracking/activities");
   const user = useSession();
   const client = clients.data?.find((item) => item.id === params.id);
   const [message, setMessage] = useState<string | null>(null);
@@ -42,7 +42,7 @@ export default function ClientHomePage() {
       <PageTitle
         kicker="Warehance"
         title={client.name}
-        detail={`${client.code} uses the services turned on here. Open one of them without adding ${client.name} again inside that desk.`}
+        detail={`${client.code} uses the services turned on here. View opens that client's own jobs, activities, equipment, people, and check-in.`}
       />
       {message ? <Notice tone="ok">{message}</Notice> : null}
       {error ? <Notice tone="bad">{error}</Notice> : null}
@@ -77,7 +77,7 @@ export default function ClientHomePage() {
       </section>
       <RateCard
         client={client}
-        activities={jobs.data?.activities ?? []}
+        activities={(catalog.data ?? []).filter((item) => item.clientId === client.id)}
         manage={canManageJobs(user?.role)}
         onSaved={(text) => {
           setError(null);

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useSession } from "@/components/shell";
 import { Field, Notice, PageTitle, useResource } from "@/components/ui";
-import { ApiError, CLIENT_SERVICES, canManage, canOpenService, post } from "@/lib/api";
+import { ApiError, CLIENT_SERVICES, canManage, post } from "@/lib/api";
 
 export type ClientRecord = {
   id: string;
@@ -32,7 +32,7 @@ export function ClientDashboard() {
       <PageTitle
         kicker="Warehance"
         title="Clients"
-        detail="Add a client once. Turn on the services that client uses, then open the client. The same receiving desk, pack bench, and job list follow that choice."
+        detail="Add a client once. Turn on the services they use, then view the client. Their jobs, activities, equipment, people, and check-in stay with them."
       />
       {clients.error ? <Notice tone="bad">{clients.error}</Notice> : null}
       {message ? <Notice tone="ok">{message}</Notice> : null}
@@ -81,10 +81,8 @@ export function ClientDashboard() {
       ) : null}
       <div className="grid gap-4 md:grid-cols-2">
         {clients.data?.length === 0 ? <div className="card p-6 text-muted">No clients yet.</div> : null}
-        {clients.data?.map((client) => {
-          const open = CLIENT_SERVICES.filter(([service]) => client.enabledServices.includes(service) && canOpenService(user?.role, service));
-          return (
-            <Link key={client.id} href={`/clients/${client.id}`} className="card block p-4 hover:bg-black/[0.02]">
+        {clients.data?.map((client) => (
+            <article key={client.id} className="card p-4">
               <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted">{client.code}</p>
               <h2 className="text-xl font-semibold">{client.name}</h2>
               <p className="mt-2 text-sm text-muted">
@@ -94,10 +92,11 @@ export function ClientDashboard() {
                       .map(([, label]) => label)
                       .join(" · ")}
               </p>
-              {open.length > 0 ? <p className="mt-3 text-sm text-moss">Open {client.name}</p> : null}
-            </Link>
-          );
-        })}
+              <Link className="btn btn-ghost mt-3" href={`/clients/${client.id}`}>
+                View
+              </Link>
+            </article>
+        ))}
       </div>
     </div>
   );

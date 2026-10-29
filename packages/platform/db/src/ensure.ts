@@ -117,9 +117,12 @@ CREATE TABLE IF NOT EXISTS tracking.employees (
   department_home text NOT NULL,
   employment_type text NOT NULL DEFAULT 'employee',
   warehance_user_id text UNIQUE,
+  client_id uuid,
   active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE tracking.employees ADD COLUMN IF NOT EXISTS client_id uuid;
 
 CREATE TABLE IF NOT EXISTS work.job_assignees (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -141,8 +144,11 @@ CREATE TABLE IF NOT EXISTS tracking.devices (
   location text NOT NULL,
   status text NOT NULL DEFAULT 'available',
   warehance_login_mode text NOT NULL DEFAULT 'none',
+  client_id uuid,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE tracking.devices ADD COLUMN IF NOT EXISTS client_id uuid;
 
 CREATE TABLE IF NOT EXISTS tracking.shifts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -189,8 +195,15 @@ CREATE TABLE IF NOT EXISTS tracking.activity_types (
   name text NOT NULL,
   department text NOT NULL,
   billable boolean NOT NULL DEFAULT true,
-  active boolean NOT NULL DEFAULT true
+  active boolean NOT NULL DEFAULT true,
+  client_id uuid
 );
+
+ALTER TABLE tracking.activity_types ADD COLUMN IF NOT EXISTS client_id uuid;
+ALTER TABLE tracking.activity_types DROP CONSTRAINT IF EXISTS activity_types_code_key;
+ALTER TABLE tracking.activity_types DROP CONSTRAINT IF EXISTS activity_types_code_unique;
+CREATE UNIQUE INDEX IF NOT EXISTS activity_types_code_per_client
+  ON tracking.activity_types (code, COALESCE(client_id, '00000000-0000-0000-0000-000000000000'::uuid));
 
 CREATE TABLE IF NOT EXISTS tracking.activity_segments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

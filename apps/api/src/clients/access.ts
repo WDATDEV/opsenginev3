@@ -10,6 +10,10 @@ const labels: Record<ClientService, string> = {
   packing: "Packing",
   picking: "Picking",
   sorting: "Sorting",
+  activities: "Activities",
+  equipment: "Equipment",
+  people: "People",
+  checkin: "Check-in",
 };
 
 export function enabledServiceList(value: unknown) {

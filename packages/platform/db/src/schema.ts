@@ -116,6 +116,7 @@ export const employees = tracking.table("employees", {
   departmentHome: text("department_home").notNull(),
   employmentType: text("employment_type").notNull().default("employee"),
   warehanceUserId: text("warehance_user_id").unique(),
+  clientId: uuid("client_id"),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -130,6 +131,7 @@ export const devices = tracking.table("devices", {
   location: text("location").notNull(),
   status: text("status").notNull().default("available"),
   warehanceLoginMode: text("warehance_login_mode").notNull().default("none"),
+  clientId: uuid("client_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -167,11 +169,12 @@ export const breaks = tracking.table("breaks", {
 
 export const activityTypes = tracking.table("activity_types", {
   id: uuid("id").defaultRandom().primaryKey(),
-  code: text("code").notNull().unique(),
+  code: text("code").notNull(),
   name: text("name").notNull(),
   department: text("department").notNull(),
   billable: boolean("billable").notNull().default(true),
   active: boolean("active").notNull().default(true),
+  clientId: uuid("client_id"),
 });
 
 export const segments = tracking.table("activity_segments", {

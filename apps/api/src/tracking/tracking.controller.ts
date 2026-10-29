@@ -52,7 +52,13 @@ export class TrackingController {
   createActivity(
     @CurrentUser() ctx: RequestContext,
     @Body(new ZodPipe(createActivitySchema))
-    body: { code: string; name: string; department: "packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect"; billable: boolean },
+    body: {
+      code: string;
+      name: string;
+      department: "packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect";
+      billable: boolean;
+      clientId?: string;
+    },
   ) {
     authorize(ctx, "tracking.manage");
     return this.tracking.createActivity(body);
@@ -237,6 +243,7 @@ export class TrackingController {
       warehanceLoginMode: "individual" | "shared" | "none";
       location: string;
       assignedBadge?: string;
+      clientId?: string;
     },
   ) {
     authorize(ctx, "tracking.manage");
@@ -261,6 +268,7 @@ export class TrackingController {
       departmentHome: "packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect";
       employmentType: "employee" | "temp";
       warehanceUserId?: string;
+      clientId?: string;
     },
   ) {
     authorize(ctx, "tracking.manage");

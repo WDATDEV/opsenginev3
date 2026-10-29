@@ -138,8 +138,56 @@ await upsertAccount("owen@opsengine.local", "Owen Blake", "client_services", [ja
 await upsertAccount("ice@opsengine.local", "IceCartel Ops", "external_customer", [icecartel.id]);
 await upsertAccount("jacob@opsengine.local", "Jacob Ops", "external_customer", [jacob.id]);
 
-await db.update(clientRecords).set({ enabledServices: ["jobs", "receiving", "unloading", "packing"] }).where(eq(clientRecords.id, icecartel.id));
-await db.update(clientRecords).set({ enabledServices: ["jobs", "receiving", "unloading", "picking"] }).where(eq(clientRecords.id, jacob.id));
+await db.update(clientRecords).set({ enabledServices: ["jobs", "receiving", "unloading", "packing", "activities", "equipment", "people", "checkin"] }).where(eq(clientRecords.id, icecartel.id));
+await db.update(clientRecords).set({ enabledServices: ["jobs", "receiving", "unloading", "picking", "activities", "people", "checkin"] }).where(eq(clientRecords.id, jacob.id));
+
+async function upsertOwnedActivity(clientId: string, code: string, name: string, department: string, billable: boolean) {
+  const [existing] = await db
+    .select()
+    .from(activityTypes)
+    .where(and(eq(activityTypes.code, code), eq(activityTypes.clientId, clientId)))
+    .limit(1);
+  if (!existing) {
+    await db.insert(activityTypes).values({ code, name, department, billable, clientId, active: true });
+  }
+}
+
+async function upsertOwnedPerson(clientId: string, name: string, badgeCode: string, departmentHome: string) {
+  const [existing] = await db.select().from(employees).where(eq(employees.badgeCode, badgeCode)).limit(1);
+  if (existing) {
+    if (existing.clientId !== clientId) {
+      await db.update(employees).set({ clientId }).where(eq(employees.id, existing.id));
+    }
+    return;
+  }
+  await db.insert(employees).values({ name, badgeCode, departmentHome, clientId, employmentType: "employee" });
+}
+
+async function upsertOwnedDevice(clientId: string, code: string, label: string, location: string) {
+  const [existing] = await db.select().from(devices).where(eq(devices.code, code)).limit(1);
+  if (existing) {
+    if (existing.clientId !== clientId) {
+      await db.update(devices).set({ clientId }).where(eq(devices.id, existing.id));
+    }
+    return;
+  }
+  await db.insert(devices).values({
+    code,
+    label,
+    kind: "barcode_scanner",
+    ownership: "shared_pool",
+    warehanceLoginMode: "none",
+    location,
+    clientId,
+    status: "available",
+  });
+}
+
+await upsertOwnedActivity(icecartel.id, "ic_relabel", "Relabel cartons", "packing", true);
+await upsertOwnedActivity(jacob.id, "jb_kitting", "Kit Jacob orders", "packing", true);
+await upsertOwnedPerson(icecartel.id, "Nina Frost", "B-IC-01", "packing");
+await upsertOwnedPerson(jacob.id, "Evan Cole", "B-JB-01", "picking");
+await upsertOwnedDevice(icecartel.id, "IC-SCN-1", "IceCartel scanner", "IceCartel bench");
 await db.update(clientRecords).set({ enabledServices: ["jobs", "receiving", "unloading"] }).where(eq(clientRecords.id, northwind.id));
 await db.update(clientRecords).set({ enabledServices: ["jobs"] }).where(eq(clientRecords.id, brightline.id));
 

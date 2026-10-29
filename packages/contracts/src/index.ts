@@ -59,7 +59,18 @@ export const rolePermissions: Record<Role, Permission[]> = {
   external_customer: ["client.read", "job.read", "billing.read"],
 };
 
-export const clientServices = ["jobs", "receiving", "unloading", "packing", "picking", "sorting"] as const;
+export const clientServices = [
+  "jobs",
+  "receiving",
+  "unloading",
+  "packing",
+  "picking",
+  "sorting",
+  "activities",
+  "equipment",
+  "people",
+  "checkin",
+] as const;
 export type ClientService = (typeof clientServices)[number];
 
 export const departments = [
@@ -162,6 +173,7 @@ export const createEmployeeSchema = z.object({
   departmentHome: z.enum(departments),
   employmentType: z.enum(["employee", "temp"]).default("employee"),
   warehanceUserId: optionalText,
+  clientId: z.string().uuid().optional(),
 });
 
 export const createDeviceSchema = z.object({
@@ -172,6 +184,7 @@ export const createDeviceSchema = z.object({
   warehanceLoginMode: z.enum(loginModes),
   location: z.string().trim().min(1).max(80),
   assignedBadge: optionalText,
+  clientId: z.string().uuid().optional(),
 });
 
 export const createShipmentSchema = z.object({
@@ -284,6 +297,7 @@ export const createActivitySchema = z.object({
   name: z.string().trim().min(1).max(80),
   department: z.enum(departments),
   billable: z.boolean().default(true),
+  clientId: z.string().uuid().optional(),
 });
 
 export const createRateSchema = z.object({

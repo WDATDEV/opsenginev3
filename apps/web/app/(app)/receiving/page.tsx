@@ -12,6 +12,8 @@ type Shipment = {
   status: string;
   expectedCartons: number;
   receivedCartons: number;
+  clientName?: string | null;
+  jobReference?: string | null;
   workers: { name: string; role: string; active: boolean; joinedAt: string }[];
   lines: {
     id: string;
@@ -24,18 +26,18 @@ type Shipment = {
   }[];
 };
 
-type Client = { id: string; name: string; code: string };
+type JobOption = { id: string; reference: string; title: string; clientName: string; status: string };
 
 export default function ReceivingPage() {
   const board = useResource<Shipment[]>("/tracking/receiving");
-  const clients = useResource<Client[]>("/clients");
+  const jobs = useResource<{ jobs: JobOption[] }>("/jobs");
   const user = useSession();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reference, setReference] = useState("");
   const [carrier, setCarrier] = useState("XPO");
   const [expected, setExpected] = useState(10);
-  const [clientId, setClientId] = useState("");
+  const [jobId, setJobId] = useState("");
 
   async function act(path: string, body: unknown) {
     setError(null);
@@ -66,7 +68,7 @@ export default function ReceivingPage() {
             event.preventDefault();
             void act("/tracking/receiving", {
               reference,
-              clientId: clientId || clients.data?.[0]?.id,
+              jobId: jobId || jobs.data?.jobs.find((job) => job.status !== "done")?.id,
               carrier,
               expectedCartons: expected,
             });
@@ -75,13 +77,15 @@ export default function ReceivingPage() {
           <Field label="Shipment">
             <input className="field" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="ASN-4402" />
           </Field>
-          <Field label="Client">
-            <select className="field" value={clientId} onChange={(event) => setClientId(event.target.value)}>
-              {(clients.data ?? []).map((client) => (
-                <option key={client.id} value={client.id}>
-                  {client.name}
-                </option>
-              ))}
+          <Field label="Job">
+            <select className="field" value={jobId} onChange={(event) => setJobId(event.target.value)}>
+              {(jobs.data?.jobs ?? [])
+                .filter((job) => job.status !== "done")
+                .map((job) => (
+                  <option key={job.id} value={job.id}>
+                    {job.clientName} · {job.reference}
+                  </option>
+                ))}
             </select>
           </Field>
           <Field label="Carrier">
@@ -127,6 +131,8 @@ function ShipmentCard({
           <p className="font-mono text-sm">{shipment.reference}</p>
           <h2 className="text-xl font-semibold capitalize">{shipment.status}</h2>
           <p className="text-sm text-muted">
+            {shipment.clientName ? `${shipment.clientName} · ` : ""}
+            {shipment.jobReference ? `${shipment.jobReference} · ` : ""}
             {shipment.carrier} · {shipment.receivedCartons} received / {shipment.expectedCartons} expected
           </p>
         </div>

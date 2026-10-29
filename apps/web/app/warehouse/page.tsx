@@ -14,7 +14,23 @@ type Context = {
     clockedIn: boolean;
     onMeal: boolean;
   };
-  task: { department: string; startedAt: string } | null;
+  task: {
+    department: string;
+    taskCode: string;
+    activityName: string;
+    startedAt: string;
+    jobId: string | null;
+    jobReference: string | null;
+    clientName: string | null;
+  } | null;
+  paused: {
+    taskCode: string;
+    activityName: string;
+    jobReference: string | null;
+    clientName: string | null;
+  } | null;
+  jobs: { id: string; reference: string; title: string; clientName: string; clientCode: string }[];
+  activities: { code: string; name: string; department: string; billable: boolean }[];
   station: string | null;
   checkout: string | null;
   stations: {
@@ -43,6 +59,7 @@ export default function WarehousePage() {
   const [badge, setBadge] = useState("");
   const [context, setContext] = useState<Context | null>(null);
   const [area, setArea] = useState<(typeof AREAS)[number]>("packing");
+  const [jobId, setJobId] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -58,8 +75,11 @@ export default function WarehousePage() {
       });
       setContext(result);
       setBadge(result.employee.badgeCode);
-      if (result.task && AREAS.includes(result.task.department as (typeof AREAS)[number])) {
-        setArea(result.task.department as (typeof AREAS)[number]);
+      if (result.task?.jobId) setJobId(result.task.jobId);
+      else if (!jobId && result.jobs[0]) setJobId(result.jobs[0].id);
+      const department = result.task?.department;
+      if (department && AREAS.includes(department as (typeof AREAS)[number])) {
+        setArea(department as (typeof AREAS)[number]);
       }
     } catch (err) {
       setContext(null);
@@ -145,8 +165,10 @@ export default function WarehousePage() {
                     ? context.employee.onMeal
                       ? "On a meal break"
                       : context.task
-                        ? `On ${context.task.department}`
-                        : "Clocked in, between tasks"
+                        ? `On ${context.task.activityName}${context.task.clientName ? ` · ${context.task.clientName}` : ""}${context.task.jobReference ? ` ${context.task.jobReference}` : ""}`
+                        : context.paused
+                          ? `Paused ${context.paused.activityName}${context.paused.clientName ? ` · ${context.paused.clientName}` : ""}`
+                          : "Clocked in, between tasks"
                     : "Not clocked in"}
                   {context.station ? ` · ${context.station}` : ""}
                   {context.checkout ? ` · holding ${context.checkout}` : ""}
@@ -167,23 +189,48 @@ export default function WarehousePage() {
               </p>
             ) : null}
           </section>
-          <div className="grid grid-cols-2 gap-2">
-            {AREAS.map((item) => (
-              <button
-                key={item}
-                className={`btn tap capitalize ${area === item ? "btn-primary" : "btn-ghost"}`}
-                type="button"
-                onClick={() => {
-                  setArea(item);
-                  if (context.employee.clockedIn && !context.employee.onMeal) {
-                    void run("/tracking/tasks/switch", { badge, department: item });
-                  }
-                }}
-              >
-                {item}
+          <section className="card space-y-3 p-4">
+            <Field label="Client job">
+              <select className="field" value={jobId} onChange={(event) => setJobId(event.target.value)}>
+                {context.jobs.map((job) => (
+                  <option key={job.id} value={job.id}>
+                    {job.clientName} · {job.reference} · {job.title}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <div className="grid grid-cols-2 gap-2">
+              {(context.activities.length ? context.activities : AREAS.map((item) => ({ code: item, name: item, department: item, billable: true }))).map((activity) => (
+                <button
+                  key={activity.code}
+                  className={`btn tap ${area === activity.department && context.task?.taskCode === activity.code ? "btn-primary" : "btn-ghost"}`}
+                  type="button"
+                  onClick={() => {
+                    if (AREAS.includes(activity.department as (typeof AREAS)[number])) {
+                      setArea(activity.department as (typeof AREAS)[number]);
+                    }
+                    if (context.employee.clockedIn && !context.employee.onMeal) {
+                      void run("/tracking/tasks/switch", {
+                        badge,
+                        activityCode: activity.code,
+                        jobId: activity.billable ? jobId : undefined,
+                      });
+                    }
+                  }}
+                >
+                  {activity.name}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button className="btn btn-ghost tap flex-1" type="button" onClick={() => void run("/tracking/tasks/pause", { badge })}>
+                Pause
               </button>
-            ))}
-          </div>
+              <button className="btn btn-ghost tap flex-1" type="button" onClick={() => void run("/tracking/tasks/resume", { badge })}>
+                Resume
+              </button>
+            </div>
+          </section>
           {area === "packing" ? (
             <PackPanel context={context} badge={badge} run={run} />
           ) : null}

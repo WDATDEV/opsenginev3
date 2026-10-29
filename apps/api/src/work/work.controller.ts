@@ -12,13 +12,13 @@ export class WorkController {
   @UseGuards(AuthGuard)
   tasks(@CurrentUser() ctx: RequestContext) {
     authorize(ctx, "task.read");
-    return this.work.list();
+    return this.work.list(ctx.principal);
   }
 
   @Post("tasks/:id/done")
   @UseGuards(AuthGuard)
   done(@CurrentUser() ctx: RequestContext, @Param("id") id: string) {
     authorize(ctx, "task.update");
-    return this.work.complete(id);
+    return this.work.complete(ctx.principal, id);
   }
 }

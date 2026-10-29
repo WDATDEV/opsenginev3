@@ -1,10 +1,12 @@
 export {
   TrackingError,
+  assertBillableJob,
   assertCanJoinShipment,
   assertDeviceLocation,
   assertCrewSource,
   assertSortPlacement,
   normalizeDevice,
+  planPause,
   planTaskSwitch,
   resolvePacker,
   resolvePicker,

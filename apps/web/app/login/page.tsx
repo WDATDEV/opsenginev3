@@ -18,8 +18,9 @@ function LoginForm() {
     setPending(true);
     setError(null);
     try {
-      await post<{ user: User }>("/auth/login", { email, password });
-      router.push(params.get("next") || "/");
+      const result = await post<{ user: User }>("/auth/login", { email, password });
+      const clientPortal = result.user.role === "external_customer" || result.user.role === "client_services";
+      router.push(clientPortal ? "/jobs" : params.get("next") || "/");
       router.refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not sign in.");
@@ -54,7 +55,7 @@ function LoginForm() {
           {pending ? "Signing in" : "Sign in"}
         </button>
         <p className="text-sm text-muted">
-          Seeded supervisor: nora@opsengine.local / OpsEngine!dev
+          Supervisor nora@opsengine.local. IceCartel lina@ or ice@. Jacob owen@ or jacob@. Password OpsEngine!dev.
         </p>
       </form>
     </main>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { authorize, can, ForbiddenError, type Principal } from "./index.js";
+import { assertClientVisible, authorize, can, ForbiddenError, type Principal } from "./index.js";
 
 const manager: Principal = {
   id: "1",
@@ -15,9 +15,24 @@ describe("kernel authorize", () => {
     expect(() => authorize({ principal: manager }, "tracking.record")).not.toThrow();
   });
 
-  it("keeps client services out of labor tracking", () => {
-    const services: Principal = { ...manager, role: "client_services" };
+  it("lets client services manage their own jobs and keeps them off the floor", () => {
+    const services: Principal = { ...manager, role: "client_services", clientIds: ["ice"] };
+    expect(can(services, "job.manage")).toBe(true);
+    expect(can(services, "billing.read")).toBe(true);
     expect(can(services, "tracking.read")).toBe(false);
+    expect(can(services, "billing.approve")).toBe(false);
     expect(() => authorize({ principal: services }, "tracking.read")).toThrow(ForbiddenError);
+  });
+
+  it("lets an external customer read one client's jobs", () => {
+    const guest: Principal = { ...manager, role: "external_customer", clientIds: ["ice"] };
+    expect(can(guest, "job.read")).toBe(true);
+    expect(can(guest, "job.manage")).toBe(false);
+    expect(() => assertClientVisible(guest, "ice")).not.toThrow();
+    expect(() => assertClientVisible(guest, "jacob")).toThrow(ForbiddenError);
+  });
+
+  it("lets the warehouse see every client", () => {
+    expect(() => assertClientVisible(manager, "jacob")).not.toThrow();
   });
 });

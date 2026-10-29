@@ -17,6 +17,10 @@ export const permissions = [
   "tracking.manage",
   "tracking.clock",
   "client.read",
+  "job.read",
+  "job.manage",
+  "billing.read",
+  "billing.approve",
   "task.read",
   "task.update",
   "audit.read",
@@ -37,6 +41,10 @@ const manage = [
   "tracking.manage",
   "tracking.clock",
   "client.read",
+  "job.read",
+  "job.manage",
+  "billing.read",
+  "billing.approve",
   "task.read",
   "task.update",
   "audit.read",
@@ -46,9 +54,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
   owner: [...manage],
   warehouse_manager: [...manage],
   warehouse_employee: [...floor],
-  client_services: ["client.read"],
-  hr_finance: ["tracking.read", "client.read", "task.read", "audit.read"],
-  external_customer: [],
+  client_services: ["client.read", "job.read", "job.manage", "billing.read", "task.read"],
+  hr_finance: ["tracking.read", "client.read", "task.read", "audit.read", "job.read", "billing.read", "billing.approve"],
+  external_customer: ["client.read", "job.read", "billing.read"],
 };
 
 export const departments = [
@@ -71,6 +79,9 @@ export type LoginMode = (typeof loginModes)[number];
 
 export const ownerships = ["personal", "shared_pool"] as const;
 export type Ownership = (typeof ownerships)[number];
+
+export const billingUnits = ["hour", "pallet", "carton", "unit", "sku", "flat"] as const;
+export type BillingUnit = (typeof billingUnits)[number];
 
 export const carriers = ["usps", "ups", "fedex", "dhl", "other"] as const;
 export type Carrier = (typeof carriers)[number];
@@ -161,7 +172,7 @@ export const createDeviceSchema = z.object({
 
 export const createShipmentSchema = z.object({
   reference: code,
-  clientId: z.string().uuid(),
+  jobId: z.string().uuid(),
   carrier: z.string().trim().min(1).max(40),
   expectedCartons: z.number().int().min(0).max(100000),
 });
@@ -180,6 +191,7 @@ export const receiptLineSchema = z.object({
 
 export const createLoadSchema = z.object({
   reference: code,
+  jobId: z.string().uuid(),
   kind: z.enum(["truck", "container"]),
   dock: z.string().trim().min(1).max(40),
   seal: optionalText,
@@ -210,7 +222,32 @@ export const sortScanSchema = z.object({
   reason: optionalText,
 });
 
-export const switchTaskSchema = z.object({
-  badge: code,
-  department: z.enum(departments),
+export const switchTaskSchema = z
+  .object({
+    badge: code,
+    department: z.enum(departments).optional(),
+    activityCode: z.string().trim().min(1).max(40).optional(),
+    jobId: z.string().uuid().optional(),
+  })
+  .refine((value) => Boolean(value.department || value.activityCode), {
+    message: "Choose an activity.",
+  });
+
+export const createJobSchema = z.object({
+  clientId: z.string().uuid(),
+  reference: code,
+  title: z.string().trim().min(1).max(120),
+});
+
+export const createRateSchema = z.object({
+  activityCode: z
+    .string()
+    .trim()
+    .min(1)
+    .max(40)
+    .optional()
+    .transform((value) => (value ? value : undefined)),
+  unit: z.enum(billingUnits),
+  rateCents: z.number().int().min(0).max(10_000_000),
+  label: z.string().trim().min(1).max(80),
 });

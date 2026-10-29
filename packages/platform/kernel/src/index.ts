@@ -32,3 +32,21 @@ export function authorize(ctx: RequestContext, permission: Permission): void {
     throw new ForbiddenError();
   }
 }
+
+const warehouseWide: Role[] = ["owner", "warehouse_manager", "hr_finance", "warehouse_employee"];
+
+export function visibleClientIds(principal: Principal): string[] | null {
+  if (warehouseWide.includes(principal.role)) return null;
+  return principal.clientIds ?? [];
+}
+
+export function canSeeClient(principal: Principal, clientId: string): boolean {
+  const ids = visibleClientIds(principal);
+  return ids === null || ids.includes(clientId);
+}
+
+export function assertClientVisible(principal: Principal, clientId: string): void {
+  if (!canSeeClient(principal, clientId)) {
+    throw new ForbiddenError("That client is outside your accounts.");
+  }
+}

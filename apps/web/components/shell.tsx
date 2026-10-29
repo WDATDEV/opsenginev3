@@ -11,8 +11,10 @@ export function useSession() {
   return useContext(SessionContext);
 }
 
-const LINKS = [
+const FLOOR_LINKS = [
   ["/", "Floor"],
+  ["/jobs", "Jobs"],
+  ["/clients", "Clients"],
   ["/packing", "Packing"],
   ["/picking", "Picking"],
   ["/receiving", "Receiving"],
@@ -24,6 +26,15 @@ const LINKS = [
   ["/work", "Follow-ups"],
 ] as const;
 
+function linksFor(role?: string) {
+  if (role === "external_customer") return [["/jobs", "Jobs"], ["/clients", "Account"]] as const;
+  if (role === "client_services") return [["/jobs", "Jobs"], ["/clients", "Clients"], ["/work", "Follow-ups"]] as const;
+  if (role === "hr_finance") {
+    return [["/jobs", "Jobs"], ["/clients", "Clients"], ["/checkin", "Check-in"], ["/work", "Follow-ups"]] as const;
+  }
+  return FLOOR_LINKS;
+}
+
 export function DesktopShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -34,6 +45,13 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
       .then((result) => setUser(result.user))
       .catch(() => setUser(null));
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    if ((user.role === "external_customer" || user.role === "client_services") && pathname === "/") {
+      router.replace("/jobs");
+    }
+  }, [user, pathname, router]);
 
   async function logout() {
     await post("/auth/logout", {});
@@ -55,7 +73,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
             </button>
           </div>
           <nav className="flex gap-2 overflow-auto px-3 pb-3 md:block md:px-3">
-            {LINKS.map(([href, label]) => {
+            {linksFor(user?.role).map(([href, label]) => {
               const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
               return (
                 <Link
@@ -72,12 +90,16 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
           </nav>
           <div className="hidden space-y-2 px-4 pb-6 text-sm text-muted md:block">
             <p>{user ? user.name : "Loading session"}</p>
-            <Link className="block text-moss" href="/warehouse">
-              Open floor phone
-            </Link>
-            <Link className="block text-moss" href="/gate">
-              Open QR gate
-            </Link>
+            {user && user.role !== "external_customer" && user.role !== "client_services" ? (
+              <>
+                <Link className="block text-moss" href="/warehouse">
+                  Open floor phone
+                </Link>
+                <Link className="block text-moss" href="/gate">
+                  Open QR gate
+                </Link>
+              </>
+            ) : null}
           </div>
         </aside>
         <main className="px-4 py-6 md:px-8 md:py-8">{children}</main>

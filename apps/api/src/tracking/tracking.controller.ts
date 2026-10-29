@@ -9,6 +9,7 @@ import {
 } from "@nestjs/common";
 import {
   addCrewSchema,
+  badgeSchema,
   checkoutSchema,
   claimStationSchema,
   clockSchema,
@@ -108,8 +109,21 @@ export class TrackingController {
   }
 
   @Post("tasks/switch")
-  switchTask(@Body(new ZodPipe(switchTaskSchema)) body: { badge: string; department: "packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect" }) {
-    return this.tracking.switchTask(body.badge, body.department);
+  switchTask(
+    @Body(new ZodPipe(switchTaskSchema))
+    body: { badge: string; department?: "packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect"; activityCode?: string; jobId?: string },
+  ) {
+    return this.tracking.switchTask(body.badge, body);
+  }
+
+  @Post("tasks/pause")
+  pause(@Body(new ZodPipe(badgeSchema)) body: { badge: string }) {
+    return this.tracking.pauseTask(body.badge);
+  }
+
+  @Post("tasks/resume")
+  resume(@Body(new ZodPipe(badgeSchema)) body: { badge: string }) {
+    return this.tracking.resumeTask(body.badge);
   }
 
   @Post("stations/claim")
@@ -243,7 +257,7 @@ export class TrackingController {
   createShipment(
     @CurrentUser() ctx: RequestContext,
     @Body(new ZodPipe(createShipmentSchema))
-    body: { reference: string; clientId: string; carrier: string; expectedCartons: number },
+    body: { reference: string; jobId: string; carrier: string; expectedCartons: number },
   ) {
     authorize(ctx, "tracking.manage");
     return this.tracking.createShipment(body);
@@ -287,7 +301,7 @@ export class TrackingController {
   createLoad(
     @CurrentUser() ctx: RequestContext,
     @Body(new ZodPipe(createLoadSchema))
-    body: { reference: string; kind: "truck" | "container"; dock: string; seal?: string },
+    body: { reference: string; jobId: string; kind: "truck" | "container"; dock: string; seal?: string },
   ) {
     authorize(ctx, "tracking.manage");
     return this.tracking.createLoad(body);

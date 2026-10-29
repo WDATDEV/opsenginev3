@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertBillableJob,
   assertCanJoinShipment,
   assertDeviceLocation,
   assertCrewSource,
   assertSortPlacement,
   normalizeDevice,
+  planPause,
   planTaskSwitch,
   resolvePacker,
   resolvePicker,
@@ -177,10 +179,29 @@ describe("sorting, task changes, and equipment", () => {
 
   it("keeps the same open task when the work has not changed", () => {
     const plan = planTaskSwitch({
-      open: { id: "seg-1", department: "picking", taskCode: "pick_batch" },
-      next: { department: "picking", taskCode: "pick_batch" },
+      open: { id: "seg-1", department: "picking", taskCode: "pick_batch", jobId: "ice" },
+      next: { department: "picking", taskCode: "pick_batch", jobId: "ice" },
     });
     expect(plan).toEqual({ closeId: null, start: false });
+  });
+
+  it("closes the timer when the same activity moves to another client job", () => {
+    const plan = planTaskSwitch({
+      open: { id: "seg-1", department: "unloading", taskCode: "unload_trailer", jobId: "ice" },
+      next: { department: "unloading", taskCode: "unload_trailer", jobId: "jacob" },
+    });
+    expect(plan).toEqual({ closeId: "seg-1", start: true });
+  });
+
+  it("requires a client job for billable work and allows internal work without one", () => {
+    expect(assertBillableJob({ billable: true, jobId: null }).ok).toBe(false);
+    expect(assertBillableJob({ billable: true, jobId: "ice" })).toMatchObject({ ok: true, jobId: "ice" });
+    expect(assertBillableJob({ billable: false, jobId: null })).toMatchObject({ ok: true, jobId: null });
+  });
+
+  it("pauses only when a timer is open", () => {
+    expect(planPause({ open: null }).ok).toBe(false);
+    expect(planPause({ open: { id: "seg-1" } })).toEqual({ ok: true, closeId: "seg-1" });
   });
 
   it("registers both personal scanners and shared packing computers", () => {

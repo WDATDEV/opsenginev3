@@ -15,6 +15,8 @@ type Board = {
     seal: string | null;
     palletCount: number | null;
     cartonCount: number | null;
+    clientName?: string | null;
+    jobReference?: string | null;
     crew: {
       employeeId: string;
       name: string;
@@ -29,12 +31,14 @@ type Board = {
 
 export default function UnloadingPage() {
   const board = useResource<Board>("/tracking/unloading");
+  const jobs = useResource<{ jobs: { id: string; reference: string; clientName: string; status: string }[] }>("/jobs");
   const user = useSession();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reference, setReference] = useState("");
   const [dock, setDock] = useState("Dock 1");
   const [kind, setKind] = useState<"truck" | "container">("truck");
+  const [jobId, setJobId] = useState("");
 
   async function act(path: string, body: unknown) {
     setError(null);
@@ -60,12 +64,28 @@ export default function UnloadingPage() {
       {error ? <Notice tone="bad">{error}</Notice> : null}
       {canManage(user?.role) ? (
         <form
-          className="card mb-6 grid gap-3 p-4 md:grid-cols-4"
+          className="card mb-6 grid gap-3 p-4 md:grid-cols-5"
           onSubmit={(event) => {
             event.preventDefault();
-            void act("/tracking/unloading", { reference, kind, dock });
+            void act("/tracking/unloading", {
+              reference,
+              kind,
+              dock,
+              jobId: jobId || jobs.data?.jobs.find((job) => job.status !== "done")?.id,
+            });
           }}
         >
+          <Field label="Job">
+            <select className="field" value={jobId} onChange={(event) => setJobId(event.target.value)}>
+              {(jobs.data?.jobs ?? [])
+                .filter((job) => job.status !== "done")
+                .map((job) => (
+                  <option key={job.id} value={job.id}>
+                    {job.clientName} · {job.reference}
+                  </option>
+                ))}
+            </select>
+          </Field>
           <Field label="Trailer or container">
             <input className="field" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="TRL-900" />
           </Field>

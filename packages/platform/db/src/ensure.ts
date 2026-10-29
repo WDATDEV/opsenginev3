@@ -34,6 +34,45 @@ CREATE TABLE IF NOT EXISTS clients.clients (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS work.jobs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id uuid NOT NULL REFERENCES clients.clients(id),
+  reference text NOT NULL UNIQUE,
+  title text NOT NULL,
+  status text NOT NULL DEFAULT 'open',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS clients.rate_cards (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id uuid NOT NULL REFERENCES clients.clients(id),
+  activity_code text,
+  unit text NOT NULL,
+  rate_cents integer NOT NULL,
+  label text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS rate_cards_client_activity_unit
+  ON clients.rate_cards (client_id, activity_code, unit);
+
+CREATE TABLE IF NOT EXISTS clients.charges (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id uuid NOT NULL REFERENCES clients.clients(id),
+  job_id uuid NOT NULL REFERENCES work.jobs(id),
+  rate_card_id uuid,
+  description text NOT NULL,
+  quantity integer NOT NULL,
+  unit text NOT NULL,
+  rate_cents integer NOT NULL,
+  amount_cents integer NOT NULL,
+  status text NOT NULL DEFAULT 'draft',
+  idempotency_key text NOT NULL UNIQUE,
+  source_type text NOT NULL,
+  source_id text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS work.tasks (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   title text NOT NULL,
@@ -122,17 +161,33 @@ CREATE TABLE IF NOT EXISTS tracking.breaks (
 CREATE UNIQUE INDEX IF NOT EXISTS breaks_one_open
   ON tracking.breaks (shift_id) WHERE ended_at IS NULL;
 
+CREATE TABLE IF NOT EXISTS tracking.activity_types (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  code text NOT NULL UNIQUE,
+  name text NOT NULL,
+  department text NOT NULL,
+  billable boolean NOT NULL DEFAULT true,
+  active boolean NOT NULL DEFAULT true
+);
+
 CREATE TABLE IF NOT EXISTS tracking.activity_segments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   employee_id uuid NOT NULL REFERENCES tracking.employees(id),
   shift_id uuid NOT NULL REFERENCES tracking.shifts(id),
   department text NOT NULL,
   task_code text NOT NULL,
+  job_id uuid,
+  activity_id uuid,
   started_at timestamptz NOT NULL,
   ended_at timestamptz,
+  end_reason text,
   device_id uuid,
   note text
 );
+
+ALTER TABLE tracking.activity_segments ADD COLUMN IF NOT EXISTS job_id uuid;
+ALTER TABLE tracking.activity_segments ADD COLUMN IF NOT EXISTS activity_id uuid;
+ALTER TABLE tracking.activity_segments ADD COLUMN IF NOT EXISTS end_reason text;
 
 CREATE UNIQUE INDEX IF NOT EXISTS segments_one_open
   ON tracking.activity_segments (employee_id) WHERE ended_at IS NULL;
@@ -195,8 +250,11 @@ CREATE TABLE IF NOT EXISTS tracking.inbound_shipments (
   status text NOT NULL DEFAULT 'expected',
   expected_cartons integer NOT NULL DEFAULT 0,
   received_cartons integer NOT NULL DEFAULT 0,
+  job_id uuid,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE tracking.inbound_shipments ADD COLUMN IF NOT EXISTS job_id uuid REFERENCES work.jobs(id);
 
 CREATE TABLE IF NOT EXISTS tracking.shipment_workers (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -214,8 +272,11 @@ CREATE TABLE IF NOT EXISTS tracking.receipt_lines (
   sku text NOT NULL,
   expected_qty integer NOT NULL,
   received_qty integer NOT NULL,
-  recorded_at timestamptz NOT NULL
+  recorded_at timestamptz NOT NULL,
+  segment_id uuid
 );
+
+ALTER TABLE tracking.receipt_lines ADD COLUMN IF NOT EXISTS segment_id uuid;
 
 CREATE TABLE IF NOT EXISTS tracking.inbound_loads (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -228,8 +289,13 @@ CREATE TABLE IF NOT EXISTS tracking.inbound_loads (
   unload_ended_at timestamptz,
   seal text,
   pallet_count integer,
-  carton_count integer
+  carton_count integer,
+  job_id uuid,
+  client_id uuid
 );
+
+ALTER TABLE tracking.inbound_loads ADD COLUMN IF NOT EXISTS job_id uuid REFERENCES work.jobs(id);
+ALTER TABLE tracking.inbound_loads ADD COLUMN IF NOT EXISTS client_id uuid;
 
 CREATE TABLE IF NOT EXISTS tracking.load_crew (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

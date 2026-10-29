@@ -33,12 +33,16 @@ export function Notice({
   return <p className={`rounded-xl px-3 py-2 text-sm ${styles}`}>{children}</p>;
 }
 
-export function useResource<T>(path: string) {
+export function useResource<T>(path: string | null) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(path));
 
   const reload = useCallback(() => {
+    if (!path) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     api<T>(path)
       .then((next) => {

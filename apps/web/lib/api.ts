@@ -44,10 +44,23 @@ export type User = {
   email: string;
   name: string;
   role: string;
+  clientIds: string[] | null;
 };
 
 export function canManage(role?: string) {
   return role === "owner" || role === "warehouse_manager";
+}
+
+export function canManageJobs(role?: string) {
+  return role === "owner" || role === "warehouse_manager" || role === "client_services";
+}
+
+export function canApproveCharges(role?: string) {
+  return role === "owner" || role === "warehouse_manager" || role === "hr_finance";
+}
+
+export function money(cents: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
 }
 
 export function when(value: string) {

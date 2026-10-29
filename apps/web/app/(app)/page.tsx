@@ -1,5 +1,6 @@
 "use client";
 
+import { useSession } from "@/components/shell";
 import { Notice, PageTitle, useResource } from "@/components/ui";
 import { when } from "@/lib/api";
 
@@ -23,7 +24,7 @@ type Floor = {
     entry: string | null;
     entryPlace: string | null;
     place: string | null;
-    task: { department: string; startedAt: string } | null;
+    task: { department: string; startedAt: string; jobReference?: string | null; clientName?: string | null } | null;
   }[];
   feed: { at: string; text: string }[];
   policy: { id: string; area: string; question: string; answer: string }[];
@@ -32,7 +33,13 @@ type Floor = {
 const COUNT_LABELS = ["packing", "picking", "receiving", "unloading", "sorting"] as const;
 
 export default function FloorPage() {
-  const { data, error, loading } = useResource<Floor>("/tracking/floor");
+  const user = useSession();
+  const clientPortal = user?.role === "external_customer" || user?.role === "client_services";
+  const { data, error, loading } = useResource<Floor>(user && !clientPortal ? "/tracking/floor" : null);
+
+  if (user && clientPortal) {
+    return <p className="text-muted">Opening your jobs…</p>;
+  }
 
   return (
     <div>
@@ -41,8 +48,8 @@ export default function FloorPage() {
         title="Who is doing what"
         detail="Every pack, pick, receipt, unload, and gaylord scan is tied to a person, a device, and the task they were on."
       />
-      {error ? <Notice tone="bad">{error}</Notice> : null}
-      {loading && !data ? <p className="text-muted">Loading the floor…</p> : null}
+      {!user || (loading && !data) ? <p className="text-muted">Loading the floor…</p> : null}
+      {error && !clientPortal ? <Notice tone="bad">{error}</Notice> : null}
       {data ? (
         <div className="space-y-6">
           <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -83,7 +90,7 @@ export default function FloorPage() {
                       {person.onMeal
                         ? "On meal"
                         : person.task
-                          ? `${person.task.department} since ${when(person.task.startedAt)}`
+                          ? `${person.task.clientName ? `${person.task.clientName} ` : ""}${person.task.jobReference ? `${person.task.jobReference} · ` : ""}${person.task.department} since ${when(person.task.startedAt)}`
                           : person.clockedIn
                             ? person.entry === "qr"
                               ? `Checked in at ${person.entryPlace ?? "the QR gate"}`

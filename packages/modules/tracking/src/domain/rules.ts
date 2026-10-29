@@ -240,17 +240,35 @@ export function assertSortPlacement(input: {
 }
 
 export function planTaskSwitch(input: {
-  open: { id: string; department: Department; taskCode: string } | null;
-  next: { department: Department; taskCode: string };
+  open: { id: string; department: Department; taskCode: string; jobId?: string | null } | null;
+  next: { department: Department; taskCode: string; jobId?: string | null };
 }): { closeId: string | null; start: boolean } {
   if (
     input.open &&
     input.open.department === input.next.department &&
-    input.open.taskCode === input.next.taskCode
+    input.open.taskCode === input.next.taskCode &&
+    (input.open.jobId ?? null) === (input.next.jobId ?? null)
   ) {
     return { closeId: null, start: false };
   }
   return { closeId: input.open?.id ?? null, start: true };
+}
+
+export function assertBillableJob(input: {
+  billable: boolean;
+  jobId?: string | null;
+}): RuleSuccess<{ jobId: string | null }> | RuleFailure {
+  if (input.billable && !input.jobId) {
+    return fail("Choose the client job before starting this activity.");
+  }
+  return { ok: true, jobId: input.jobId ?? null };
+}
+
+export function planPause(input: {
+  open: { id: string } | null;
+}): RuleSuccess<{ closeId: string }> | RuleFailure {
+  if (!input.open) return fail("Nothing is running to pause.");
+  return { ok: true, closeId: input.open.id };
 }
 
 export function taskFor(department: Department): string {

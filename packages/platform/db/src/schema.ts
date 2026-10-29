@@ -33,6 +33,42 @@ export const clientRecords = clients.table("clients", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const rateCards = clients.table("rate_cards", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  clientId: uuid("client_id").notNull(),
+  activityCode: text("activity_code"),
+  unit: text("unit").notNull(),
+  rateCents: integer("rate_cents").notNull(),
+  label: text("label").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const charges = clients.table("charges", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  clientId: uuid("client_id").notNull(),
+  jobId: uuid("job_id").notNull(),
+  rateCardId: uuid("rate_card_id"),
+  description: text("description").notNull(),
+  quantity: integer("quantity").notNull(),
+  unit: text("unit").notNull(),
+  rateCents: integer("rate_cents").notNull(),
+  amountCents: integer("amount_cents").notNull(),
+  status: text("status").notNull().default("draft"),
+  idempotencyKey: text("idempotency_key").notNull().unique(),
+  sourceType: text("source_type").notNull(),
+  sourceId: text("source_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const jobs = work.table("jobs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  clientId: uuid("client_id").notNull(),
+  reference: text("reference").notNull().unique(),
+  title: text("title").notNull(),
+  status: text("status").notNull().default("open"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const tasks = work.table("tasks", {
   id: uuid("id").defaultRandom().primaryKey(),
   title: text("title").notNull(),
@@ -116,14 +152,26 @@ export const breaks = tracking.table("breaks", {
   endedAt: timestamp("ended_at", { withTimezone: true }),
 });
 
+export const activityTypes = tracking.table("activity_types", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  code: text("code").notNull().unique(),
+  name: text("name").notNull(),
+  department: text("department").notNull(),
+  billable: boolean("billable").notNull().default(true),
+  active: boolean("active").notNull().default(true),
+});
+
 export const segments = tracking.table("activity_segments", {
   id: uuid("id").defaultRandom().primaryKey(),
   employeeId: uuid("employee_id").notNull(),
   shiftId: uuid("shift_id").notNull(),
   department: text("department").notNull(),
   taskCode: text("task_code").notNull(),
+  jobId: uuid("job_id"),
+  activityId: uuid("activity_id"),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
   endedAt: timestamp("ended_at", { withTimezone: true }),
+  endReason: text("end_reason"),
   deviceId: uuid("device_id"),
   note: text("note"),
 });
@@ -180,6 +228,7 @@ export const shipments = tracking.table("inbound_shipments", {
   status: text("status").notNull().default("expected"),
   expectedCartons: integer("expected_cartons").notNull().default(0),
   receivedCartons: integer("received_cartons").notNull().default(0),
+  jobId: uuid("job_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -200,6 +249,7 @@ export const receiptLines = tracking.table("receipt_lines", {
   expectedQty: integer("expected_qty").notNull(),
   receivedQty: integer("received_qty").notNull(),
   recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
+  segmentId: uuid("segment_id"),
 });
 
 export const loads = tracking.table("inbound_loads", {
@@ -214,6 +264,8 @@ export const loads = tracking.table("inbound_loads", {
   seal: text("seal"),
   palletCount: integer("pallet_count"),
   cartonCount: integer("carton_count"),
+  jobId: uuid("job_id"),
+  clientId: uuid("client_id"),
 });
 
 export const loadCrew = tracking.table("load_crew", {

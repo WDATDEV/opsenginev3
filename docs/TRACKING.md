@@ -11,7 +11,7 @@ Supporting modules used here:
 | Work | A count that does not match opens a follow-up task |
 | Audit | Every write stores a human summary |
 
-Order Health, billing, portal, and the rest of the WES stay out of this slice.
+A job belongs to one client. IceCartel and Jacob each have their own jobs, rates, and manager login. Shipments and loads hang off that job. Labor time is stored on the job, and a pause keeps the time already recorded. Draft charges use the client's rate card. QuickBooks is still out of this slice.
 
 ## The eight floor questions
 

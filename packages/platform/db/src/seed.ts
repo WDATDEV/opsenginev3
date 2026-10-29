@@ -5,15 +5,18 @@ import { eq } from "drizzle-orm";
 import { createDb } from "./client.js";
 import {
   activity,
+  activityTypes,
   clientRecords,
   deviceCheckouts,
   devices,
   employees,
   gaylords,
+  jobs,
   loadCrew,
   loads,
   packEvents,
   pickEvents,
+  rateCards,
   receiptLines,
   segments,
   shifts,
@@ -33,39 +36,141 @@ const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000);
 
 const passwordHash = await hash(process.env.SEED_OWNER_PASSWORD ?? "OpsEngine!dev", 10);
 
-const accounts = [
-  { email: "owner@opsengine.local", name: "Owner", role: "owner" },
-  { email: "nora@opsengine.local", name: "Nora Ellis", role: "warehouse_manager" },
-  { email: "hr@opsengine.local", name: "Harper Quinn", role: "hr_finance" },
-];
+const activityCatalog = [
+  ["pack_orders", "Pack orders", "packing", true],
+  ["pick_batch", "Pick batch", "picking", true],
+  ["receive_shipment", "Count and receive", "receiving", true],
+  ["inspect", "Inspect", "receiving", true],
+  ["putaway", "Putaway", "receiving", true],
+  ["unload_trailer", "Unload trailer", "unloading", true],
+  ["sort_gaylord", "Sort to carrier", "sorting", true],
+  ["kitting", "Kitting", "packing", true],
+  ["labeling", "Labeling", "packing", true],
+  ["returns", "Returns", "receiving", true],
+  ["indirect", "Internal work", "indirect", false],
+] as const;
 
-for (const account of accounts) {
-  const [existing] = await db
-    .select()
-    .from(users)
-    .where(eq(users.email, account.email))
-    .limit(1);
+for (const [code, name, department, billable] of activityCatalog) {
+  const [existing] = await db.select().from(activityTypes).where(eq(activityTypes.code, code)).limit(1);
+  if (!existing) await db.insert(activityTypes).values({ code, name, department, billable });
+}
+
+async function upsertClient(name: string, code: string) {
+  const [existing] = await db.select().from(clientRecords).where(eq(clientRecords.code, code)).limit(1);
+  if (existing) return existing;
+  const [created] = await db.insert(clientRecords).values({ name, code }).returning();
+  if (!created) throw new Error(`Could not seed ${name}`);
+  return created;
+}
+
+async function upsertJob(clientId: string, reference: string, title: string) {
+  const [existing] = await db.select().from(jobs).where(eq(jobs.reference, reference)).limit(1);
+  if (existing) return existing;
+  const [created] = await db.insert(jobs).values({ clientId, reference, title, status: "open" }).returning();
+  if (!created) throw new Error(`Could not seed ${reference}`);
+  return created;
+}
+
+async function upsertAccount(email: string, name: string, role: string, clientIds: string[] | null) {
+  const [existing] = await db.select().from(users).where(eq(users.email, email)).limit(1);
   if (!existing) {
-    await db.insert(users).values({ ...account, passwordHash });
+    await db.insert(users).values({ email, name, role, passwordHash, clientIds });
+    return;
   }
+  if (clientIds) await db.update(users).set({ role, clientIds }).where(eq(users.id, existing.id));
+}
+
+async function upsertRate(clientId: string, activityCode: string, unit: string, rateCents: number, label: string) {
+  const rows = await db.select().from(rateCards).where(eq(rateCards.clientId, clientId));
+  const existing = rows.find((rate) => rate.activityCode === activityCode && rate.unit === unit);
+  if (existing) return;
+  await db.insert(rateCards).values({ clientId, activityCode, unit, rateCents, label });
+}
+
+async function ensureShipment(reference: string, clientId: string, jobId: string, carrier: string, expectedCartons: number) {
+  const [existing] = await db.select().from(shipments).where(eq(shipments.reference, reference)).limit(1);
+  if (existing) {
+    if (!existing.jobId) {
+      await db.update(shipments).set({ jobId, clientId }).where(eq(shipments.id, existing.id));
+    }
+    return;
+  }
+  await db.insert(shipments).values({
+    reference,
+    clientId,
+    jobId,
+    carrier,
+    status: "expected",
+    expectedCartons,
+    receivedCartons: 0,
+  });
+}
+
+async function ensureLoad(reference: string, clientId: string, jobId: string, dock: string) {
+  const [existing] = await db.select().from(loads).where(eq(loads.reference, reference)).limit(1);
+  if (existing) {
+    if (!existing.jobId) {
+      await db.update(loads).set({ jobId, clientId }).where(eq(loads.id, existing.id));
+    }
+    return;
+  }
+  await db.insert(loads).values({
+    reference,
+    clientId,
+    jobId,
+    kind: "truck",
+    dock,
+    status: "arrived",
+  });
+}
+
+const northwind = await upsertClient("Northwind", "NW");
+const brightline = await upsertClient("Brightline", "BL");
+const icecartel = await upsertClient("IceCartel", "IC");
+const jacob = await upsertClient("Jacob", "JB");
+
+await upsertAccount("owner@opsengine.local", "Owner", "owner", null);
+await upsertAccount("nora@opsengine.local", "Nora Ellis", "warehouse_manager", null);
+await upsertAccount("hr@opsengine.local", "Harper Quinn", "hr_finance", null);
+await upsertAccount("lina@opsengine.local", "Lina Shah", "client_services", [icecartel.id]);
+await upsertAccount("owen@opsengine.local", "Owen Blake", "client_services", [jacob.id]);
+await upsertAccount("ice@opsengine.local", "IceCartel Ops", "external_customer", [icecartel.id]);
+await upsertAccount("jacob@opsengine.local", "Jacob Ops", "external_customer", [jacob.id]);
+
+const iceJob = await upsertJob(icecartel.id, "IC-1001", "Five pallets inbound");
+const jacobJob = await upsertJob(jacob.id, "JB-2001", "Two pallets inbound");
+const northwindJob = await upsertJob(northwind.id, "NW-4401", "Northwind inbound");
+
+await upsertRate(icecartel.id, "unload_trailer", "hour", 4500, "Unload labor");
+await upsertRate(icecartel.id, "unload_trailer", "pallet", 1200, "Pallet unload");
+await upsertRate(icecartel.id, "receive_shipment", "hour", 4000, "Receiving labor");
+await upsertRate(jacob.id, "unload_trailer", "hour", 3800, "Unload labor");
+await upsertRate(jacob.id, "unload_trailer", "carton", 150, "Carton unload");
+await upsertRate(jacob.id, "receive_shipment", "hour", 3600, "Receiving labor");
+
+await ensureShipment("ASN-IC-1001", icecartel.id, iceJob.id, "XPO", 5);
+await ensureLoad("TRL-IC-1001", icecartel.id, iceJob.id, "Dock 1");
+await ensureShipment("ASN-JB-2001", jacob.id, jacobJob.id, "Estes", 2);
+await ensureLoad("TRL-JB-2001", jacob.id, jacobJob.id, "Dock 4");
+
+const [existingNorthwindShipment] = await db.select().from(shipments).where(eq(shipments.reference, "ASN-4401")).limit(1);
+if (existingNorthwindShipment && !existingNorthwindShipment.jobId) {
+  await db.update(shipments).set({ jobId: northwindJob.id, clientId: northwind.id }).where(eq(shipments.id, existingNorthwindShipment.id));
+}
+const [existingNorthwindLoad] = await db.select().from(loads).where(eq(loads.reference, "TRL-881")).limit(1);
+if (existingNorthwindLoad && !existingNorthwindLoad.jobId) {
+  await db.update(loads).set({ jobId: northwindJob.id, clientId: northwind.id }).where(eq(loads.id, existingNorthwindLoad.id));
 }
 
 const [already] = await db.select({ id: employees.id }).from(employees).limit(1);
 if (already) {
-  console.log("Tracking floor already seeded.");
+  console.log("Tracking floor already seeded. Client jobs are ready.");
+  console.log("IceCartel manager  lina@opsengine.local / OpsEngine!dev");
+  console.log("IceCartel client   ice@opsengine.local  / OpsEngine!dev");
+  console.log("Jacob manager      owen@opsengine.local / OpsEngine!dev");
+  console.log("Jacob client       jacob@opsengine.local / OpsEngine!dev");
   process.exit(0);
 }
-
-const [northwind] = await db
-  .insert(clientRecords)
-  .values({ name: "Northwind", code: "NW" })
-  .returning();
-const [brightline] = await db
-  .insert(clientRecords)
-  .values({ name: "Brightline", code: "BL" })
-  .returning();
-
-if (!northwind || !brightline) throw new Error("Could not seed clients.");
 
 const roster = [
   ["Amina Cole", "B-10441", "packing", "WH-AMINA"],
@@ -307,6 +412,7 @@ const [shipment] = await db
   .values({
     reference: "ASN-4401",
     clientId: northwind.id,
+    jobId: northwindJob.id,
     carrier: "XPO",
     status: "receiving",
     expectedCartons: 18,
@@ -363,6 +469,8 @@ const [load] = await db
   .insert(loads)
   .values({
     reference: "TRL-881",
+    clientId: northwind.id,
+    jobId: northwindJob.id,
     kind: "truck",
     dock: "Dock 2",
     status: "unloading",
@@ -415,6 +523,10 @@ await db.insert(activity).values({
 
 console.log("Seeded the tracking floor.");
 console.log("Supervisor  nora@opsengine.local  /  OpsEngine!dev");
+console.log("IceCartel   lina@opsengine.local  /  OpsEngine!dev");
+console.log("IceCartel   ice@opsengine.local   /  OpsEngine!dev");
+console.log("Jacob       owen@opsengine.local  /  OpsEngine!dev");
+console.log("Jacob       jacob@opsengine.local /  OpsEngine!dev");
 console.log("Owner       owner@opsengine.local /  OpsEngine!dev");
 console.log("Badges      B-10441 Amina (own Warehance login) through B-10449 Chris");
 process.exit(0);

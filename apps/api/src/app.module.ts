@@ -4,8 +4,12 @@ import { JwtModule } from "@nestjs/jwt";
 import { AuthController } from "./auth/auth.controller.js";
 import { AuthGuard, OptionalAuthGuard } from "./auth/auth.guard.js";
 import { AuthService } from "./auth/auth.service.js";
+import { BillingController } from "./billing/billing.controller.js";
+import { BillingService } from "./billing/billing.service.js";
 import { ClientsController } from "./clients/clients.controller.js";
 import { DbService } from "./db.service.js";
+import { JobsController } from "./jobs/jobs.controller.js";
+import { JobsService } from "./jobs/jobs.service.js";
 import { HealthController } from "./health.controller.js";
 import { InternalController } from "./internal/internal.controller.js";
 import { TrackingController } from "./tracking/tracking.controller.js";
@@ -24,6 +28,8 @@ import { WorkService } from "./work/work.service.js";
     HealthController,
     AuthController,
     ClientsController,
+    JobsController,
+    BillingController,
     TrackingController,
     WorkController,
     InternalController,
@@ -34,6 +40,8 @@ import { WorkService } from "./work/work.service.js";
     AuthGuard,
     OptionalAuthGuard,
     TrackingService,
+    JobsService,
+    BillingService,
     WorkService,
   ],
 })

@@ -18,6 +18,7 @@ QR gate: http://localhost:3010/gate
 docker compose up -d
 pnpm install
 pnpm db:push
+pnpm db:clear
 pnpm db:seed
 pnpm dev
 ```

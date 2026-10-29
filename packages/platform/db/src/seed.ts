@@ -130,6 +130,18 @@ async function ensureLoad(reference: string, clientId: string, jobId: string, do
   });
 }
 
+if (process.env.SEED_DEMO !== "1") {
+  await upsertAccount("owner@opsengine.local", "Owner", "owner", null);
+  await upsertAccount("nora@opsengine.local", "Nora Ellis", "warehouse_manager", null);
+  await upsertAccount("hr@opsengine.local", "Harper Quinn", "hr_finance", null);
+  await upsertAccount("lina@opsengine.local", "Lina Shah", "client_services", null);
+  await upsertAccount("owen@opsengine.local", "Owen Blake", "client_services", null);
+  await upsertAccount("ice@opsengine.local", "IceCartel Ops", "external_customer", null);
+  await upsertAccount("jacob@opsengine.local", "Jacob Ops", "external_customer", null);
+  console.log("Sample records are off. Sign in as nora@opsengine.local / OpsEngine!dev and add a client.");
+  process.exit(0);
+}
+
 const northwind = await upsertClient("Northwind", "NW");
 const brightline = await upsertClient("Brightline", "BL");
 const icecartel = await upsertClient("IceCartel", "IC");

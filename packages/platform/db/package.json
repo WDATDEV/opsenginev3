@@ -10,7 +10,8 @@
   },
   "scripts": {
     "push": "tsx src/ensure.ts",
-    "seed": "tsx src/seed.ts"
+    "seed": "tsx src/seed.ts",
+    "clear": "tsx src/clear.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

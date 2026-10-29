@@ -54,8 +54,10 @@ type Conn = Database;
 type Employee = typeof employees.$inferSelect;
 type Device = typeof devices.$inferSelect;
 
-function isUnique(err: unknown) {
-  return typeof err === "object" && err !== null && "code" in err && err.code === "23505";
+function isUnique(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  if ("code" in err && err.code === "23505") return true;
+  return "cause" in err && isUnique(err.cause);
 }
 
 function clean(value: string) {

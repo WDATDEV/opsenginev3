@@ -28,6 +28,7 @@ type JobBoard = {
     clientId: string;
     clientName: string;
     clientCode: string;
+    enabledServices: string[];
     laborMinutes: number;
     assignees: { employeeId: string; name: string }[];
     tasks: JobTask[];
@@ -253,7 +254,10 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                   <TaskForm
                     people={people}
                     tasks={job.tasks}
+                    services={job.enabledServices}
+                    closed={job.status === "done"}
                     onAdd={(body) => act(`/jobs/${job.id}/tasks`, body)}
+                    onAddWork={(body) => act(`/jobs/${job.id}/work`, body)}
                   />
                 ) : null}
               </div>
@@ -335,40 +339,179 @@ function AssignForm({
   );
 }
 
+const WORK_KINDS = [
+  ["receiving", "Receiving"],
+  ["unloading", "Unloading"],
+  ["packing", "Packing"],
+  ["picking", "Picking"],
+  ["sorting", "Sorting"],
+] as const;
+
+const CARRIERS = ["usps", "ups", "fedex", "dhl", "other"] as const;
+
 function TaskForm({
   people,
   tasks,
+  services,
+  closed,
   onAdd,
+  onAddWork,
 }: {
   people: { id: string; name: string }[];
   tasks: JobTask[];
+  services: string[];
+  closed: boolean;
   onAdd: (body: { title: string; assigneeId?: string; dueOn?: string; dependsOnId?: string }) => Promise<boolean>;
+  onAddWork: (body: Record<string, unknown>) => Promise<boolean>;
 }) {
+  const kinds = WORK_KINDS.filter(([code]) => services.includes(code));
+  const [kind, setKind] = useState("");
   const [title, setTitle] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
   const [dueOn, setDueOn] = useState("");
   const [dependsOnId, setDependsOnId] = useState("");
+  const [reference, setReference] = useState("");
+  const [carrier, setCarrier] = useState<(typeof CARRIERS)[number]>("ups");
+  const [expectedCartons, setExpectedCartons] = useState(0);
+  const [loadKind, setLoadKind] = useState<"truck" | "container">("truck");
+  const [dock, setDock] = useState("Dock 1");
+  const [pallets, setPallets] = useState(0);
+  const [cartons, setCartons] = useState(0);
+  const [orders, setOrders] = useState(1);
+  const [note, setNote] = useState("");
+  const [units, setUnits] = useState(1);
+  const common = {
+    ...(assigneeId ? { assigneeId } : {}),
+    ...(dueOn ? { dueOn } : {}),
+    ...(dependsOnId ? { dependsOnId } : {}),
+  };
+
+  function body(): Record<string, unknown> {
+    if (kind === "receiving") return { kind, reference, carrier, expectedCartons, ...common };
+    if (kind === "unloading") return { kind, reference, loadKind, dock, pallets, cartons, ...common };
+    if (kind === "packing") return { kind, orders, note, ...common };
+    if (kind === "picking") return { kind, reference, units, ...common };
+    return { kind, reference, carrier, ...common };
+  }
+
+  function reset() {
+    setTitle("");
+    setDueOn("");
+    setDependsOnId("");
+    setReference("");
+    setExpectedCartons(0);
+    setPallets(0);
+    setCartons(0);
+    setOrders(1);
+    setNote("");
+    setUnits(1);
+  }
+
   return (
     <form
       className="mt-3 grid gap-3 md:grid-cols-4"
       onSubmit={(event) => {
         event.preventDefault();
-        void onAdd({
-          title,
-          ...(assigneeId ? { assigneeId } : {}),
-          ...(dueOn ? { dueOn } : {}),
-          ...(dependsOnId ? { dependsOnId } : {}),
-        }).then((ok) => {
-          if (!ok) return;
-          setTitle("");
-          setDueOn("");
-          setDependsOnId("");
+        const send = kind ? onAddWork(body()) : onAdd({ title, ...common });
+        void send.then((ok) => {
+          if (ok) reset();
         });
       }}
     >
-      <Field label="Task">
-        <input className="field" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Count the pallets" />
-      </Field>
+      {kinds.length > 0 && !closed ? (
+        <Field label="Type">
+          <select className="field" value={kind} onChange={(event) => setKind(event.target.value)}>
+            <option value="">Task</option>
+            {kinds.map(([code, label]) => (
+              <option key={code} value={code}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </Field>
+      ) : null}
+      {kind === "" ? (
+        <Field label="Task">
+          <input className="field" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Count the pallets" />
+        </Field>
+      ) : null}
+      {kind === "receiving" ? (
+        <>
+          <Field label="Shipment number">
+            <input className="field font-mono" value={reference} onChange={(event) => setReference(event.target.value)} />
+          </Field>
+          <Field label="Carrier">
+            <select className="field" value={carrier} onChange={(event) => setCarrier(event.target.value as typeof carrier)}>
+              {CARRIERS.map((item) => (
+                <option key={item} value={item}>
+                  {item.toUpperCase()}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Cartons expected">
+            <input className="field" type="number" min={0} value={expectedCartons} onChange={(event) => setExpectedCartons(Number(event.target.value))} />
+          </Field>
+        </>
+      ) : null}
+      {kind === "unloading" ? (
+        <>
+          <Field label="Trailer or container">
+            <input className="field font-mono" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Trailer number" />
+          </Field>
+          <Field label="Kind">
+            <select className="field" value={loadKind} onChange={(event) => setLoadKind(event.target.value as typeof loadKind)}>
+              <option value="truck">Truck</option>
+              <option value="container">Container</option>
+            </select>
+          </Field>
+          <Field label="Dock">
+            <input className="field" value={dock} onChange={(event) => setDock(event.target.value)} />
+          </Field>
+          <Field label="Pallets">
+            <input className="field" type="number" min={0} value={pallets} onChange={(event) => setPallets(Number(event.target.value))} />
+          </Field>
+          <Field label="Cartons">
+            <input className="field" type="number" min={0} value={cartons} onChange={(event) => setCartons(Number(event.target.value))} />
+          </Field>
+        </>
+      ) : null}
+      {kind === "packing" ? (
+        <>
+          <Field label="Orders to pack">
+            <input className="field" type="number" min={1} value={orders} onChange={(event) => setOrders(Number(event.target.value))} />
+          </Field>
+          <Field label="Note">
+            <input className="field" value={note} onChange={(event) => setNote(event.target.value)} />
+          </Field>
+        </>
+      ) : null}
+      {kind === "picking" ? (
+        <>
+          <Field label="Batch">
+            <input className="field font-mono" value={reference} onChange={(event) => setReference(event.target.value)} />
+          </Field>
+          <Field label="Units to pick">
+            <input className="field" type="number" min={1} value={units} onChange={(event) => setUnits(Number(event.target.value))} />
+          </Field>
+        </>
+      ) : null}
+      {kind === "sorting" ? (
+        <>
+          <Field label="Gaylord code">
+            <input className="field font-mono" value={reference} onChange={(event) => setReference(event.target.value)} />
+          </Field>
+          <Field label="Carrier">
+            <select className="field" value={carrier} onChange={(event) => setCarrier(event.target.value as typeof carrier)}>
+              {CARRIERS.map((item) => (
+                <option key={item} value={item}>
+                  {item.toUpperCase()}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </>
+      ) : null}
       <Field label="Assignee">
         <select className="field" value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)}>
           <option value="">Unassigned</option>
@@ -394,8 +537,11 @@ function TaskForm({
       </Field>
       <div className="md:col-span-4">
         <button className="btn btn-ghost" type="submit">
-          Add task
+          {kind ? `Add ${WORK_KINDS.find(([code]) => code === kind)?.[1].toLowerCase()}` : "Add task"}
         </button>
+        {kind ? (
+          <span className="ml-3 text-sm text-muted">This also opens the record on the {kind} board.</span>
+        ) : null}
       </div>
     </form>
   );

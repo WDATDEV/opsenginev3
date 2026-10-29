@@ -1,5 +1,11 @@
 import { Body, Controller, Get, Inject, Param, Post, UseGuards } from "@nestjs/common";
-import { assignEmployeeSchema, createJobSchema, createJobTaskSchema } from "@opsengine/contracts";
+import {
+  assignEmployeeSchema,
+  createJobSchema,
+  createJobTaskSchema,
+  createJobWorkSchema,
+} from "@opsengine/contracts";
+import type { z } from "zod";
 import { authorize, can, ForbiddenError, type Principal, type RequestContext } from "@opsengine/kernel";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser } from "../auth/current-user.js";
@@ -66,6 +72,16 @@ export class JobsController {
   ) {
     authorize(ctx, "job.manage");
     return this.jobs.addTask(ctx.principal, id, body);
+  }
+
+  @Post(":id/work")
+  work(
+    @CurrentUser() ctx: RequestContext,
+    @Param("id") id: string,
+    @Body(new ZodPipe(createJobWorkSchema)) body: z.infer<typeof createJobWorkSchema>,
+  ) {
+    authorize(ctx, "job.manage");
+    return this.jobs.addWork(ctx.principal, id, body);
   }
 
   @Post(":id/done")

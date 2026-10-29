@@ -297,6 +297,52 @@ export const createJobTaskSchema = z.object({
   dependsOnId: z.string().uuid().optional(),
 });
 
+export const jobWorkKinds = ["receiving", "unloading", "packing", "picking", "sorting"] as const;
+export type JobWorkKind = (typeof jobWorkKinds)[number];
+
+const jobWorkBase = {
+  assigneeId: z.string().uuid().optional(),
+  dueOn: day.optional(),
+  dependsOnId: z.string().uuid().optional(),
+};
+
+export const createJobWorkSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("receiving"),
+    reference: z.string().trim().min(1, "Enter the shipment number.").max(40),
+    carrier: z.enum(carriers),
+    expectedCartons: z.number().int().min(0).max(100000),
+    ...jobWorkBase,
+  }),
+  z.object({
+    kind: z.literal("unloading"),
+    reference: z.string().trim().min(1, "Enter the trailer or container number.").max(40),
+    loadKind: z.enum(["truck", "container"]),
+    dock: z.string().trim().min(1, "Enter the dock.").max(40),
+    pallets: z.number().int().min(0).max(100000),
+    cartons: z.number().int().min(0).max(1000000),
+    ...jobWorkBase,
+  }),
+  z.object({
+    kind: z.literal("packing"),
+    orders: z.number().int().min(1, "Enter how many orders to pack.").max(100000),
+    note: z.string().trim().max(200).optional(),
+    ...jobWorkBase,
+  }),
+  z.object({
+    kind: z.literal("picking"),
+    reference: z.string().trim().min(1, "Enter the batch code.").max(40),
+    units: z.number().int().min(1, "Enter how many units to pick.").max(1000000),
+    ...jobWorkBase,
+  }),
+  z.object({
+    kind: z.literal("sorting"),
+    reference: z.string().trim().min(1, "Enter the gaylord code.").max(40),
+    carrier: z.enum(carriers),
+    ...jobWorkBase,
+  }),
+]);
+
 export const createActivitySchema = z.object({
   code: z
     .string()

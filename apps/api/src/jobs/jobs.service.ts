@@ -5,6 +5,7 @@ import {
   charges,
   clientRecords,
   employees,
+  gaylords,
   jobAssignees,
   jobs,
   loads,
@@ -12,12 +13,16 @@ import {
   shipments,
   tasks,
 } from "@opsengine/db";
+import type { z } from "zod";
+import type { createJobWorkSchema } from "@opsengine/contracts";
 import { assertClientVisible, canSeeClient, type Principal } from "@opsengine/kernel";
-import { assertClientService } from "../clients/access.js";
+import { assertClientService, enabledServiceList } from "../clients/access.js";
 import { DbService } from "../db.service.js";
 
-function isUnique(err: unknown) {
-  return typeof err === "object" && err !== null && "code" in err && err.code === "23505";
+function isUnique(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  if ("code" in err && err.code === "23505") return true;
+  return "cause" in err && isUnique(err.cause);
 }
 
 @Injectable()
@@ -66,6 +71,7 @@ export class JobsService {
             clientId: job.clientId,
             clientName: client?.name ?? "Client",
             clientCode: client?.code ?? "",
+            enabledServices: enabledServiceList(client?.enabledServices),
             laborMinutes,
             assignees: assigneeRows
               .filter((row) => row.jobId === job.id)
@@ -220,6 +226,67 @@ export class JobsService {
       .returning();
     if (!created) throw new ConflictException("Could not add that task.");
     return { message: `${created.title} is on ${job.reference}.` };
+  }
+
+  async addWork(principal: Principal, jobId: string, input: z.infer<typeof createJobWorkSchema>) {
+    const job = await this.requireJob(principal, jobId);
+    if (job.status === "done") throw new ConflictException("That job is already closed.");
+    await assertClientService(this.db.db, job.clientId, input.kind);
+    const orm = this.db.db;
+    let title: string;
+    let details: string | undefined;
+    try {
+      if (input.kind === "receiving") {
+        const reference = input.reference.toUpperCase();
+        await orm.insert(shipments).values({
+          reference,
+          clientId: job.clientId,
+          jobId: job.id,
+          carrier: input.carrier,
+          status: "expected",
+          expectedCartons: input.expectedCartons,
+          receivedCartons: 0,
+        });
+        title = `Receive shipment ${reference}`;
+        details = `${input.expectedCartons} cartons expected from ${input.carrier.toUpperCase()}.`;
+      } else if (input.kind === "unloading") {
+        const reference = input.reference.toUpperCase();
+        await orm.insert(loads).values({
+          reference,
+          clientId: job.clientId,
+          jobId: job.id,
+          kind: input.loadKind,
+          dock: input.dock,
+          status: "arrived",
+          arrivalAt: new Date(),
+          palletCount: input.pallets,
+          cartonCount: input.cartons,
+        });
+        title = `Unload ${reference}`;
+        details = `${input.pallets} pallets, ${input.cartons} cartons.`;
+      } else if (input.kind === "sorting") {
+        const code = input.reference.toUpperCase();
+        await orm.insert(gaylords).values({ code, carrier: input.carrier, clientId: job.clientId, status: "open" });
+        title = `Sort into gaylord ${code}`;
+        details = `Carrier ${input.carrier.toUpperCase()}.`;
+      } else if (input.kind === "packing") {
+        title = `Pack ${input.orders} ${input.orders === 1 ? "order" : "orders"}`;
+        details = input.note || undefined;
+      } else {
+        title = `Pick ${input.units} ${input.units === 1 ? "unit" : "units"} for batch ${input.reference.toUpperCase()}`;
+      }
+    } catch (err) {
+      if (isUnique(err)) throw new ConflictException("That number is already used. Enter a different one.");
+      throw err;
+    }
+    await this.addTask(principal, job.id, {
+      title,
+      details,
+      assigneeId: input.assigneeId,
+      dueOn: input.dueOn,
+      dependsOnId: input.dependsOnId,
+    });
+    return { message: `${title} is on ${job.reference}.` };
   }
 
   async completeTask(principal: Principal, jobId: string, taskId: string) {

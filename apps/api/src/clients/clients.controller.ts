@@ -10,8 +10,10 @@ import { DbService } from "../db.service.js";
 import { ZodPipe } from "../http.js";
 import { enabledServiceList } from "./access.js";
 
-function isUnique(err: unknown) {
-  return typeof err === "object" && err !== null && "code" in err && err.code === "23505";
+function isUnique(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  if ("code" in err && err.code === "23505") return true;
+  return "cause" in err && isUnique(err.cause);
 }
 
 @Controller("clients")

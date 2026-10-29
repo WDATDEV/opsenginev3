@@ -14,6 +14,7 @@ import {
   claimStationSchema,
   clockSchema,
   completePackSchema,
+  createActivitySchema,
   createDeviceSchema,
   createEmployeeSchema,
   siteSchema,
@@ -27,7 +28,7 @@ import {
   sortScanSchema,
   switchTaskSchema,
 } from "@opsengine/contracts";
-import { authorize, type Principal, type RequestContext } from "@opsengine/kernel";
+import { authorize, can, ForbiddenError, type Principal, type RequestContext } from "@opsengine/kernel";
 import { AuthGuard, OptionalAuthGuard } from "../auth/auth.guard.js";
 import { CurrentPrincipal, CurrentUser } from "../auth/current-user.js";
 import { ZodPipe } from "../http.js";
@@ -36,6 +37,26 @@ import { TrackingService } from "./tracking.service.js";
 @Controller("tracking")
 export class TrackingController {
   constructor(@Inject(TrackingService) private readonly tracking: TrackingService) {}
+
+  @Get("activities")
+  @UseGuards(AuthGuard)
+  activities(@CurrentUser() ctx: RequestContext) {
+    if (!can(ctx.principal, "tracking.read") && !can(ctx.principal, "job.read")) {
+      throw new ForbiddenError();
+    }
+    return this.tracking.listActivities();
+  }
+
+  @Post("activities")
+  @UseGuards(AuthGuard)
+  createActivity(
+    @CurrentUser() ctx: RequestContext,
+    @Body(new ZodPipe(createActivitySchema))
+    body: { code: string; name: string; department: "packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect"; billable: boolean },
+  ) {
+    authorize(ctx, "tracking.manage");
+    return this.tracking.createActivity(body);
+  }
 
   @Get("floor")
   @UseGuards(AuthGuard)

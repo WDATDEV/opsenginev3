@@ -82,8 +82,17 @@ CREATE TABLE IF NOT EXISTS work.tasks (
   requestor_id uuid,
   related_type text,
   related_id uuid,
+  job_id uuid,
+  assignee_id uuid,
+  due_on date,
+  depends_on_id uuid,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE work.tasks ADD COLUMN IF NOT EXISTS job_id uuid;
+ALTER TABLE work.tasks ADD COLUMN IF NOT EXISTS assignee_id uuid;
+ALTER TABLE work.tasks ADD COLUMN IF NOT EXISTS due_on date;
+ALTER TABLE work.tasks ADD COLUMN IF NOT EXISTS depends_on_id uuid;
 
 CREATE TABLE IF NOT EXISTS audit.activity (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -108,6 +117,16 @@ CREATE TABLE IF NOT EXISTS tracking.employees (
   active boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS work.job_assignees (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  job_id uuid NOT NULL REFERENCES work.jobs(id),
+  employee_id uuid NOT NULL REFERENCES tracking.employees(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS job_assignees_one_person
+  ON work.job_assignees (job_id, employee_id);
 
 CREATE TABLE IF NOT EXISTS tracking.devices (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

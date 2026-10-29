@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Inject, Param, Post, UseGuards } from "@nestjs/common";
-import { createJobSchema } from "@opsengine/contracts";
+import { assignEmployeeSchema, createJobSchema, createJobTaskSchema } from "@opsengine/contracts";
 import { authorize, can, ForbiddenError, type Principal, type RequestContext } from "@opsengine/kernel";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser } from "../auth/current-user.js";
@@ -28,6 +28,43 @@ export class JobsController {
   ) {
     authorize(ctx, "job.manage");
     return this.jobs.create(ctx.principal, body);
+  }
+
+  @Post(":id/assignees")
+  assign(
+    @CurrentUser() ctx: RequestContext,
+    @Param("id") id: string,
+    @Body(new ZodPipe(assignEmployeeSchema)) body: { employeeId: string },
+  ) {
+    authorize(ctx, "job.manage");
+    return this.jobs.assign(ctx.principal, id, body.employeeId);
+  }
+
+  @Post(":id/assignees/remove")
+  unassign(
+    @CurrentUser() ctx: RequestContext,
+    @Param("id") id: string,
+    @Body(new ZodPipe(assignEmployeeSchema)) body: { employeeId: string },
+  ) {
+    authorize(ctx, "job.manage");
+    return this.jobs.unassign(ctx.principal, id, body.employeeId);
+  }
+
+  @Post(":id/tasks/:taskId/done")
+  taskDone(@CurrentUser() ctx: RequestContext, @Param("id") id: string, @Param("taskId") taskId: string) {
+    authorize(ctx, "job.manage");
+    return this.jobs.completeTask(ctx.principal, id, taskId);
+  }
+
+  @Post(":id/tasks")
+  task(
+    @CurrentUser() ctx: RequestContext,
+    @Param("id") id: string,
+    @Body(new ZodPipe(createJobTaskSchema))
+    body: { title: string; details?: string; assigneeId?: string; dueOn?: string; dependsOnId?: string },
+  ) {
+    authorize(ctx, "job.manage");
+    return this.jobs.addTask(ctx.principal, id, body);
   }
 
   @Post(":id/done")

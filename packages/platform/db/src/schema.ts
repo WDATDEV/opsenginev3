@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   doublePrecision,
+  date,
   integer,
   jsonb,
   pgSchema,
@@ -69,6 +70,13 @@ export const jobs = work.table("jobs", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const jobAssignees = work.table("job_assignees", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  jobId: uuid("job_id").notNull(),
+  employeeId: uuid("employee_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const tasks = work.table("tasks", {
   id: uuid("id").defaultRandom().primaryKey(),
   title: text("title").notNull(),
@@ -78,6 +86,10 @@ export const tasks = work.table("tasks", {
   requestorId: uuid("requestor_id"),
   relatedType: text("related_type"),
   relatedId: uuid("related_id"),
+  jobId: uuid("job_id"),
+  assigneeId: uuid("assignee_id"),
+  dueOn: date("due_on"),
+  dependsOnId: uuid("depends_on_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

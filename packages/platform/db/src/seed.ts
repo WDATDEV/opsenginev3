@@ -1,7 +1,7 @@
 import { config } from "dotenv";
 import { resolve } from "node:path";
 import { hash } from "bcryptjs";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { createDb } from "./client.js";
 import {
   activity,
@@ -11,6 +11,7 @@ import {
   devices,
   employees,
   gaylords,
+  jobAssignees,
   jobs,
   loadCrew,
   loads,
@@ -140,6 +141,48 @@ await upsertAccount("jacob@opsengine.local", "Jacob Ops", "external_customer", [
 const iceJob = await upsertJob(icecartel.id, "IC-1001", "Five pallets inbound");
 const jacobJob = await upsertJob(jacob.id, "JB-2001", "Two pallets inbound");
 const northwindJob = await upsertJob(northwind.id, "NW-4401", "Northwind inbound");
+
+async function seedPlan() {
+  const [mei] = await db.select().from(employees).where(eq(employees.badgeCode, "B-10445")).limit(1);
+  if (!mei) return;
+  const [assigned] = await db
+    .select()
+    .from(jobAssignees)
+    .where(and(eq(jobAssignees.jobId, iceJob.id), eq(jobAssignees.employeeId, mei.id)))
+    .limit(1);
+  if (!assigned) await db.insert(jobAssignees).values({ jobId: iceJob.id, employeeId: mei.id });
+  const existingTasks = await db.select().from(tasks).where(eq(tasks.jobId, iceJob.id));
+  let count = existingTasks.find((task) => task.title === "Count IceCartel pallets");
+  if (!count) {
+    const [created] = await db
+      .insert(tasks)
+      .values({
+        title: "Count IceCartel pallets",
+        details: "Count the five pallets before putaway.",
+        status: "open",
+        clientId: icecartel.id,
+        jobId: iceJob.id,
+        assigneeId: mei.id,
+        dueOn: "2026-11-02",
+      })
+      .returning();
+    count = created;
+  }
+  if (count && !existingTasks.some((task) => task.title === "Put away IceCartel pallets")) {
+    await db.insert(tasks).values({
+      title: "Put away IceCartel pallets",
+      details: "Putaway starts after the count is closed.",
+      status: "open",
+      clientId: icecartel.id,
+      jobId: iceJob.id,
+      assigneeId: mei.id,
+      dueOn: "2026-11-04",
+      dependsOnId: count.id,
+    });
+  }
+}
+
+await seedPlan();
 
 await upsertRate(icecartel.id, "unload_trailer", "hour", 4500, "Unload labor");
 await upsertRate(icecartel.id, "unload_trailer", "pallet", 1200, "Pallet unload");
@@ -521,6 +564,7 @@ await db.insert(activity).values({
   },
 });
 
+await seedPlan();
 console.log("Seeded the tracking floor.");
 console.log("Supervisor  nora@opsengine.local  /  OpsEngine!dev");
 console.log("IceCartel   lina@opsengine.local  /  OpsEngine!dev");

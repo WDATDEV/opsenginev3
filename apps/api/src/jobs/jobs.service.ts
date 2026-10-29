@@ -5,10 +5,12 @@ import {
   charges,
   clientRecords,
   employees,
+  jobAssignees,
   jobs,
   loads,
   segments,
   shipments,
+  tasks,
 } from "@opsengine/db";
 import { assertClientVisible, canSeeClient, type Principal } from "@opsengine/kernel";
 import { DbService } from "../db.service.js";
@@ -23,7 +25,7 @@ export class JobsService {
 
   async list(principal: Principal) {
     const orm = this.db.db;
-    const [jobRows, clientRows, segmentRows, people, shipmentRows, loadRows, chargeRows, activities] =
+    const [jobRows, clientRows, segmentRows, people, shipmentRows, loadRows, chargeRows, activities, assigneeRows, taskRows] =
       await Promise.all([
         orm.select().from(jobs).orderBy(desc(jobs.createdAt)),
         orm.select().from(clientRecords),
@@ -33,9 +35,12 @@ export class JobsService {
         orm.select().from(loads),
         orm.select().from(charges).orderBy(desc(charges.createdAt)),
         orm.select().from(activityTypes),
+        orm.select().from(jobAssignees),
+        orm.select().from(tasks).orderBy(desc(tasks.createdAt)),
       ]);
     const names = new Map(people.map((person) => [person.id, person.name]));
     const clientById = new Map(clientRows.map((client) => [client.id, client]));
+    const taskById = new Map(taskRows.map((task) => [task.id, task]));
     const showPeople = principal.role !== "external_customer";
     const showDrafts = principal.role !== "external_customer";
     const now = Date.now();
@@ -60,6 +65,23 @@ export class JobsService {
             clientName: client?.name ?? "Client",
             clientCode: client?.code ?? "",
             laborMinutes,
+            assignees: assigneeRows
+              .filter((row) => row.jobId === job.id)
+              .map((row) => ({ employeeId: row.employeeId, name: names.get(row.employeeId) ?? "Someone" })),
+            tasks: taskRows
+              .filter((task) => task.jobId === job.id)
+              .map((task) => ({
+                id: task.id,
+                title: task.title,
+                details: task.details,
+                status: task.status,
+                dueOn: task.dueOn,
+                assigneeId: task.assigneeId,
+                assigneeName: task.assigneeId ? names.get(task.assigneeId) ?? null : null,
+                dependsOnId: task.dependsOnId,
+                dependsOnTitle: task.dependsOnId ? taskById.get(task.dependsOnId)?.title ?? null : null,
+                blocked: Boolean(task.dependsOnId && taskById.get(task.dependsOnId)?.status !== "done" && task.status !== "done"),
+              })),
             openWorkerCount: openIds.length,
             openWorkers: showPeople ? openIds.map((id) => names.get(id) ?? "Someone") : [],
             shipments: shipmentRows
@@ -97,6 +119,10 @@ export class JobsService {
           department: activity.department,
           billable: activity.billable,
         })),
+      people:
+        principal.role === "external_customer"
+          ? []
+          : people.filter((person) => person.active).map((person) => ({ id: person.id, name: person.name })),
     };
   }
 
@@ -136,6 +162,80 @@ export class JobsService {
     }
     await this.db.db.update(jobs).set({ status: "done" }).where(eq(jobs.id, job.id));
     return { message: `${job.reference} is closed.` };
+  }
+
+  async assign(principal: Principal, jobId: string, employeeId: string) {
+    const job = await this.requireJob(principal, jobId);
+    const person = await this.activeEmployee(employeeId);
+    const existing = await this.db.db
+      .select()
+      .from(jobAssignees)
+      .where(and(eq(jobAssignees.jobId, job.id), eq(jobAssignees.employeeId, person.id)))
+      .limit(1);
+    if (!existing[0]) {
+      await this.db.db.insert(jobAssignees).values({ jobId: job.id, employeeId: person.id });
+    }
+    return { message: `${person.name} is assigned to ${job.reference}.` };
+  }
+
+  async unassign(principal: Principal, jobId: string, employeeId: string) {
+    const job = await this.requireJob(principal, jobId);
+    await this.db.db
+      .delete(jobAssignees)
+      .where(and(eq(jobAssignees.jobId, job.id), eq(jobAssignees.employeeId, employeeId)));
+    return { message: `Removed from ${job.reference}.` };
+  }
+
+  async addTask(
+    principal: Principal,
+    jobId: string,
+    input: { title: string; details?: string; assigneeId?: string; dueOn?: string; dependsOnId?: string },
+  ) {
+    const job = await this.requireJob(principal, jobId);
+    const assignee = input.assigneeId ? await this.activeEmployee(input.assigneeId) : null;
+    if (assignee) await this.assign(principal, job.id, assignee.id);
+    if (input.dependsOnId) {
+      const [earlier] = await this.db.db.select().from(tasks).where(eq(tasks.id, input.dependsOnId)).limit(1);
+      if (!earlier || earlier.jobId !== job.id) {
+        throw new ConflictException("A task can depend only on another task on this job.");
+      }
+    }
+    const [created] = await this.db.db
+      .insert(tasks)
+      .values({
+        title: input.title.trim(),
+        details: input.details?.trim() || null,
+        status: "open",
+        clientId: job.clientId,
+        requestorId: principal.id,
+        jobId: job.id,
+        assigneeId: assignee?.id ?? null,
+        dueOn: input.dueOn ?? null,
+        dependsOnId: input.dependsOnId ?? null,
+      })
+      .returning();
+    if (!created) throw new ConflictException("Could not add that task.");
+    return { message: `${created.title} is on ${job.reference}.` };
+  }
+
+  async completeTask(principal: Principal, jobId: string, taskId: string) {
+    const job = await this.requireJob(principal, jobId);
+    const [task] = await this.db.db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
+    if (!task || task.jobId !== job.id) throw new NotFoundException("That task is not on this job.");
+    if (task.dependsOnId) {
+      const [earlier] = await this.db.db.select().from(tasks).where(eq(tasks.id, task.dependsOnId)).limit(1);
+      if (earlier && earlier.status !== "done") {
+        throw new ConflictException(`Finish ${earlier.title} before closing this task.`);
+      }
+    }
+    await this.db.db.update(tasks).set({ status: "done" }).where(eq(tasks.id, task.id));
+    return { message: `${task.title} is done.` };
+  }
+
+  private async activeEmployee(employeeId: string) {
+    const [person] = await this.db.db.select().from(employees).where(eq(employees.id, employeeId)).limit(1);
+    if (!person || !person.active) throw new NotFoundException("That employee is not on the floor.");
+    return person;
   }
 
   async requireJob(principal: Principal, id: string) {

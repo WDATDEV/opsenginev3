@@ -26,11 +26,19 @@ const FLOOR_LINKS = [
   ["/work", "Follow-ups"],
 ] as const;
 
-function linksFor(role?: string) {
-  if (role === "external_customer") return [["/jobs", "Jobs"], ["/clients", "Account"]] as const;
-  if (role === "client_services") return [["/jobs", "Jobs"], ["/clients", "Clients"], ["/work", "Follow-ups"]] as const;
+function linksFor(role?: string): readonly (readonly [string, string])[] {
+  if (role === "external_customer") return [["/jobs", "Jobs"], ["/clients", "Account"]];
+  if (role === "client_services") return [["/jobs", "Jobs"], ["/clients", "Clients"], ["/work", "Follow-ups"]];
   if (role === "hr_finance") {
-    return [["/jobs", "Jobs"], ["/clients", "Clients"], ["/checkin", "Check-in"], ["/work", "Follow-ups"]] as const;
+    return [["/jobs", "Jobs"], ["/clients", "Clients"], ["/checkin", "Check-in"], ["/work", "Follow-ups"]];
+  }
+  if (role === "owner" || role === "warehouse_manager") {
+    const links: [string, string][] = [];
+    for (const [href, label] of FLOOR_LINKS) {
+      links.push([href, label]);
+      if (href === "/jobs") links.push(["/activities", "Activities"]);
+    }
+    return links;
   }
   return FLOOR_LINKS;
 }

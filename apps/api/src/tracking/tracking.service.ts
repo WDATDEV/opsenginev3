@@ -125,6 +125,40 @@ export class TrackingService {
     return trackingPolicy;
   }
 
+  async listActivities() {
+    const rows = await this.db.db.select().from(activityTypes);
+    return rows
+      .filter((row) => row.active)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((row) => ({
+        id: row.id,
+        code: row.code,
+        name: row.name,
+        department: row.department,
+        billable: row.billable,
+      }));
+  }
+
+  async createActivity(input: { code: string; name: string; department: Department; billable: boolean }) {
+    try {
+      const [created] = await this.db.db
+        .insert(activityTypes)
+        .values({
+          code: input.code.trim(),
+          name: input.name.trim(),
+          department: input.department,
+          billable: input.billable,
+          active: true,
+        })
+        .returning();
+      if (!created) throw new TrackingError("Could not add that activity.");
+      return { message: `${created.name} is available on the floor.` };
+    } catch (err) {
+      if (isUnique(err)) throw new TrackingError("That activity code is already used.");
+      throw err;
+    }
+  }
+
   async floor() {
     const orm = this.db.db;
     const [people, openShifts, openBreaks, openSegments, deviceRows, sessionRows, checkoutRows, packs, picks, lines, crews, scans, shipmentRows, loadRows, gaylordRows, jobRows, clientRows] =

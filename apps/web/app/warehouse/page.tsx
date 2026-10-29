@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Field, Notice } from "@/components/ui";
-import { ApiError, DEMO_BADGES, billBasisLabel, post, when } from "@/lib/api";
+import { ApiError, billBasisLabel, post, when } from "@/lib/api";
 
 type Context = {
   employee: {
     name: string;
     badgeCode: string;
     departmentHome: string;
+    clientId: string | null;
     clockedIn: boolean;
     onMeal: boolean;
   };
@@ -35,9 +36,10 @@ type Context = {
     clientName: string;
     clientCode: string;
     billBasis: string;
+    clientId: string | null;
     enabledServices: string[];
   }[];
-  activities: { code: string; name: string; department: string; billable: boolean }[];
+  activities: { id: string; code: string; name: string; department: string; billable: boolean }[];
   station: string | null;
   checkout: string | null;
   stations: {
@@ -73,7 +75,6 @@ const serviceForDepartment: Record<string, string> = {
 export default function WarehousePage() {
   const [badge, setBadge] = useState("");
   const [context, setContext] = useState<Context | null>(null);
-  const [area, setArea] = useState<(typeof AREAS)[number]>("packing");
   const [jobId, setJobId] = useState("");
   const [taskCode, setTaskCode] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -95,10 +96,7 @@ export default function WarehousePage() {
       if (result.task?.jobId) setJobId(result.task.jobId);
       else if (!jobId && result.jobs[0]) setJobId(result.jobs[0].id);
       if (result.task?.taskCode) setTaskCode(result.task.taskCode);
-      const department = result.task?.department;
-      if (department && AREAS.includes(department as (typeof AREAS)[number])) {
-        setArea(department as (typeof AREAS)[number]);
-      }
+      else if (result.paused?.taskCode) setTaskCode(result.paused.taskCode);
     } catch (err) {
       setContext(null);
       setError(err instanceof ApiError ? err.message : "Could not read that badge.");
@@ -123,13 +121,29 @@ export default function WarehousePage() {
     }
   }
 
-  const chosen = context?.activities.find((item) => item.code === taskCode) ?? null;
-  const projects = chosen
-    ? (context?.jobs ?? []).filter((job) => {
+  const jobs = (context?.jobs ?? []).filter(
+    (job) => !context?.employee.clientId || job.clientId === context.employee.clientId,
+  );
+  const taskTypes = (context?.activities ?? []).filter((activity) => {
+    if (!context) return false;
+    if (activity.code === context.task?.taskCode || activity.code === context.paused?.taskCode) return true;
+    if (!activity.billable) return true;
+    const service = serviceForDepartment[activity.department];
+    if (!service) return false;
+    return jobs.some((job) => job.enabledServices.includes(service));
+  });
+  const chosen = taskTypes.find((item) => item.code === taskCode) ?? null;
+  const projects = chosen?.billable
+    ? jobs.filter((job) => {
         const service = serviceForDepartment[chosen.department];
         return !service || job.enabledServices.includes(service);
       })
     : [];
+  const panel =
+    chosen && (AREAS as readonly string[]).includes(chosen.department)
+      ? (chosen.department as (typeof AREAS)[number])
+      : null;
+  const billableTypes = taskTypes.filter((activity) => activity.billable);
 
   return (
     <main className="mx-auto min-h-screen max-w-lg px-4 py-6">
@@ -158,31 +172,12 @@ export default function WarehousePage() {
               autoFocus
               value={badge}
               onChange={(event) => setBadge(event.target.value)}
-              placeholder="B-10442"
+              placeholder="Badge"
             />
           </Field>
-          <button className="btn btn-primary tap w-full" disabled={pending} type="submit">
+          <button className="btn btn-primary tap w-full" disabled={pending || badge.trim() === ""} type="submit">
             {pending ? "Checking" : "Continue"}
           </button>
-          <details className="text-sm text-muted">
-            <summary className="cursor-pointer">Seeded badges</summary>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {DEMO_BADGES.map(([code, label]) => (
-                <button
-                  key={code}
-                  className="rounded-full border border-black/10 px-3 py-2 text-left"
-                  type="button"
-                  onClick={() => {
-                    setBadge(code);
-                    void load(code);
-                  }}
-                >
-                  <span className="block font-mono text-ink">{code}</span>
-                  <span>{label}</span>
-                </button>
-              ))}
-            </div>
-          </details>
         </form>
       ) : (
         <div className="space-y-4">
@@ -209,9 +204,22 @@ export default function WarehousePage() {
               </button>
             </div>
             {!context.employee.clockedIn ? (
-              <p className="mt-3 text-sm">
-                Check in at the <Link className="text-moss" href="/gate">QR gate</Link> before work counts.
-              </p>
+              <div className="mt-3">
+                <Notice tone="bad">
+                  {context.employee.name} is not checked in. A project tap will not start the timer until a scan at the{" "}
+                  <Link className="underline" href="/gate">QR gate</Link>.
+                </Notice>
+              </div>
+            ) : null}
+            {context.employee.onMeal ? (
+              <button
+                className="btn btn-primary tap mt-3 w-full"
+                type="button"
+                disabled={saving}
+                onClick={() => void run("/tracking/clock", { badge, action: "meal_end", source: "kiosk" })}
+              >
+                End meal
+              </button>
             ) : null}
           </section>
           <section className="card space-y-3 p-4">
@@ -232,18 +240,27 @@ export default function WarehousePage() {
               </p>
             ) : null}
             <p className="text-sm font-medium">1. Task type</p>
+            {context.activities.length === 0 ? (
+              <p className="text-sm text-muted">No task types are set up yet.</p>
+            ) : null}
+            {context.activities.length > 0 && billableTypes.length === 0 ? (
+              <p className="text-sm text-muted">
+                {jobs.length === 0
+                  ? "No open project yet. Open a project before the timer can start."
+                  : "No open project has a task type turned on. Turn that service on for the client, then choose it here."}
+              </p>
+            ) : null}
             <div className="grid grid-cols-2 gap-2">
-              {(context.activities.length ? context.activities : AREAS.map((item) => ({ code: item, name: item, department: item, billable: true }))).map((activity) => (
+              {taskTypes.map((activity) => (
                 <button
-                  key={activity.code}
+                  key={activity.id}
                   className={`btn tap ${taskCode === activity.code ? "btn-primary" : "btn-ghost"}`}
                   type="button"
+                  disabled={saving}
                   onClick={() => {
                     setTaskCode(activity.code);
-                    if (AREAS.includes(activity.department as (typeof AREAS)[number])) {
-                      setArea(activity.department as (typeof AREAS)[number]);
-                    }
-                    if (!activity.billable && context.employee.clockedIn && !context.employee.onMeal) {
+                    setError(null);
+                    if (!activity.billable) {
                       void run("/tracking/tasks/switch", { badge, activityCode: activity.code });
                     }
                   }}
@@ -262,11 +279,10 @@ export default function WarehousePage() {
                       key={job.id}
                       className={`btn tap w-full ${context.task?.jobId === job.id && context.task.taskCode === chosen.code ? "btn-primary" : "btn-ghost"}`}
                       type="button"
+                      disabled={saving}
                       onClick={() => {
                         setJobId(job.id);
-                        if (context.employee.clockedIn && !context.employee.onMeal) {
-                          void run("/tracking/tasks/switch", { badge, activityCode: chosen.code, jobId: job.id });
-                        }
+                        void run("/tracking/tasks/switch", { badge, activityCode: chosen.code, jobId: job.id });
                       }}
                     >
                       {job.clientName} · {job.reference}
@@ -288,19 +304,19 @@ export default function WarehousePage() {
               </button>
             </div>
           </section>
-          {area === "packing" ? (
+          {panel === "packing" ? (
             <PackPanel context={context} badge={badge} run={run} />
           ) : null}
-          {area === "picking" ? (
+          {panel === "picking" ? (
             <PickPanel context={context} badge={badge} run={run} />
           ) : null}
-          {area === "receiving" ? (
+          {panel === "receiving" ? (
             <ReceivePanel context={context} badge={badge} run={run} />
           ) : null}
-          {area === "unloading" ? (
+          {panel === "unloading" ? (
             <UnloadPanel context={context} badge={badge} run={run} />
           ) : null}
-          {area === "sorting" ? (
+          {panel === "sorting" ? (
             <SortPanel context={context} badge={badge} run={run} />
           ) : null}
         </div>
@@ -318,9 +334,12 @@ function PackPanel({
   badge: string;
   run: (path: string, body: unknown) => Promise<void>;
 }) {
-  const [deviceCode, setDeviceCode] = useState(context.station ?? context.stations[1]?.code ?? context.stations[0]?.code ?? "");
+  const [deviceCode, setDeviceCode] = useState(context.station ?? context.stations[0]?.code ?? "");
   const [orderNumber, setOrderNumber] = useState("");
   const station = context.stations.find((item) => item.code === deviceCode);
+  if (context.stations.length === 0) {
+    return <p className="card p-4 text-sm text-muted">No packing computer is on the floor yet.</p>;
+  }
   return (
     <form
       className="card space-y-3 p-4"
@@ -378,8 +397,11 @@ function PickPanel({
 }) {
   const [deviceCode, setDeviceCode] = useState(context.checkout ?? context.scanners[0]?.code ?? "");
   const [sku, setSku] = useState("");
-  const [batchCode, setBatchCode] = useState("BATCH-20");
+  const [batchCode, setBatchCode] = useState("");
   const device = context.scanners.find((item) => item.code === deviceCode);
+  if (context.scanners.length === 0) {
+    return <p className="card p-4 text-sm text-muted">No scanner or handheld is on the floor yet.</p>;
+  }
   return (
     <form
       className="card space-y-3 p-4"
@@ -435,9 +457,11 @@ function ReceivePanel({
   const [expectedQty, setExpectedQty] = useState(1);
   const [receivedQty, setReceivedQty] = useState(1);
   const shipment = context.shipments.find((item) => item.id === shipmentId);
+  if (context.shipments.length === 0) {
+    return <p className="card p-4 text-sm text-muted">No open shipment for this project.</p>;
+  }
   return (
     <div className="card space-y-3 p-4">
-      {context.shipments.length === 0 ? <p>No open shipments.</p> : null}
       <Field label="Shipment">
         <select className="field" value={shipmentId} onChange={(event) => setShipmentId(event.target.value)}>
           {context.shipments.map((item) => (
@@ -494,6 +518,9 @@ function UnloadPanel({
 }) {
   const [loadId, setLoadId] = useState(context.loads[0]?.id ?? "");
   const load = context.loads.find((item) => item.id === loadId);
+  if (context.loads.length === 0) {
+    return <p className="card p-4 text-sm text-muted">No open truck or container.</p>;
+  }
   return (
     <div className="card space-y-3 p-4">
       <Field label="Truck or container">
@@ -532,6 +559,9 @@ function SortPanel({
   const [trackingNumber, setTrackingNumber] = useState("");
   const [method, setMethod] = useState<"scan" | "manual_place">("scan");
   const [reason, setReason] = useState("");
+  if (context.gaylords.length === 0) {
+    return <p className="card p-4 text-sm text-muted">No open gaylord.</p>;
+  }
   return (
     <form
       className="card space-y-3 p-4"

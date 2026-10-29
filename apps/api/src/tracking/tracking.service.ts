@@ -341,12 +341,16 @@ export class TrackingService {
         };
       };
 
+      const owned = (clientId: string | null) => !employee.clientId || clientId === employee.clientId;
+      const gear = (clientId: string | null) => owned(clientId) || clientId == null;
+
       return {
         employee: {
           id: employee.id,
           name: employee.name,
           badgeCode: employee.badgeCode,
           departmentHome: employee.departmentHome,
+          clientId: employee.clientId,
           warehanceUserId: employee.warehanceUserId,
           clockedIn: Boolean(shift),
           onMeal: Boolean(meal),
@@ -354,7 +358,7 @@ export class TrackingService {
         task: segment ? describe(segment) : null,
         paused: paused ? describe(paused) : null,
         jobs: jobRows
-          .filter((row) => row.status !== "done")
+          .filter((row) => row.status !== "done" && (!employee.clientId || row.clientId === employee.clientId))
           .map((row) => {
             const client = clientRows.find((item) => item.id === row.clientId);
             const services = Array.isArray(client?.enabledServices)
@@ -366,14 +370,19 @@ export class TrackingService {
               title: row.title,
               status: row.status,
               billBasis: row.billBasis,
+              clientId: row.clientId,
               clientName: client?.name ?? "Client",
               clientCode: client?.code ?? "",
               enabledServices: services,
             };
           }),
         activities: activities
-          .filter((row) => row.active)
+          .filter(
+            (row) =>
+              row.active && (!employee.clientId || row.clientId == null || row.clientId === employee.clientId),
+          )
           .map((row) => ({
+            id: row.id,
             code: row.code,
             name: row.name,
             department: row.department,
@@ -382,7 +391,7 @@ export class TrackingService {
         station: session ? deviceById.get(session.deviceId)?.code ?? null : null,
         checkout: checkout ? deviceById.get(checkout.deviceId)?.code ?? null : null,
         stations: deviceRows
-          .filter((row) => row.kind === "packing_computer")
+          .filter((row) => row.kind === "packing_computer" && gear(row.clientId))
           .map((row) => {
             const claimed = openSessions.find((item) => item.deviceId === row.id);
             return {
@@ -396,7 +405,7 @@ export class TrackingService {
             };
           }),
         scanners: deviceRows
-          .filter((row) => row.kind === "barcode_scanner" || row.kind === "handheld")
+          .filter((row) => (row.kind === "barcode_scanner" || row.kind === "handheld") && gear(row.clientId))
           .map((row) => {
             const held = openCheckouts.find((item) => item.deviceId === row.id);
             return {
@@ -411,7 +420,7 @@ export class TrackingService {
             };
           }),
         shipments: shipmentRows
-          .filter((row) => row.status !== "closed")
+          .filter((row) => row.status !== "closed" && owned(row.clientId))
           .map((row) => ({
             id: row.id,
             reference: row.reference,
@@ -421,7 +430,7 @@ export class TrackingService {
               .map((worker) => nameById.get(worker.employeeId) ?? "Someone"),
           })),
         loads: loadRows
-          .filter((row) => row.status !== "done")
+          .filter((row) => row.status !== "done" && owned(row.clientId))
           .map((row) => ({
             id: row.id,
             reference: row.reference,
@@ -432,7 +441,7 @@ export class TrackingService {
               .map((member) => nameById.get(member.employeeId) ?? "Someone"),
           })),
         gaylords: gaylordRows
-          .filter((row) => row.status === "open")
+          .filter((row) => row.status === "open" && owned(row.clientId))
           .map((row) => ({ id: row.id, code: row.code, carrier: row.carrier })),
       };
     });
@@ -656,13 +665,12 @@ export class TrackingService {
       const billable = activity ? activity.billable : taskCode !== "indirect";
       const jobCheck = assertBillableJob({ billable, jobId: input.jobId ?? null });
       if (!jobCheck.ok) throw new TrackingError(jobCheck.reason);
-      if (jobCheck.jobId) await this.claimJob(tx, jobCheck.jobId);
+      const job = jobCheck.jobId ? await this.jobForEmployee(tx, employee, jobCheck.jobId, department) : null;
       const segmentId = await this.touchSegment(tx, employee, shift.id, department, null, {
-        jobId: jobCheck.jobId,
+        jobId: job?.id ?? null,
         activityId: activity?.id ?? null,
         taskCode,
       });
-      const job = jobCheck.jobId ? await this.jobById(tx, jobCheck.jobId) : null;
       const label = activity?.name ?? department;
       const where = job ? ` on ${job.reference}` : "";
       await this.audit(
@@ -732,13 +740,15 @@ export class TrackingService {
       if (!last || (last.endReason !== "pause" && last.endReason !== "meal")) {
         throw new TrackingError("Nothing is paused.");
       }
-      if (last.jobId) await this.claimJob(tx, last.jobId);
+      if (last.jobId) await this.jobForEmployee(tx, employee, last.jobId, asDepartment(last.department));
       await this.touchSegment(tx, employee, shift.id, asDepartment(last.department), last.deviceId, {
         jobId: last.jobId,
         activityId: last.activityId,
         taskCode: last.taskCode,
       });
-      return { message: `${employee.name} resumed ${last.taskCode}.` };
+      const named = await tx.select().from(activityTypes).where(eq(activityTypes.code, last.taskCode));
+      const activity = named.find((row) => row.clientId == null) ?? named[0];
+      return { message: `${employee.name} resumed ${activity?.name ?? last.taskCode}.` };
     });
   }
 
@@ -1937,6 +1947,17 @@ export class TrackingService {
     const [job] = await tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
     if (!job) throw new TrackingError("That job is not on file.");
     return job;
+  }
+
+  private async jobForEmployee(tx: Conn, employee: Employee, jobId: string, department: Department) {
+    const job = await this.jobById(tx, jobId);
+    if (employee.clientId && job.clientId !== employee.clientId) {
+      throw new TrackingError("That project belongs to another client.");
+    }
+    if (department !== "indirect") {
+      await assertClientService(this.db.db, job.clientId, department);
+    }
+    return this.claimJob(tx, job.id);
   }
 
   private async claimJob(tx: Conn, jobId: string) {

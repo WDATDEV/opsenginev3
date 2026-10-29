@@ -109,15 +109,3 @@ export function when(value: string) {
     minute: "2-digit",
   }).format(new Date(value));
 }
-
-export const DEMO_BADGES = [
-  ["B-10441", "Amina · own packing station"],
-  ["B-10442", "Luis · shared pack station"],
-  ["B-10443", "Priya · personal scanner"],
-  ["B-10444", "Jonah · shared handheld"],
-  ["B-10445", "Mei · receiving"],
-  ["B-10446", "Andre · same shipment"],
-  ["B-10447", "Rosa · on the truck"],
-  ["B-10448", "Sam · join the truck"],
-  ["B-10449", "Chris · sorting"],
-] as const;

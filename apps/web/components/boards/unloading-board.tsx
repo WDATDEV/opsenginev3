@@ -18,6 +18,7 @@ type Board = {
     clientId?: string | null;
     clientName?: string | null;
     jobReference?: string | null;
+    assigned: { employeeId: string; name: string }[];
     crew: {
       employeeId: string;
       name: string;
@@ -153,10 +154,11 @@ function LoadCard({
   onAct: (path: string, body: unknown) => Promise<boolean>;
 }) {
   const [badge, setBadge] = useState("B-10448");
-  const [employeeId, setEmployeeId] = useState(people[0]?.id ?? "");
-  const [source, setSource] = useState<"badge" | "lead_added" | "paper">("badge");
-  const [pallets, setPallets] = useState(8);
-  const [cartons, setCartons] = useState(120);
+  const waiting = load.assigned.filter((person) => !load.crew.some((member) => member.employeeId === person.employeeId));
+  const [employeeId, setEmployeeId] = useState(waiting[0]?.employeeId ?? people[0]?.id ?? "");
+  const [source, setSource] = useState<"badge" | "lead_added" | "paper">(waiting.length > 0 ? "lead_added" : "badge");
+  const [pallets, setPallets] = useState(load.palletCount ?? 8);
+  const [cartons, setCartons] = useState(load.cartonCount ?? 120);
 
   return (
     <article className="card p-4">
@@ -182,6 +184,12 @@ function LoadCard({
         ))}
         {load.crew.length === 0 ? <li className="text-muted">No crew recorded yet.</li> : null}
       </ul>
+      {waiting.length > 0 ? (
+        <p className="mt-2 text-sm">
+          Assigned on the job: {waiting.map((person) => person.name).join(", ")}.
+          <span className="text-muted"> They are not on this load yet. Add them to the crew when they start, and the timer begins then.</span>
+        </p>
+      ) : null}
       {manage && load.status !== "done" ? (
         <div className="mt-4 grid gap-4 border-t border-black/5 pt-4 lg:grid-cols-2">
           <form
@@ -209,9 +217,12 @@ function LoadCard({
             ) : (
               <Field label="Employee">
                 <select className="field" value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}>
-                  {people.map((person) => (
+                  {[...people]
+                    .sort((a, b) => Number(waiting.some((w) => w.employeeId === b.id)) - Number(waiting.some((w) => w.employeeId === a.id)))
+                    .map((person) => (
                     <option key={person.id} value={person.id}>
                       {person.name}
+                      {waiting.some((w) => w.employeeId === person.id) ? " · assigned on the job" : ""}
                     </option>
                   ))}
                 </select>

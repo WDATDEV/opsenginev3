@@ -1402,12 +1402,13 @@ export class TrackingService {
 
   async unloadingBoard() {
     const orm = this.db.db;
-    const [loadRows, crew, people, clientRows, jobRows] = await Promise.all([
+    const [loadRows, crew, people, clientRows, jobRows, assigneeRows] = await Promise.all([
       orm.select().from(loads),
       orm.select().from(loadCrew),
       orm.select().from(employees),
       orm.select().from(clientRecords),
       orm.select().from(jobs),
+      orm.select().from(jobAssignees),
     ]);
     const names = new Map(people.map((person) => [person.id, person.name]));
     const clientNames = new Map(clientRows.map((client) => [client.id, client.name]));
@@ -1419,6 +1420,9 @@ export class TrackingService {
           ...row,
           clientName: row.clientId ? clientNames.get(row.clientId) ?? null : null,
           jobReference: row.jobId ? jobRefs.get(row.jobId) ?? null : null,
+          assigned: assigneeRows
+            .filter((item) => item.jobId === row.jobId)
+            .map((item) => ({ employeeId: item.employeeId, name: names.get(item.employeeId) ?? "Someone" })),
           crew: crew
             .filter((member) => member.loadId === row.id)
             .map((member) => ({

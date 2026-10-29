@@ -1,33 +1,12 @@
 # Access request for employee activity tracking
 
-Please create the access below and send it back to us. These are the keys Ops Engine needs to read employee activity from Warehance, Slack, and Google Workspace.
+Please create the access below and send it back to us. These are the keys Ops Engine needs to read employee activity from Slack and Google Workspace.
 
 We use them as evidence next to the badge clock. They do not replace punch in and punch out, and they do not change any hours already recorded.
 
 Please send the keys by private email or a password manager. Do not paste them in a public Slack channel.
 
-## 1. Warehance — one API key
-
-Ask a Warehance admin to create a **read-only organization API key**.
-
-The key needs read access to:
-
-- Users
-- Orders
-- Shipments
-- Inbound and receiving
-- Activity history
-
-Please also confirm two things about pick and pack records:
-
-- Does each record include the employee id?
-- Does each record include the date and time of the pick or pack?
-
-We will store the employee and the timestamp when both are present, and only for someone who is already clocked in. If the employee is missing, we keep the badge record and do not create hours.
-
-**Send us:** the read-only API key.
-
-## 2. Slack — two tokens
+## 1. Slack — two tokens
 
 Slack does not have an existing API key to copy. A Workspace Owner creates an app, installs it, and Slack generates the tokens. The workspace must be on **Business+ or Enterprise**. Those tokens are the keys.
 
@@ -62,7 +41,7 @@ For each person and each date:
 
 Slack does not provide a start time or an end time. We will not read or send messages.
 
-## 3. Google Workspace — one JSON key file
+## 2. Google Workspace — one JSON key file
 
 A normal Google Cloud “API key” cannot read employee activity. A Super Admin creates a service account and downloads a JSON file. That file is the key.
 
@@ -103,7 +82,6 @@ We will not read Gmail. Closing a laptop usually does not create a sign-out, so 
 
 | System | Send this |
 |---|---|
-| Warehance | Read-only organization API key, plus yes/no on employee id and timestamp for picks and packs |
 | Slack | Bot token (`xoxb-`) and admin user token (`xoxp-`) |
 | Google Workspace | Service account JSON file, Client ID, and confirmation that the three scopes are approved |
 
@@ -113,8 +91,7 @@ This request does not include QuickBooks. Please do not send a QuickBooks passwo
 
 | System | Who it covers | What it adds |
 |---|---|---|
-| Warehance | Warehouse | Pick and pack time, only when the record has an employee and a timestamp |
 | Slack | Sales | Proof the person was active that day, with message and call counts |
 | Google Workspace | Office and client services | Sign-in and work-activity times during the day |
 
-Paid hours stay on the Ops Engine badge clock. These three sources explain what the person was doing. They do not create paid hours on their own.
+Paid hours stay on the Ops Engine badge clock. These sources explain what the person was doing. They do not create paid hours on their own.

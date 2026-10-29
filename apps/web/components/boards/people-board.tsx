@@ -11,7 +11,6 @@ type Employee = {
   badgeCode: string;
   departmentHome: string;
   employmentType: string;
-  warehanceUserId: string | null;
   active: boolean;
   clientId: string | null;
 };
@@ -24,7 +23,6 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string } 
   const [name, setName] = useState("");
   const [badgeCode, setBadgeCode] = useState("");
   const [departmentHome, setDepartmentHome] = useState("packing");
-  const [warehanceUserId, setWarehanceUserId] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,13 +35,11 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string } 
         badgeCode,
         departmentHome,
         employmentType: "employee",
-        warehanceUserId: warehanceUserId || undefined,
         ...(client ? { clientId: client.id } : {}),
       });
       setMessage(`${name} is on the floor.`);
       setName("");
       setBadgeCode("");
-      setWarehanceUserId("");
       board.reload();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not add that person.");
@@ -54,11 +50,11 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string } 
     <div>
       <PageTitle
         kicker="People"
-        title={client ? `People for ${client.name}` : "Badges and Warehance users"}
+        title={client ? `People for ${client.name}` : "Badges"}
         detail={
           client
             ? `People added here belong to ${client.name}. Their badge is how check-in knows them.`
-            : "A badge is how the floor knows a person. A Warehance user is optional, because some packers share a station login and some pickers only have a scanner."
+            : "A badge is how the floor knows a person. Packers on a shared station badge in. Pickers use a scanner."
         }
       />
       {board.error ? <Notice tone="bad">{board.error}</Notice> : null}
@@ -83,9 +79,6 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string } 
                 ))}
               </select>
             </Field>
-            <Field label="Warehance user, if they have one">
-              <input className="field font-mono" value={warehanceUserId} onChange={(event) => setWarehanceUserId(event.target.value)} />
-            </Field>
             <button className="btn btn-primary w-full" type="submit">
               Add employee
             </button>
@@ -98,7 +91,6 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string } 
                 <th className="px-4 py-3 font-medium">Name</th>
                 <th className="px-4 py-3 font-medium">Badge</th>
                 <th className="px-4 py-3 font-medium">Home</th>
-                <th className="px-4 py-3 font-medium">Warehance</th>
               </tr>
             </thead>
             <tbody>
@@ -109,7 +101,6 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string } 
                   <td className="px-4 py-3 font-medium">{person.name}</td>
                   <td className="px-4 py-3 font-mono">{person.badgeCode}</td>
                   <td className="px-4 py-3 capitalize">{person.departmentHome}</td>
-                  <td className="px-4 py-3 font-mono text-xs">{person.warehanceUserId ?? "Shared or none"}</td>
                 </tr>
               ))}
             </tbody>

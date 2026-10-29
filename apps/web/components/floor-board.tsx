@@ -18,7 +18,6 @@ type Floor = {
     name: string;
     badgeCode: string;
     departmentHome: string;
-    warehanceUserId: string | null;
     clockedIn: boolean;
     onMeal: boolean;
     entry: string | null;
@@ -70,7 +69,6 @@ export function FloorBoard() {
                   <th className="px-4 py-3 font-medium">Home</th>
                   <th className="px-4 py-3 font-medium">Right now</th>
                   <th className="px-4 py-3 font-medium">Place</th>
-                  <th className="px-4 py-3 font-medium">Warehance</th>
                 </tr>
               </thead>
               <tbody>
@@ -96,9 +94,6 @@ export function FloorBoard() {
                       ) : null}
                     </td>
                     <td className="px-4 py-3 font-mono">{person.place ?? "—"}</td>
-                    <td className="px-4 py-3 font-mono text-xs">
-                      {person.warehanceUserId ?? "No personal login"}
-                    </td>
                   </tr>
                 ))}
               </tbody>

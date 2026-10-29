@@ -16,7 +16,7 @@ const amina = "amina";
 const luis = "luis";
 
 describe("packing identity", () => {
-  it("uses the Warehance user on an individual login", () => {
+  it("uses the person assigned to an individual station", () => {
     const result = resolvePacker({
       loginMode: "individual",
       warehanceMappedEmployeeId: amina,
@@ -32,10 +32,10 @@ describe("packing identity", () => {
   it("requires a badge when the packing computer is a shared login", () => {
     const result = resolvePacker({ loginMode: "shared" });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toMatch(/shared Warehance login/);
+    if (!result.ok) expect(result.reason).toMatch(/shared station login/);
   });
 
-  it("records the badged packer on a shared computer even when Warehance has no person", () => {
+  it("records the badged packer on a shared computer when nobody is assigned", () => {
     const result = resolvePacker({
       loginMode: "shared",
       badgeEmployeeId: luis,

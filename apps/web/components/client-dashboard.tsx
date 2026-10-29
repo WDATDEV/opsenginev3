@@ -30,7 +30,7 @@ export function ClientDashboard() {
   return (
     <div>
       <PageTitle
-        kicker="Warehance"
+        kicker="Ops Engine"
         title="Clients"
         detail="Add a client once, then view them. The menu switches to that client's active services. Main menu brings this list back."
       />

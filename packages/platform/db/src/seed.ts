@@ -613,7 +613,7 @@ await db.insert(activity).values({
   entityId: "WH-10002",
   after: {
     summary:
-      "Luis Ortega packed WH-10002 on a shared station. Warehance did not store the packer.",
+      "Luis Ortega packed WH-10002 by badging onto a shared station.",
   },
 });
 
@@ -625,5 +625,5 @@ console.log("IceCartel   ice@opsengine.local   /  OpsEngine!dev");
 console.log("Jacob       owen@opsengine.local  /  OpsEngine!dev");
 console.log("Jacob       jacob@opsengine.local /  OpsEngine!dev");
 console.log("Owner       owner@opsengine.local /  OpsEngine!dev");
-console.log("Badges      B-10441 Amina (own Warehance login) through B-10449 Chris");
+console.log("Badges      B-10441 Amina (own packing station) through B-10449 Chris");
 process.exit(0);

@@ -97,7 +97,7 @@ export function when(value: string) {
 }
 
 export const DEMO_BADGES = [
-  ["B-10441", "Amina · own Warehance login"],
+  ["B-10441", "Amina · own packing station"],
   ["B-10442", "Luis · shared pack station"],
   ["B-10443", "Priya · personal scanner"],
   ["B-10444", "Jonah · shared handheld"],

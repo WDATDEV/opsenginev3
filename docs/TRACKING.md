@@ -1,6 +1,6 @@
 # Work tracking
 
-Ops Engine records who did the work Warehance does not reliably keep. The module is `packages/modules/tracking`. The API in `apps/api` is the only caller. The web app never reads another module’s tables.
+Ops Engine records who did the work. The module is `packages/modules/tracking`. The API in `apps/api` is the only caller. The web app never reads another module’s tables.
 
 Supporting modules used here:
 
@@ -15,8 +15,8 @@ A job belongs to one client. IceCartel and Jacob each have their own jobs, rates
 
 ## The eight floor questions
 
-1. **Packing logins.** Each packing computer is `individual` or `shared`. An individual computer follows that person’s Warehance user. A shared computer keeps a station login, and the packer badges in.
-2. **Who packed it.** Ops Engine always stores the employee. `warehanceRecorded` says whether Warehance also stored them. If it did not, the badge or the open station session is still the record.
+1. **Packing logins.** Each packing computer is `individual` or `shared`. An individual computer belongs to one person. A shared computer keeps a station login, and the packer badges in.
+2. **Who packed it.** Ops Engine always stores the employee. On an individual computer, that person is the packer. On a shared computer, the badge or the open station session is the record.
 3. **Picking devices.** A personal scanner is assigned to one picker. A shared handheld must be checked out, or the picker badges at the scan.
 4. **Receiving together.** Several employees can be active on one shipment. Each count is stored against the person who entered it.
 5. **Unloading crew.** Someone badges onto the truck, a lead adds a name, or a supervisor enters the paper list. Each person has a start and an end.

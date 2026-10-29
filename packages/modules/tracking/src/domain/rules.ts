@@ -29,16 +29,16 @@ export const trackingPolicy = [
   {
     id: "packing-login",
     area: "Packing",
-    question: "Does each packer have their own Warehance login, or do employees share computers and logins?",
+    question: "Does each packer have their own station, or do employees share computers?",
     answer:
-      "Both happen on this floor. Each packing computer is marked individual or shared. An individual computer follows that person's Warehance login. A shared computer stays on a station login, and the packer badges in.",
+      "Both happen on this floor. Each packing computer is marked individual or shared. An individual computer belongs to one person. A shared computer stays on a station login, and the packer badges in.",
   },
   {
     id: "packing-attribution",
     area: "Packing",
-    question: "When an employee finishes packing, does Warehance record who packed the order?",
+    question: "When an employee finishes packing, who is recorded as the packer?",
     answer:
-      "Sometimes. Ops Engine always stores the packer. If Warehance also stored them, the event is marked recorded there. If it did not, the badge or the open station session is still the record.",
+      "Ops Engine stores the packer. On an individual computer, that person is the packer. On a shared computer, the badge or the open station session is the record.",
   },
   {
     id: "picking-devices",
@@ -104,7 +104,7 @@ export function resolvePacker(input: {
     const employeeId = badge ?? session ?? manual;
     if (!employeeId) {
       return fail(
-        "This packing computer uses a shared Warehance login. Scan the packer's badge so we record who packed the order.",
+        "This packing computer uses a shared station login. Scan the packer's badge so we record who packed the order.",
       );
     }
     return {
@@ -160,7 +160,7 @@ export function resolvePacker(input: {
   }
 
   return fail(
-    "No packer on this order. Warehance did not name one, and nobody has badged in at this computer.",
+    "No packer on this order. Nobody is assigned to this computer, and nobody has badged in.",
   );
 }
 
@@ -297,23 +297,23 @@ export function normalizeDevice(input: {
   const assigned = input.assignedEmployeeId ?? null;
 
   if (input.warehanceLoginMode === "shared" && input.ownership === "personal") {
-    return fail("A shared Warehance login is a station device, not a personal one.");
+    return fail("A shared station login is a station device, not a personal one.");
   }
 
   if (input.kind === "packing_computer") {
     if (input.warehanceLoginMode === "none") {
       return fail(
-        "A packing computer is either an individual Warehance login or a shared station login.",
+        "A packing computer is either an individual login or a shared station login.",
       );
     }
     if (input.warehanceLoginMode === "individual" && !assigned) {
-      return fail("An individual Warehance packing computer has to be assigned to that person.");
+      return fail("An individual packing computer has to be assigned to that person.");
     }
     return { ok: true };
   }
 
   if (input.warehanceLoginMode !== "none") {
-    return fail("Only packing computers carry a Warehance login.");
+    return fail("Only packing computers carry a station login.");
   }
 
   if (input.ownership === "personal" && !assigned) {

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useState } from "react";
-import { api, canManage, canOpenService, CLIENT_SERVICES, post, type User } from "@/lib/api";
+import { api, canOpenService, CLIENT_SERVICES, post, type User } from "@/lib/api";
 
 const SessionContext = createContext<User | null>(null);
 const ClientNavContext = createContext<() => void>(() => {});
@@ -107,7 +107,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center justify-between px-4 py-4 md:block">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-moss">Ops Engine</p>
-              <p className="text-lg font-semibold">{canManage(user?.role) ? "Warehance" : "Work tracking"}</p>
+              <p className="text-lg font-semibold">Work tracking</p>
             </div>
             <button className="btn btn-ghost md:mt-4" onClick={logout} type="button">
               Sign out

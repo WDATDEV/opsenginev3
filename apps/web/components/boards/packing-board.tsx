@@ -20,7 +20,6 @@ type Board = {
     packedAt: string;
     units: number;
     clientId: string | null;
-    warehanceRecorded: boolean;
   }[];
 };
 
@@ -31,7 +30,6 @@ export function PackingBoard({ client }: { client?: { id: string; name: string }
   const [deviceCode, setDeviceCode] = useState("PC-PACK-2");
   const [badge, setBadge] = useState("B-10442");
   const [units, setUnits] = useState(1);
-  const [warehanceRecorded, setWarehanceRecorded] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,7 +43,6 @@ export function PackingBoard({ client }: { client?: { id: string; name: string }
         deviceCode,
         badge,
         units,
-        warehanceRecorded,
         ...(client ? { clientId: client.id } : {}),
       });
       setMessage(result.message);
@@ -64,7 +61,7 @@ export function PackingBoard({ client }: { client?: { id: string; name: string }
         detail={
           client
             ? `Packs recorded here stay on ${client.name}. Shared station logins still need a badge.`
-            : "Individual Warehance logins count as that person. Shared station logins need a badge. Ops Engine keeps the packer either way."
+            : "An individual station counts as that person. A shared station needs a badge. Ops Engine keeps the packer either way."
         }
       />
       {board.error ? <Notice tone="bad">{board.error}</Notice> : null}
@@ -98,14 +95,6 @@ export function PackingBoard({ client }: { client?: { id: string; name: string }
                 onChange={(event) => setUnits(Number(event.target.value))}
               />
             </Field>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={warehanceRecorded}
-                onChange={(event) => setWarehanceRecorded(event.target.checked)}
-              />
-              Warehance stored the packer
-            </label>
             <button className="btn btn-primary w-full" type="submit">
               Finish pack
             </button>
@@ -119,7 +108,7 @@ export function PackingBoard({ client }: { client?: { id: string; name: string }
                 <h3 className="text-lg font-semibold">{station.label}</h3>
                 <p className="mt-2 text-sm">
                   {station.loginMode === "shared"
-                    ? "Shared Warehance login"
+                    ? "Shared station login"
                     : `Individual login${station.assignedTo ? ` · ${station.assignedTo}` : ""}`}
                 </p>
                 <p className="mt-1 text-sm text-muted">
@@ -137,8 +126,7 @@ export function PackingBoard({ client }: { client?: { id: string; name: string }
                 <li key={item.id} className="border-b border-black/5 pb-3 last:border-0">
                   <p>{item.sentence}</p>
                   <p className="mt-1 text-xs text-muted">
-                    {item.units} units · {when(item.packedAt)} ·{" "}
-                    {item.warehanceRecorded ? "Warehance recorded" : "Warehance did not record"}
+                    {item.units} units · {when(item.packedAt)}
                   </p>
                 </li>
               ))}

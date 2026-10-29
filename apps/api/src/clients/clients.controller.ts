@@ -63,7 +63,7 @@ export class ClientsController {
         })
         .returning();
       if (!created) throw new ConflictException("Could not add that client.");
-      return { id: created.id, message: `${created.name} is on Warehance.` };
+      return { id: created.id, message: `${created.name} is ready.` };
     } catch (err) {
       if (isUnique(err)) throw new ConflictException("That client code is already used.");
       throw err;

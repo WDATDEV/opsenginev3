@@ -92,7 +92,7 @@ export function EquipmentBoard({ client }: { client?: { id: string; name: string
                 <option value="shared_pool">Shared pool</option>
               </select>
             </Field>
-            <Field label="Warehance login">
+            <Field label="Station login">
               <select className="field" value={loginMode} onChange={(event) => setLoginMode(event.target.value)}>
                 <option value="none">None</option>
                 <option value="individual">Individual</option>

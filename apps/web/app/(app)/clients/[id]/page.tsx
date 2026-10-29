@@ -41,7 +41,7 @@ export default function ClientHomePage() {
   return (
     <div>
       <PageTitle
-        kicker="Warehance"
+        kicker="Client"
         title={client.name}
         detail={`${client.code}: turn a service on and it shows in the menu. Main menu brings back Clients, Floor, and Follow-ups.`}
       />

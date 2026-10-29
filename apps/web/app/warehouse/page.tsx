@@ -10,7 +10,6 @@ type Context = {
     name: string;
     badgeCode: string;
     departmentHome: string;
-    warehanceUserId: string | null;
     clockedIn: boolean;
     onMeal: boolean;
   };
@@ -173,11 +172,6 @@ export default function WarehousePage() {
                   {context.station ? ` · ${context.station}` : ""}
                   {context.checkout ? ` · holding ${context.checkout}` : ""}
                 </p>
-                <p className="mt-1 text-sm">
-                  {context.employee.warehanceUserId
-                    ? `Warehance login ${context.employee.warehanceUserId}`
-                    : "No personal Warehance login"}
-                </p>
               </div>
               <button className="btn btn-ghost" type="button" onClick={() => setContext(null)}>
                 Change
@@ -274,7 +268,6 @@ function PackPanel({
           deviceCode,
           badge,
           units: 1,
-          warehanceRecorded: station?.loginMode === "individual",
         });
       }}
     >
@@ -291,8 +284,8 @@ function PackPanel({
         {station?.loginMode === "shared"
           ? station.claimedBy
             ? `${station.claimedBy} currently holds this shared login.`
-            : "Shared Warehance login. Claim it with your badge before the pack counts."
-          : "This computer is an individual Warehance login."}
+            : "Shared station login. Claim it with your badge before the pack counts."
+          : "This computer is an individual station."}
       </p>
       <button
         className="btn btn-ghost tap w-full"

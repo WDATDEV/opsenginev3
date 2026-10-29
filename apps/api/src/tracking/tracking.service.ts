@@ -99,23 +99,18 @@ function packSentence(input: {
   name: string;
   orderNumber: string;
   attribution: string;
-  warehanceRecorded: boolean;
   loginMismatch: boolean;
 }) {
   if (input.loginMismatch) {
-    return `${input.name} packed ${input.orderNumber}. The badge did not match the Warehance login, so the badge is the packer of record.`;
+    return `${input.name} packed ${input.orderNumber}. The badge did not match the station login, so the badge is the packer of record.`;
   }
   if (input.attribution === "warehance_user") {
-    return input.warehanceRecorded
-      ? `${input.name} packed ${input.orderNumber} on their Warehance login, and Warehance stored the packer.`
-      : `${input.name} packed ${input.orderNumber} on their Warehance login. Warehance did not store the packer, so this record stands.`;
+    return `${input.name} packed ${input.orderNumber} on their own station.`;
   }
   if (input.attribution === "manual") {
     return `${input.name} was entered as the packer of ${input.orderNumber} by a supervisor.`;
   }
-  return input.warehanceRecorded
-    ? `${input.name} packed ${input.orderNumber} by badging onto a shared station. Warehance also stored a packer.`
-    : `${input.name} packed ${input.orderNumber} by badging onto a shared station. Warehance did not store the packer.`;
+  return `${input.name} packed ${input.orderNumber} by badging onto a shared station.`;
 }
 
 @Injectable()
@@ -254,7 +249,6 @@ export class TrackingService {
           name: name(row.employeeId),
           orderNumber: row.orderNumber,
           attribution: row.attribution,
-          warehanceRecorded: row.warehanceRecorded,
           loginMismatch: row.loginMismatch,
         }),
       })),
@@ -735,7 +729,7 @@ export class TrackingService {
         device.assignedEmployeeId !== employee.id
       ) {
         const owner = await this.employeeById(tx, device.assignedEmployeeId);
-        throw new TrackingError(`This computer is ${owner.name}'s Warehance login.`);
+        throw new TrackingError(`This computer is ${owner.name}'s station.`);
       }
 
       const now = new Date();
@@ -767,8 +761,8 @@ export class TrackingService {
       const shared = device.warehanceLoginMode === "shared";
       return {
         message: shared
-          ? `${employee.name} claimed ${device.code}. The Warehance login here is shared, so this badge is the packer.`
-          : `${employee.name} is at ${device.code} on their own Warehance login.`,
+          ? `${employee.name} claimed ${device.code}. This station is shared, so this badge is the packer.`
+          : `${employee.name} is at ${device.code} on their own station.`,
       };
     });
   }
@@ -842,9 +836,7 @@ export class TrackingService {
       if (input.clientId) await assertClientService(this.db.db, input.clientId, "packing");
       const shift = await this.requireReady(tx, employee);
       const segmentId = await this.touchSegment(tx, employee, shift.id, "packing", device.id);
-      const warehanceRecorded =
-        input.warehanceRecorded ??
-        (resolved.attribution === "warehance_user" && Boolean(mapped?.warehanceUserId));
+      const warehanceRecorded = input.warehanceRecorded ?? false;
       const now = new Date();
       const [created] = await tx
         .insert(packEvents)
@@ -868,7 +860,6 @@ export class TrackingService {
         name: employee.name,
         orderNumber,
         attribution: resolved.attribution,
-        warehanceRecorded,
         loginMismatch: resolved.loginMismatch,
       });
       await this.audit(tx, principal?.id ?? employee.id, "tracking.pack_recorded", "pack_event", created.id, message);
@@ -1027,7 +1018,6 @@ export class TrackingService {
             name: names.get(row.employeeId) ?? "Someone",
             orderNumber: row.orderNumber,
             attribution: row.attribution,
-            warehanceRecorded: row.warehanceRecorded,
             loginMismatch: row.loginMismatch,
           }),
         })),
@@ -1725,7 +1715,7 @@ export class TrackingService {
       .from(employees)
       .where(eq(employees.warehanceUserId, clean(warehanceUserId)))
       .limit(1);
-    if (!employee) throw new TrackingError("That Warehance user is not linked to an employee.");
+    if (!employee) throw new TrackingError("That station login is not linked to an employee.");
     return employee;
   }
 

@@ -31,6 +31,7 @@ export const clientRecords = clients.table("clients", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
   code: text("code").notNull().unique(),
+  enabledServices: jsonb("enabled_services").$type<string[]>().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -225,6 +226,7 @@ export const pickEvents = tracking.table("pick_events", {
   orderNumber: text("order_number"),
   sku: text("sku").notNull(),
   qty: integer("qty").notNull(),
+  clientId: uuid("client_id"),
   employeeId: uuid("employee_id").notNull(),
   deviceId: uuid("device_id").notNull(),
   via: text("via").notNull(),
@@ -293,6 +295,7 @@ export const gaylords = tracking.table("gaylords", {
   id: uuid("id").defaultRandom().primaryKey(),
   code: text("code").notNull().unique(),
   carrier: text("carrier").notNull(),
+  clientId: uuid("client_id"),
   status: text("status").notNull().default("open"),
   openedAt: timestamp("opened_at", { withTimezone: true }).defaultNow().notNull(),
   closedAt: timestamp("closed_at", { withTimezone: true }),

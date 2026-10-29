@@ -51,6 +51,28 @@ export function canManage(role?: string) {
   return role === "owner" || role === "warehouse_manager";
 }
 
+export const CLIENT_SERVICES = [
+  ["jobs", "Jobs"],
+  ["receiving", "Receiving"],
+  ["unloading", "Unloading"],
+  ["packing", "Packing"],
+  ["picking", "Picking"],
+  ["sorting", "Sorting"],
+] as const;
+
+export function canOpenService(role: string | undefined, service: string) {
+  if (service === "jobs") {
+    return (
+      role === "owner" ||
+      role === "warehouse_manager" ||
+      role === "client_services" ||
+      role === "hr_finance" ||
+      role === "external_customer"
+    );
+  }
+  return role === "owner" || role === "warehouse_manager" || role === "hr_finance" || role === "warehouse_employee";
+}
+
 export function canManageJobs(role?: string) {
   return role === "owner" || role === "warehouse_manager" || role === "client_services";
 }

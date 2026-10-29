@@ -59,6 +59,9 @@ export const rolePermissions: Record<Role, Permission[]> = {
   external_customer: ["client.read", "job.read", "billing.read"],
 };
 
+export const clientServices = ["jobs", "receiving", "unloading", "packing", "picking", "sorting"] as const;
+export type ClientService = (typeof clientServices)[number];
+
 export const departments = [
   "packing",
   "picking",
@@ -145,6 +148,7 @@ export const recordPickSchema = z.object({
   sku: z.string().trim().min(1).max(80),
   qty: z.number().int().min(1).max(100000).default(1),
   orderNumber: optionalText,
+  clientId: z.string().uuid().optional(),
 });
 
 export const checkoutSchema = z.object({
@@ -211,6 +215,7 @@ export const finishLoadSchema = z.object({
 export const createGaylordSchema = z.object({
   code,
   carrier: z.enum(carriers),
+  clientId: z.string().uuid().optional(),
 });
 
 export const sortScanSchema = z.object({
@@ -234,6 +239,22 @@ export const switchTaskSchema = z
   });
 
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date.");
+
+export const createClientSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  code: z
+    .string()
+    .trim()
+    .min(2)
+    .max(8)
+    .regex(/^[A-Za-z0-9]+$/, "Use letters and numbers."),
+  services: z.array(z.enum(clientServices)).default([]),
+});
+
+export const setClientServiceSchema = z.object({
+  service: z.enum(clientServices),
+  enabled: z.boolean(),
+});
 
 export const createJobSchema = z.object({
   clientId: z.string().uuid(),

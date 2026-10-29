@@ -46,6 +46,7 @@ import {
   type LoginMode,
   type Ownership,
 } from "@opsengine/tracking";
+import { assertClientService } from "../clients/access.js";
 import { DbService } from "../db.service.js";
 
 type Conn = Database;
@@ -834,6 +835,7 @@ export class TrackingService {
       if (principal && !can(principal, "tracking.manage") && !can(principal, "tracking.record")) {
         throw new TrackingError("You cannot record packing.");
       }
+      if (input.clientId) await assertClientService(this.db.db, input.clientId, "packing");
       const shift = await this.requireReady(tx, employee);
       const segmentId = await this.touchSegment(tx, employee, shift.id, "packing", device.id);
       const warehanceRecorded =
@@ -933,6 +935,7 @@ export class TrackingService {
       sku: string;
       qty: number;
       orderNumber?: string;
+      clientId?: string;
     },
     principal: Principal | null,
   ) {
@@ -952,6 +955,7 @@ export class TrackingService {
       if (principal && !can(principal, "tracking.record") && !can(principal, "tracking.manage")) {
         throw new TrackingError("You cannot record picks.");
       }
+      if (input.clientId) await assertClientService(this.db.db, input.clientId, "picking");
       const shift = await this.requireReady(tx, employee);
       const segmentId = await this.touchSegment(tx, employee, shift.id, "picking", device.id);
       const now = new Date();
@@ -962,6 +966,7 @@ export class TrackingService {
           orderNumber: input.orderNumber ? clean(input.orderNumber) : null,
           sku: clean(input.sku),
           qty: input.qty,
+          clientId: input.clientId ?? null,
           employeeId: employee.id,
           deviceId: device.id,
           via: resolved.via,
@@ -1012,6 +1017,7 @@ export class TrackingService {
           warehanceRecorded: row.warehanceRecorded,
           loginMismatch: row.loginMismatch,
           units: row.units,
+          clientId: row.clientId,
           packedAt: row.packedAt,
           sentence: packSentence({
             name: names.get(row.employeeId) ?? "Someone",
@@ -1055,6 +1061,7 @@ export class TrackingService {
           batchCode: row.batchCode,
           sku: row.sku,
           qty: row.qty,
+          clientId: row.clientId,
           orderNumber: row.orderNumber,
           via: row.via,
           pickedAt: row.pickedAt,
@@ -1213,6 +1220,7 @@ export class TrackingService {
   }) {
     return this.inTx(async (tx) => {
       const job = await this.claimJob(tx, input.jobId);
+      await assertClientService(this.db.db, job.clientId, "receiving");
       const [created] = await tx
         .insert(shipments)
         .values({
@@ -1391,6 +1399,7 @@ export class TrackingService {
   }) {
     return this.inTx(async (tx) => {
       const job = await this.claimJob(tx, input.jobId);
+      await assertClientService(this.db.db, job.clientId, "unloading");
       const [created] = await tx
         .insert(loads)
         .values({
@@ -1521,11 +1530,18 @@ export class TrackingService {
       }));
   }
 
-  async createGaylord(input: { code: string; carrier: "usps" | "ups" | "fedex" | "dhl" | "other" }) {
+  async createGaylord(input: { code: string; carrier: "usps" | "ups" | "fedex" | "dhl" | "other"; clientId?: string }) {
     return this.inTx(async (tx) => {
+      if (input.clientId) await assertClientService(this.db.db, input.clientId, "sorting");
       const [created] = await tx
         .insert(gaylords)
-        .values({ code: clean(input.code), carrier: input.carrier, status: "open", openedAt: new Date() })
+        .values({
+          code: clean(input.code),
+          carrier: input.carrier,
+          clientId: input.clientId ?? null,
+          status: "open",
+          openedAt: new Date(),
+        })
         .returning();
       if (!created) throw new TrackingError("Could not open that gaylord.");
       return created;

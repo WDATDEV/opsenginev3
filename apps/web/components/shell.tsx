@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useState } from "react";
-import { api, post, type User } from "@/lib/api";
+import { api, canManage, post, type User } from "@/lib/api";
 
 const SessionContext = createContext<User | null>(null);
 
@@ -13,8 +13,6 @@ export function useSession() {
 
 const FLOOR_LINKS = [
   ["/", "Floor"],
-  ["/jobs", "Jobs"],
-  ["/clients", "Clients"],
   ["/packing", "Packing"],
   ["/picking", "Picking"],
   ["/receiving", "Receiving"],
@@ -26,20 +24,21 @@ const FLOOR_LINKS = [
   ["/work", "Follow-ups"],
 ] as const;
 
+const ADMIN_LINKS = [
+  ["/", "Clients"],
+  ["/floor", "Floor"],
+  ["/activities", "Activities"],
+  ["/equipment", "Equipment"],
+  ["/people", "People"],
+  ["/checkin", "Check-in"],
+  ["/work", "Follow-ups"],
+] as const;
+
 function linksFor(role?: string): readonly (readonly [string, string])[] {
-  if (role === "external_customer") return [["/jobs", "Jobs"], ["/clients", "Account"]];
-  if (role === "client_services") return [["/jobs", "Jobs"], ["/clients", "Clients"], ["/work", "Follow-ups"]];
-  if (role === "hr_finance") {
-    return [["/jobs", "Jobs"], ["/clients", "Clients"], ["/checkin", "Check-in"], ["/work", "Follow-ups"]];
-  }
-  if (role === "owner" || role === "warehouse_manager") {
-    const links: [string, string][] = [];
-    for (const [href, label] of FLOOR_LINKS) {
-      links.push([href, label]);
-      if (href === "/jobs") links.push(["/activities", "Activities"]);
-    }
-    return links;
-  }
+  if (role === "external_customer") return [["/", "Clients"]];
+  if (role === "client_services") return [["/", "Clients"], ["/work", "Follow-ups"]];
+  if (role === "hr_finance") return [["/", "Clients"], ["/floor", "Floor"], ["/checkin", "Check-in"], ["/work", "Follow-ups"]];
+  if (role === "owner" || role === "warehouse_manager") return ADMIN_LINKS;
   return FLOOR_LINKS;
 }
 
@@ -54,13 +53,6 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
       .catch(() => setUser(null));
   }, []);
 
-  useEffect(() => {
-    if (!user) return;
-    if ((user.role === "external_customer" || user.role === "client_services") && pathname === "/") {
-      router.replace("/jobs");
-    }
-  }, [user, pathname, router]);
-
   async function logout() {
     await post("/auth/logout", {});
     router.push("/login");
@@ -74,7 +66,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center justify-between px-4 py-4 md:block">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-moss">Ops Engine</p>
-              <p className="text-lg font-semibold">Work tracking</p>
+              <p className="text-lg font-semibold">{canManage(user?.role) ? "Warehance" : "Work tracking"}</p>
             </div>
             <button className="btn btn-ghost md:mt-4" onClick={logout} type="button">
               Sign out
@@ -82,7 +74,10 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
           </div>
           <nav className="flex gap-2 overflow-auto px-3 pb-3 md:block md:px-3">
             {linksFor(user?.role).map(([href, label]) => {
-              const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+              const active =
+                href === "/"
+                  ? pathname === "/" || pathname.startsWith("/clients")
+                  : pathname === href || pathname.startsWith(`${href}/`);
               return (
                 <Link
                   key={href}

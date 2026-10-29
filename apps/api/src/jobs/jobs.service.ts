@@ -13,6 +13,7 @@ import {
   tasks,
 } from "@opsengine/db";
 import { assertClientVisible, canSeeClient, type Principal } from "@opsengine/kernel";
+import { assertClientService } from "../clients/access.js";
 import { DbService } from "../db.service.js";
 
 function isUnique(err: unknown) {
@@ -130,6 +131,7 @@ export class JobsService {
     assertClientVisible(principal, input.clientId);
     const [client] = await this.db.db.select().from(clientRecords).where(eq(clientRecords.id, input.clientId)).limit(1);
     if (!client) throw new NotFoundException("That client is not on file.");
+    await assertClientService(this.db.db, client.id, "jobs");
     try {
       const [created] = await this.db.db
         .insert(jobs)

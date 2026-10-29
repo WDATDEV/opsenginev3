@@ -138,6 +138,11 @@ await upsertAccount("owen@opsengine.local", "Owen Blake", "client_services", [ja
 await upsertAccount("ice@opsengine.local", "IceCartel Ops", "external_customer", [icecartel.id]);
 await upsertAccount("jacob@opsengine.local", "Jacob Ops", "external_customer", [jacob.id]);
 
+await db.update(clientRecords).set({ enabledServices: ["jobs", "receiving", "unloading", "packing"] }).where(eq(clientRecords.id, icecartel.id));
+await db.update(clientRecords).set({ enabledServices: ["jobs", "receiving", "unloading", "picking"] }).where(eq(clientRecords.id, jacob.id));
+await db.update(clientRecords).set({ enabledServices: ["jobs", "receiving", "unloading"] }).where(eq(clientRecords.id, northwind.id));
+await db.update(clientRecords).set({ enabledServices: ["jobs"] }).where(eq(clientRecords.id, brightline.id));
+
 const iceJob = await upsertJob(icecartel.id, "IC-1001", "Five pallets inbound");
 const jacobJob = await upsertJob(jacob.id, "JB-2001", "Two pallets inbound");
 const northwindJob = await upsertJob(northwind.id, "NW-4401", "Northwind inbound");

@@ -31,8 +31,11 @@ CREATE TABLE IF NOT EXISTS clients.clients (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name text NOT NULL,
   code text NOT NULL UNIQUE,
+  enabled_services jsonb NOT NULL DEFAULT '[]'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE clients.clients ADD COLUMN IF NOT EXISTS enabled_services jsonb NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS work.jobs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -254,12 +257,15 @@ CREATE TABLE IF NOT EXISTS tracking.pick_events (
   order_number text,
   sku text NOT NULL,
   qty integer NOT NULL,
+  client_id uuid,
   employee_id uuid NOT NULL REFERENCES tracking.employees(id),
   device_id uuid NOT NULL REFERENCES tracking.devices(id),
   via text NOT NULL,
   picked_at timestamptz NOT NULL,
   segment_id uuid
 );
+
+ALTER TABLE tracking.pick_events ADD COLUMN IF NOT EXISTS client_id uuid;
 
 CREATE TABLE IF NOT EXISTS tracking.inbound_shipments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -329,10 +335,13 @@ CREATE TABLE IF NOT EXISTS tracking.gaylords (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   code text NOT NULL UNIQUE,
   carrier text NOT NULL,
+  client_id uuid,
   status text NOT NULL DEFAULT 'open',
   opened_at timestamptz NOT NULL DEFAULT now(),
   closed_at timestamptz
 );
+
+ALTER TABLE tracking.gaylords ADD COLUMN IF NOT EXISTS client_id uuid;
 
 CREATE TABLE IF NOT EXISTS tracking.sort_scans (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

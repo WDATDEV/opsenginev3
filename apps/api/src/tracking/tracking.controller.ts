@@ -194,6 +194,7 @@ export class TrackingController {
       sku: string;
       qty: number;
       orderNumber?: string;
+      clientId?: string;
     },
   ) {
     return this.tracking.recordPick(body, principal);
@@ -361,7 +362,8 @@ export class TrackingController {
   @UseGuards(AuthGuard)
   gaylord(
     @CurrentUser() ctx: RequestContext,
-    @Body(new ZodPipe(createGaylordSchema)) body: { code: string; carrier: "usps" | "ups" | "fedex" | "dhl" | "other" },
+    @Body(new ZodPipe(createGaylordSchema))
+    body: { code: string; carrier: "usps" | "ups" | "fedex" | "dhl" | "other"; clientId?: string },
   ) {
     authorize(ctx, "tracking.manage");
     return this.tracking.createGaylord(body);

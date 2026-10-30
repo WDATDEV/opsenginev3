@@ -9,7 +9,7 @@ IceCartel manager: `lina@opsengine.local` / `OpsEngine!dev`
 IceCartel client: `ice@opsengine.local` / `OpsEngine!dev`  
 Jacob manager: `owen@opsengine.local` / `OpsEngine!dev`  
 Jacob client: `jacob@opsengine.local` / `OpsEngine!dev`  
-Floor phone: http://localhost:3010/warehouse  
+Floor phone: http://localhost:3010/phone  
 QR gate: http://localhost:3010/gate
 
 ## Run

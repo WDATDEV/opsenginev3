@@ -172,7 +172,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
             <p>{user ? user.name : "Loading session"}</p>
             {user && !clientId && user.role !== "external_customer" && user.role !== "client_services" ? (
               <>
-                <Link className="block text-moss" href="/warehouse">
+                <Link className="block text-moss" href="/phone">
                   Open floor phone
                 </Link>
                 <Link className="block text-moss" href="/gate">

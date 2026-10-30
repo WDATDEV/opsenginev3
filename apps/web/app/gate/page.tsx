@@ -225,7 +225,7 @@ export default function GatePage() {
             Today’s check-ins
           </Link>
           {" · "}
-          <Link className="text-moss" href="/warehouse">
+          <Link className="text-moss" href="/phone">
             Floor phone
           </Link>
         </p>

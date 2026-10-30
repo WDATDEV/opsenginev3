@@ -27,5 +27,5 @@ A job belongs to one client. IceCartel and Jacob each have their own jobs, rates
 ## Experiences
 
 - Desktop (`/`) is the supervisor view: who is on which task, and the boards for each department.
-- Floor phone (`/warehouse`) is the badge flow for doing the work.
+- Floor phone (`/phone`) is the badge flow for doing the work.
 - QR gate (`/gate`) is check-in and check-out. Checking out closes the open task, station, scanner checkout, shipment join, and crew row.

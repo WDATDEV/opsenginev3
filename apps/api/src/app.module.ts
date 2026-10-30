@@ -12,6 +12,7 @@ import { JobsController } from "./jobs/jobs.controller.js";
 import { JobsService } from "./jobs/jobs.service.js";
 import { HealthController } from "./health.controller.js";
 import { InternalController } from "./internal/internal.controller.js";
+import { SchedulerService } from "./tracking/scheduler.service.js";
 import { TrackingController } from "./tracking/tracking.controller.js";
 import { TrackingService } from "./tracking/tracking.service.js";
 import { WorkController } from "./work/work.controller.js";
@@ -40,6 +41,7 @@ import { WorkService } from "./work/work.service.js";
     AuthGuard,
     OptionalAuthGuard,
     TrackingService,
+    SchedulerService,
     JobsService,
     BillingService,
     WorkService,

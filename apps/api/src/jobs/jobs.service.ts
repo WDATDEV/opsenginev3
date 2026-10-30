@@ -14,7 +14,7 @@ import {
   tasks,
 } from "@opsengine/db";
 import type { z } from "zod";
-import type { createJobWorkSchema } from "@opsengine/contracts";
+import type { ClientService, createJobWorkSchema } from "@opsengine/contracts";
 import { assertClientVisible, canSeeClient, type Principal } from "@opsengine/kernel";
 import { assertClientService, enabledServiceList } from "../clients/access.js";
 import { DbService } from "../db.service.js";
@@ -75,7 +75,16 @@ export class JobsService {
             laborMinutes,
             assignees: assigneeRows
               .filter((row) => row.jobId === job.id)
-              .map((row) => ({ employeeId: row.employeeId, name: names.get(row.employeeId) ?? "Someone" })),
+              .map((row) => ({
+                employeeId: row.employeeId,
+                name: names.get(row.employeeId) ?? "Someone",
+                startAt: row.startAt,
+                activityCode: row.activityCode,
+                activityName: row.activityCode
+                  ? activities.find((item) => item.code === row.activityCode)?.name ?? row.activityCode
+                  : null,
+                started: Boolean(row.autoStartedAt),
+              })),
             tasks: taskRows
               .filter((task) => task.jobId === job.id)
               .map((task) => ({
@@ -174,17 +183,43 @@ export class JobsService {
     return { message: `${job.reference} is closed.` };
   }
 
-  async assign(principal: Principal, jobId: string, employeeId: string) {
+  async assign(
+    principal: Principal,
+    jobId: string,
+    employeeId: string,
+    schedule?: { startAt?: string | null; activityCode?: string },
+  ) {
     const job = await this.requireJob(principal, jobId);
     const person = await this.activeEmployee(employeeId);
+    let start: { startAt: Date | null; activityCode: string | null; autoStartedAt: null } | null = null;
+    if (schedule && schedule.startAt !== undefined) {
+      if (schedule.startAt === null) {
+        start = { startAt: null, activityCode: null, autoStartedAt: null };
+      } else {
+        if (!schedule.activityCode) throw new ConflictException("Choose the task type that starts at that time.");
+        const rows = await this.db.db.select().from(activityTypes).where(eq(activityTypes.code, schedule.activityCode));
+        const activity = rows.find((row) => row.clientId == null || row.clientId === job.clientId);
+        if (!activity || !activity.active || !activity.billable || activity.department === "indirect") {
+          throw new ConflictException("That task type cannot be started on a job.");
+        }
+        await assertClientService(this.db.db, job.clientId, activity.department as ClientService);
+        start = { startAt: new Date(schedule.startAt), activityCode: activity.code, autoStartedAt: null };
+      }
+    }
     const existing = await this.db.db
       .select()
       .from(jobAssignees)
       .where(and(eq(jobAssignees.jobId, job.id), eq(jobAssignees.employeeId, person.id)))
       .limit(1);
     if (!existing[0]) {
-      await this.db.db.insert(jobAssignees).values({ jobId: job.id, employeeId: person.id });
+      await this.db.db.insert(jobAssignees).values({ jobId: job.id, employeeId: person.id, ...(start ?? {}) });
+    } else if (start) {
+      await this.db.db.update(jobAssignees).set(start).where(eq(jobAssignees.id, existing[0].id));
     }
+    if (start?.startAt) {
+      return { message: `${person.name} is assigned to ${job.reference} and starts automatically at the set time.` };
+    }
+    if (start) return { message: `${person.name} will start ${job.reference} by hand on the floor phone.` };
     return { message: `${person.name} is assigned to ${job.reference}.` };
   }
 

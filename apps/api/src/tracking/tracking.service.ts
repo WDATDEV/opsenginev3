@@ -1,5 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { and, desc, eq, gte, isNull, or } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lte, or } from "drizzle-orm";
 import type { Principal } from "@opsengine/kernel";
 import { can } from "@opsengine/kernel";
 import type { Database } from "@opsengine/db";
@@ -47,12 +47,15 @@ import {
   type LoginMode,
   type Ownership,
 } from "@opsengine/tracking";
+import type { ClientService } from "@opsengine/contracts";
 import { assertClientService } from "../clients/access.js";
 import { DbService } from "../db.service.js";
 
 type Conn = Database;
 type Employee = typeof employees.$inferSelect;
 type Device = typeof devices.$inferSelect;
+
+const SCHEDULE_WINDOW_MS = 12 * 60 * 60 * 1000;
 
 function isUnique(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
@@ -344,9 +347,9 @@ export class TrackingService {
         };
       };
 
-      const assigned = new Set(
-        (await tx.select().from(jobAssignees).where(eq(jobAssignees.employeeId, employee.id))).map((row) => row.jobId),
-      );
+      const assignments = await tx.select().from(jobAssignees).where(eq(jobAssignees.employeeId, employee.id));
+      const assigned = new Set(assignments.map((row) => row.jobId));
+      const assignmentByJob = new Map(assignments.map((row) => [row.jobId, row]));
       const owned = (clientId: string | null) => !employee.clientId || clientId === employee.clientId;
       const gear = (clientId: string | null) => owned(clientId) || clientId == null;
       const mine = (jobId: string | null) => Boolean(jobId && assigned.has(jobId));
@@ -378,6 +381,9 @@ export class TrackingService {
               status: row.status,
               billBasis: row.billBasis,
               clientId: row.clientId,
+              startAt: assignmentByJob.get(row.id)?.startAt ?? null,
+              startActivity: assignmentByJob.get(row.id)?.activityCode ?? null,
+              startedAuto: Boolean(assignmentByJob.get(row.id)?.autoStartedAt),
               clientName: client?.name ?? "Client",
               clientCode: client?.code ?? "",
               enabledServices: services,
@@ -554,6 +560,26 @@ export class TrackingService {
     if (source === "qr" && (action === "in" || action === "out")) {
       await this.requireDeviceAtWarehouse(badge, action, where);
     }
+    const result = await this.clockInTx(badge, action, source, where);
+    if (action === "in" || action === "meal_end") {
+      const employee = await this.db.db.select().from(employees).where(eq(employees.badgeCode, clean(badge))).limit(1);
+      if (employee[0]) await this.startScheduled(employee[0].id);
+    }
+    return result;
+  }
+
+  private async clockInTx(
+    badge: string,
+    action: "in" | "out" | "meal_start" | "meal_end",
+    source: "kiosk" | "qr",
+    where?: {
+      place?: string;
+      latitude?: number;
+      longitude?: number;
+      accuracy?: number;
+      capturedAt?: number;
+    },
+  ) {
     return this.inTx(async (tx) => {
       const employee = await this.employeeByBadge(tx, badge);
       const shift = await this.openShift(tx, employee.id);
@@ -1678,6 +1704,61 @@ export class TrackingService {
     });
   }
 
+  async startScheduled(employeeId?: string) {
+    const now = new Date();
+    const earliest = new Date(now.getTime() - SCHEDULE_WINDOW_MS);
+    const due = (
+      await this.db.db
+        .select()
+        .from(jobAssignees)
+        .where(and(isNull(jobAssignees.autoStartedAt), lte(jobAssignees.startAt, now), gte(jobAssignees.startAt, earliest)))
+    ).filter((row) => !employeeId || row.employeeId === employeeId);
+    let started = 0;
+    for (const row of due) {
+      const done = await this.inTx(async (tx) => {
+        const [claim] = await tx
+          .select()
+          .from(jobAssignees)
+          .where(and(eq(jobAssignees.id, row.id), isNull(jobAssignees.autoStartedAt)))
+          .limit(1);
+        if (!claim || !claim.startAt || !claim.activityCode) return false;
+        const employee = await this.employeeById(tx, claim.employeeId);
+        const shift = await this.openShift(tx, employee.id);
+        if (!shift || !employee.active) return false;
+        if (await this.openBreak(tx, shift.id)) return false;
+        const job = await this.jobById(tx, claim.jobId);
+        if (job.status === "done") return false;
+        const activity = await this.activityByCode(tx, claim.activityCode);
+        const department = asDepartment(activity.department);
+        const open = await this.openSegment(tx, employee.id);
+        const alreadyOn = open && open.jobId === job.id && open.taskCode === activity.code;
+        if (!alreadyOn) {
+          await assertClientService(this.db.db, job.clientId, department as ClientService);
+          await this.claimJob(tx, job.id);
+          const begin = claim.startAt > shift.clockIn ? claim.startAt : shift.clockIn;
+          const segmentId = await this.touchSegment(tx, employee, shift.id, department, null, {
+            jobId: job.id,
+            activityId: activity.id,
+            taskCode: activity.code,
+            at: open ? undefined : begin,
+          });
+          await this.audit(
+            tx,
+            employee.id,
+            "tracking.task_auto_started",
+            "activity_segment",
+            segmentId,
+            `${employee.name} started ${activity.name} on ${job.reference} at the time set on the job.`,
+          );
+        }
+        await tx.update(jobAssignees).set({ autoStartedAt: new Date() }).where(eq(jobAssignees.id, claim.id));
+        return true;
+      }).catch(() => false);
+      if (done) started += 1;
+    }
+    return { started };
+  }
+
   async sweep() {
     const orm = this.db.db;
     const open = await orm.select().from(segments).where(isNull(segments.endedAt));
@@ -1689,7 +1770,8 @@ export class TrackingService {
         closed += 1;
       }
     }
-    return { closed };
+    const scheduled = await this.startScheduled();
+    return { closed, started: scheduled.started };
   }
 
   private async inTx<T>(fn: (tx: Conn) => Promise<T>): Promise<T> {
@@ -1862,7 +1944,7 @@ export class TrackingService {
     shiftId: string,
     department: Department,
     deviceId: string | null,
-    link?: { jobId?: string | null; activityId?: string | null; taskCode?: string },
+    link?: { jobId?: string | null; activityId?: string | null; taskCode?: string; at?: Date },
   ) {
     const open = await this.openSegment(tx, employee.id);
     const taskCode = link?.taskCode ?? taskFor(department);
@@ -1880,7 +1962,7 @@ export class TrackingService {
         : null,
       next: { department, taskCode, jobId },
     });
-    const now = new Date();
+    const now = link?.at ?? new Date();
     if (!plan.start && open) {
       if (deviceId && open.deviceId !== deviceId) {
         await tx.update(segments).set({ deviceId }).where(eq(segments.id, open.id));

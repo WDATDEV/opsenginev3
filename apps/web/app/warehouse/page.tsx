@@ -38,6 +38,9 @@ type Context = {
     clientCode: string;
     billBasis: string;
     clientId: string | null;
+    startAt: string | null;
+    startActivity: string | null;
+    startedAuto: boolean;
     enabledServices: string[];
   }[];
   activities: { id: string; code: string; name: string; department: string; billable: boolean }[];
@@ -62,6 +65,12 @@ type Context = {
   loads: { id: string; reference: string; kind: string; dock: string; crew: string[] }[];
   gaylords: { id: string; code: string; carrier: string }[];
 };
+
+function stamp(value: string) {
+  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(
+    new Date(value),
+  );
+}
 
 const AREAS = ["packing", "picking", "receiving", "unloading", "sorting"] as const;
 
@@ -376,6 +385,13 @@ export default function WarehousePage() {
                     >
                       {job.clientName} · {job.reference}
                       <span className="block text-xs font-normal">{job.title} · {billBasisLabel(job.billBasis)}</span>
+                      <span className="block text-xs font-normal">
+                        {job.startAt
+                          ? job.startedAuto
+                            ? `Started by the set time ${stamp(job.startAt)}`
+                            : `Starts by itself at ${stamp(job.startAt)}`
+                          : "Tap to start when you begin"}
+                      </span>
                     </button>
                   ))}
                 </div>

@@ -289,6 +289,12 @@ export const assignEmployeeSchema = z.object({
   employeeId: z.string().uuid(),
 });
 
+export const assignCrewSchema = z.object({
+  employeeId: z.string().uuid(),
+  startAt: z.string().datetime({ offset: true, message: "Choose a start date and time." }).nullable().optional(),
+  activityCode: z.string().trim().min(1).max(40).optional(),
+});
+
 export const createJobTaskSchema = z.object({
   title: z.string().trim().min(1).max(120),
   details: z.string().trim().max(400).optional(),

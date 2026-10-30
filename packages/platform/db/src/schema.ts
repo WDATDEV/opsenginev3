@@ -86,6 +86,9 @@ export const jobAssignees = work.table("job_assignees", {
   id: uuid("id").defaultRandom().primaryKey(),
   jobId: uuid("job_id").notNull(),
   employeeId: uuid("employee_id").notNull(),
+  startAt: timestamp("start_at", { withTimezone: true }),
+  activityCode: text("activity_code"),
+  autoStartedAt: timestamp("auto_started_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

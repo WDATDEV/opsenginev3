@@ -144,6 +144,10 @@ CREATE TABLE IF NOT EXISTS work.job_assignees (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE work.job_assignees ADD COLUMN IF NOT EXISTS start_at timestamptz;
+ALTER TABLE work.job_assignees ADD COLUMN IF NOT EXISTS activity_code text;
+ALTER TABLE work.job_assignees ADD COLUMN IF NOT EXISTS auto_started_at timestamptz;
+
 CREATE UNIQUE INDEX IF NOT EXISTS job_assignees_one_person
   ON work.job_assignees (job_id, employee_id);
 

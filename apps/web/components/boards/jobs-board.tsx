@@ -30,7 +30,14 @@ type JobBoard = {
     clientCode: string;
     enabledServices: string[];
     laborMinutes: number;
-    assignees: { employeeId: string; name: string }[];
+    assignees: {
+      employeeId: string;
+      name: string;
+      startAt: string | null;
+      activityCode: string | null;
+      activityName: string | null;
+      started: boolean;
+    }[];
     tasks: JobTask[];
     openWorkerCount: number;
     openWorkers: string[];
@@ -39,8 +46,25 @@ type JobBoard = {
     charges: { id: string; description: string; quantity: number; unit: string; amountCents: number; status: string }[];
   }[];
   clients: { id: string; name: string; code: string }[];
+  activities: { code: string; name: string; department: string; billable: boolean }[];
   people: { id: string; name: string }[];
 };
+
+const SERVICE_FOR_DEPARTMENT = ["receiving", "unloading", "packing", "picking", "sorting"];
+
+function stamp(value: string) {
+  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(
+    new Date(value),
+  );
+}
+
+function startNote(person: { startAt: string | null; activityName: string | null; started: boolean }) {
+  if (!person.startAt) return "Starts when they tap the job on the floor phone";
+  const what = person.activityName ? ` · ${person.activityName}` : "";
+  return person.started
+    ? `Started by the set time ${stamp(person.startAt)}${what}`
+    : `Starts by itself at ${stamp(person.startAt)}${what}`;
+}
 
 function billNote(basis: string) {
   if (basis === "time") return "Billed by time. The timer is the bill.";
@@ -200,16 +224,35 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                 {job.assignees.length === 0 ? <p className="text-sm text-muted">Nobody is assigned.</p> : null}
                 <ul className="space-y-2 text-sm">
                   {job.assignees.map((person) => (
-                    <li key={person.employeeId} className="flex items-center justify-between gap-2">
-                      <span>{person.name}</span>
-                      {canManageJobs(user?.role) ? (
-                        <button
-                          className="btn btn-ghost"
-                          type="button"
-                          onClick={() => void act(`/jobs/${job.id}/assignees/remove`, { employeeId: person.employeeId })}
-                        >
-                          Remove
-                        </button>
+                    <li key={person.employeeId}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span>
+                          {person.name}
+                          <span className="block text-xs text-muted">{startNote(person)}</span>
+                        </span>
+                        {canManageJobs(user?.role) ? (
+                          <button
+                            className="btn btn-ghost"
+                            type="button"
+                            onClick={() => void act(`/jobs/${job.id}/assignees/remove`, { employeeId: person.employeeId })}
+                          >
+                            Remove
+                          </button>
+                        ) : null}
+                      </div>
+                      {canManageJobs(user?.role) && job.status !== "done" ? (
+                        <StartTime
+                          key={`${person.employeeId}-${person.startAt ?? "none"}-${person.started}`}
+                          activities={startChoices(board.data?.activities ?? [], job.enabledServices)}
+                          current={person}
+                          onSave={(startAt, activityCode) =>
+                            act(`/jobs/${job.id}/assignees`, {
+                              employeeId: person.employeeId,
+                              startAt,
+                              ...(activityCode ? { activityCode } : {}),
+                            })
+                          }
+                        />
                       ) : null}
                     </li>
                   ))}
@@ -221,7 +264,13 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                       .map((person) => person.id)
                       .join(",")}
                     people={people.filter((person) => !job.assignees.some((assigned) => assigned.employeeId === person.id))}
-                    onAssign={(employeeId) => act(`/jobs/${job.id}/assignees`, { employeeId })}
+                    activities={startChoices(board.data?.activities ?? [], job.enabledServices)}
+                    onAssign={(employeeId, startAt, activityCode) =>
+                      act(`/jobs/${job.id}/assignees`, {
+                        employeeId,
+                        ...(startAt ? { startAt, activityCode } : {}),
+                      })
+                    }
                   />
                 ) : null}
               </div>
@@ -305,21 +354,131 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
   );
 }
 
+type StartChoice = { code: string; name: string };
+
+function startChoices(
+  activities: { code: string; name: string; department: string; billable: boolean }[],
+  services: string[],
+): StartChoice[] {
+  return activities
+    .filter((item) => item.billable && SERVICE_FOR_DEPARTMENT.includes(item.department) && services.includes(item.department))
+    .map((item) => ({ code: item.code, name: item.name }));
+}
+
+function toIso(local: string) {
+  return new Date(local).toISOString();
+}
+
+function StartFields({
+  activities,
+  startAt,
+  activityCode,
+  onStartAt,
+  onActivity,
+}: {
+  activities: StartChoice[];
+  startAt: string;
+  activityCode: string;
+  onStartAt: (value: string) => void;
+  onActivity: (value: string) => void;
+}) {
+  return (
+    <>
+      <Field label="Start time (optional)">
+        <input className="field" type="datetime-local" value={startAt} onChange={(event) => onStartAt(event.target.value)} />
+      </Field>
+      {startAt ? (
+        <Field label="Starts this task">
+          <select className="field" value={activityCode} onChange={(event) => onActivity(event.target.value)}>
+            <option value="">Choose a task type</option>
+            {activities.map((item) => (
+              <option key={item.code} value={item.code}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      ) : null}
+    </>
+  );
+}
+
+function StartTime({
+  activities,
+  current,
+  onSave,
+}: {
+  activities: StartChoice[];
+  current: { startAt: string | null; activityCode: string | null };
+  onSave: (startAt: string | null, activityCode?: string) => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [startAt, setStartAt] = useState("");
+  const [activityCode, setActivityCode] = useState(current.activityCode ?? activities[0]?.code ?? "");
+  if (!open) {
+    return (
+      <button className="mt-1 text-xs text-moss underline" type="button" onClick={() => setOpen(true)}>
+        {current.startAt ? "Change start time" : "Set a start time"}
+      </button>
+    );
+  }
+  return (
+    <form
+      className="mt-2 flex flex-wrap items-end gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!startAt || !activityCode) return;
+        void onSave(toIso(startAt), activityCode).then((ok) => {
+          if (ok) setOpen(false);
+        });
+      }}
+    >
+      <StartFields activities={activities} startAt={startAt} activityCode={activityCode} onStartAt={setStartAt} onActivity={setActivityCode} />
+      <button className="btn btn-ghost" type="submit" disabled={!startAt || !activityCode}>
+        Save start
+      </button>
+      {current.startAt ? (
+        <button
+          className="btn btn-ghost"
+          type="button"
+          onClick={() =>
+            void onSave(null).then((ok) => {
+              if (ok) setOpen(false);
+            })
+          }
+        >
+          No start time
+        </button>
+      ) : null}
+      <button className="btn btn-ghost" type="button" onClick={() => setOpen(false)}>
+        Cancel
+      </button>
+    </form>
+  );
+}
+
 function AssignForm({
   people,
+  activities,
   onAssign,
 }: {
   people: { id: string; name: string }[];
-  onAssign: (employeeId: string) => Promise<boolean>;
+  activities: StartChoice[];
+  onAssign: (employeeId: string, startAt?: string, activityCode?: string) => Promise<boolean>;
 }) {
   const [employeeId, setEmployeeId] = useState(people[0]?.id ?? "");
+  const [startAt, setStartAt] = useState("");
+  const [activityCode, setActivityCode] = useState(activities[0]?.code ?? "");
   return (
     <form
       className="mt-3 flex flex-wrap items-end gap-2"
       onSubmit={(event) => {
         event.preventDefault();
         if (!employeeId) return;
-        void onAssign(employeeId);
+        if (startAt && !activityCode) return;
+        void onAssign(employeeId, startAt ? toIso(startAt) : undefined, startAt ? activityCode : undefined).then((ok) => {
+          if (ok) setStartAt("");
+        });
       }}
     >
       <Field label="Assign someone">
@@ -332,9 +491,15 @@ function AssignForm({
           ))}
         </select>
       </Field>
-      <button className="btn btn-ghost" type="submit" disabled={people.length === 0}>
+      <StartFields activities={activities} startAt={startAt} activityCode={activityCode} onStartAt={setStartAt} onActivity={setActivityCode} />
+      <button className="btn btn-ghost" type="submit" disabled={people.length === 0 || (Boolean(startAt) && !activityCode)}>
         Assign
       </button>
+      {!startAt ? (
+        <p className="w-full text-xs text-muted">With no start time, the person starts this job from the floor phone and the timer begins then.</p>
+      ) : (
+        <p className="w-full text-xs text-muted">With a start time, the timer begins by itself then, once the person is checked in.</p>
+      )}
     </form>
   );
 }

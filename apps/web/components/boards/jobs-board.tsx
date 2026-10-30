@@ -308,7 +308,7 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                 </ul>
                 {canManageJobs(user?.role) ? (
                   <TaskForm
-                    people={people}
+                    people={job.assignees.map((person) => ({ id: person.employeeId, name: person.name }))}
                     tasks={job.tasks}
                     services={job.enabledServices}
                     activities={startChoices(board.data?.activities ?? [], job.enabledServices)}
@@ -691,7 +691,7 @@ function TaskForm({
       ) : null}
       <Field label="Assignee">
         <select className="field" value={assigneeId} onChange={(event) => setAssigneeId(event.target.value)}>
-          <option value="">Unassigned</option>
+          <option value="">{people.length === 0 ? "Add someone to the crew first" : "Unassigned"}</option>
           {people.map((person) => (
             <option key={person.id} value={person.id}>
               {person.name}

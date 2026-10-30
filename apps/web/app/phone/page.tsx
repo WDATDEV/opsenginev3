@@ -31,6 +31,14 @@ type Context = {
     jobReference: string | null;
     clientName: string | null;
   } | null;
+  tasks: {
+    id: string;
+    title: string;
+    jobReference: string | null;
+    activityName: string | null;
+    startAt: string | null;
+    dueOn: string | null;
+  }[];
   jobs: {
     id: string;
     reference: string;
@@ -398,6 +406,24 @@ export default function WarehousePage() {
                 ) : null}
                 <p className="text-sm text-muted">The minutes already worked stay on the project. Resume to keep counting.</p>
               </div>
+            </section>
+          ) : null}
+
+          {checkedIn && !onMeal && (context.tasks?.length ?? 0) > 0 ? (
+            <section className="card p-4">
+              <p className="mb-2 text-sm font-semibold">Your tasks</p>
+              <ul className="space-y-2 text-sm">
+                {context.tasks.map((item) => (
+                  <li key={item.id}>
+                    <span className="font-medium">{item.title}</span>
+                    <span className="block text-xs text-muted">
+                      {item.jobReference ?? "Project"}
+                      {item.startAt ? ` · starts ${when(item.startAt)}` : ""}
+                      {item.dueOn ? ` · due ${item.dueOn}` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </section>
           ) : null}
 

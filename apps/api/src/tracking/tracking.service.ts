@@ -1,5 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { and, desc, eq, gte, isNull, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lte, or } from "drizzle-orm";
 import type { Principal } from "@opsengine/kernel";
 import { can } from "@opsengine/kernel";
 import type { Database } from "@opsengine/db";
@@ -347,6 +347,7 @@ export class TrackingService {
         };
       };
 
+      const taskRows = await tx.select().from(tasks).where(eq(tasks.assigneeId, employee.id));
       const assignments = await tx.select().from(jobAssignees).where(eq(jobAssignees.employeeId, employee.id));
       const assigned = new Set(assignments.map((row) => row.jobId));
       const assignmentByJob = new Map(assignments.map((row) => [row.jobId, row]));
@@ -367,6 +368,19 @@ export class TrackingService {
         },
         task: segment ? describe(segment) : null,
         paused: paused ? describe(paused) : null,
+        tasks: taskRows
+          .filter((row) => row.status !== "done" && row.jobId && mine(row.jobId) && jobById.get(row.jobId)?.status !== "done")
+          .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+          .map((row) => ({
+            id: row.id,
+            title: row.title,
+            jobId: row.jobId,
+            jobReference: row.jobId ? jobById.get(row.jobId)?.reference ?? null : null,
+            activityCode: row.activityCode,
+            activityName: row.activityCode ? activityName.get(row.activityCode) ?? row.activityCode : null,
+            startAt: row.startAt,
+            dueOn: row.dueOn,
+          })),
         jobs: jobRows
           .filter((row) => row.status !== "done" && mine(row.id))
           .map((row) => {
@@ -754,8 +768,27 @@ export class TrackingService {
         ? `${employee.name} finished. ${span} is on ${job.reference}.`
         : `${employee.name} finished. ${span} recorded.`;
       await this.audit(tx, employee.id, "tracking.task_stopped", "activity_segment", open.id, message);
+      if (open.jobId) await this.completeMatchingTask(tx, employee.id, open.jobId, open.taskCode);
       return { message };
     });
+  }
+
+  private async completeMatchingTask(tx: Conn, employeeId: string, jobId: string, taskCode: string) {
+    const rows = await tx
+      .select()
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.jobId, jobId),
+          eq(tasks.assigneeId, employeeId),
+          eq(tasks.activityCode, taskCode),
+          eq(tasks.status, "open"),
+        ),
+      )
+      .orderBy(asc(tasks.createdAt));
+    const byId = new Map((await tx.select().from(tasks).where(eq(tasks.jobId, jobId))).map((row) => [row.id, row]));
+    const next = rows.find((row) => !row.dependsOnId || byId.get(row.dependsOnId)?.status === "done");
+    if (next) await tx.update(tasks).set({ status: "done" }).where(eq(tasks.id, next.id));
   }
 
   async resumeTask(badge: string) {

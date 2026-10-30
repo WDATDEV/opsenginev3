@@ -259,18 +259,20 @@ export class JobsService {
       dependsOnId?: string;
       startAt?: string;
       activityCode?: string;
+      related?: { type: string; id: string };
     },
   ) {
     const job = await this.requireJob(principal, jobId);
     const assignee = input.assigneeId ? await this.activeEmployee(input.assigneeId) : null;
     if (input.startAt && !assignee) throw new ConflictException("Choose who does this task before setting a start time.");
     if (assignee) {
-      await this.assign(
-        principal,
-        job.id,
-        assignee.id,
-        input.startAt ? { startAt: input.startAt, ...(input.activityCode ? { activityCode: input.activityCode } : {}) } : undefined,
-      );
+      await this.requireCrew(job, assignee);
+      if (input.startAt) {
+        await this.assign(principal, job.id, assignee.id, {
+          startAt: input.startAt,
+          ...(input.activityCode ? { activityCode: input.activityCode } : {}),
+        });
+      }
     }
     if (input.dependsOnId) {
       const [earlier] = await this.db.db.select().from(tasks).where(eq(tasks.id, input.dependsOnId)).limit(1);
@@ -292,6 +294,8 @@ export class JobsService {
         dependsOnId: input.dependsOnId ?? null,
         startAt: input.startAt ? new Date(input.startAt) : null,
         activityCode: input.activityCode ?? null,
+        relatedType: input.related?.type ?? null,
+        relatedId: input.related?.id ?? null,
       })
       .returning();
     if (!created) throw new ConflictException("Could not add that task.");
@@ -299,6 +303,29 @@ export class JobsService {
       return { message: `${created.title} is on ${job.reference} and starts automatically at the set time.` };
     }
     return { message: `${created.title} is on ${job.reference}.` };
+  }
+
+  private async joinJob(
+    job: { id: string; reference: string },
+    currentJobId: string | null,
+    reference: string,
+    attach: () => Promise<void>,
+  ) {
+    if (currentJobId === job.id) return;
+    if (currentJobId) {
+      const [other] = await this.db.db.select().from(jobs).where(eq(jobs.id, currentJobId)).limit(1);
+      throw new ConflictException(`${reference} is already on job ${other?.reference ?? "another job"}.`);
+    }
+    await attach();
+  }
+
+  private async requireCrew(job: { id: string; reference: string }, person: { id: string; name: string }) {
+    const [onCrew] = await this.db.db
+      .select()
+      .from(jobAssignees)
+      .where(and(eq(jobAssignees.jobId, job.id), eq(jobAssignees.employeeId, person.id)))
+      .limit(1);
+    if (!onCrew) throw new ConflictException(`Add ${person.name} to the crew of ${job.reference} first.`);
   }
 
   async setTaskStart(
@@ -323,7 +350,7 @@ export class JobsService {
       .update(tasks)
       .set({
         startAt: input.startAt ? new Date(input.startAt) : null,
-        activityCode: input.startAt ? activityCode ?? null : null,
+        activityCode: activityCode ?? null,
       })
       .where(eq(tasks.id, task.id));
     return {
@@ -338,40 +365,87 @@ export class JobsService {
     if (job.status === "done") throw new ConflictException("That job is already closed.");
     await assertClientService(this.db.db, job.clientId, input.kind);
     const orm = this.db.db;
+    if (input.assigneeId) await this.requireCrew(job, await this.activeEmployee(input.assigneeId));
     let title: string;
     let details: string | undefined;
+    let related: { type: string; id: string } | undefined;
+    const sameClient = (owner: string | null) => {
+      if (owner && owner !== job.clientId) {
+        throw new ConflictException("That number belongs to another client.");
+      }
+    };
     try {
       if (input.kind === "receiving") {
         const reference = input.reference.toUpperCase();
-        await orm.insert(shipments).values({
-          reference,
-          clientId: job.clientId,
-          jobId: job.id,
-          carrier: input.carrier,
-          status: "expected",
-          expectedCartons: input.expectedCartons,
-          receivedCartons: 0,
-        });
+        const [found] = await orm.select().from(shipments).where(eq(shipments.reference, reference)).limit(1);
+        if (found) {
+          sameClient(found.clientId);
+          await this.joinJob(job, found.jobId, reference, async () => {
+            await orm.update(shipments).set({ jobId: job.id }).where(eq(shipments.id, found.id));
+          });
+          related = { type: "shipment", id: found.id };
+        } else {
+          const [created] = await orm
+            .insert(shipments)
+            .values({
+              reference,
+              clientId: job.clientId,
+              jobId: job.id,
+              carrier: input.carrier,
+              status: "expected",
+              expectedCartons: input.expectedCartons,
+              receivedCartons: 0,
+            })
+            .returning();
+          if (!created) throw new ConflictException("Could not add that shipment.");
+          related = { type: "shipment", id: created.id };
+        }
         title = `Receive shipment ${reference}`;
         details = `${input.expectedCartons} cartons expected from ${input.carrier.toUpperCase()}.`;
       } else if (input.kind === "unloading") {
         const reference = input.reference.toUpperCase();
-        await orm.insert(loads).values({
-          reference,
-          clientId: job.clientId,
-          jobId: job.id,
-          kind: input.loadKind,
-          dock: input.dock,
-          status: "arrived",
-          arrivalAt: new Date(),
-          palletCount: input.pallets,
-          cartonCount: input.cartons,
-        });
+        const [found] = await orm.select().from(loads).where(eq(loads.reference, reference)).limit(1);
+        if (found) {
+          sameClient(found.clientId);
+          await this.joinJob(job, found.jobId, reference, async () => {
+            await orm.update(loads).set({ jobId: job.id }).where(eq(loads.id, found.id));
+          });
+          related = { type: "load", id: found.id };
+          details = `${found.palletCount ?? 0} pallets, ${found.cartonCount ?? 0} cartons.`;
+        } else {
+          const [created] = await orm
+            .insert(loads)
+            .values({
+              reference,
+              clientId: job.clientId,
+              jobId: job.id,
+              kind: input.loadKind,
+              dock: input.dock,
+              status: "arrived",
+              arrivalAt: new Date(),
+              palletCount: input.pallets,
+              cartonCount: input.cartons,
+            })
+            .returning();
+          if (!created) throw new ConflictException("Could not add that load.");
+          related = { type: "load", id: created.id };
+          details = `${input.pallets} pallets, ${input.cartons} cartons.`;
+        }
         title = `Unload ${reference}`;
-        details = `${input.pallets} pallets, ${input.cartons} cartons.`;
       } else if (input.kind === "sorting") {
         const code = input.reference.toUpperCase();
-        await orm.insert(gaylords).values({ code, carrier: input.carrier, clientId: job.clientId, status: "open" });
+        const [found] = await orm.select().from(gaylords).where(eq(gaylords.code, code)).limit(1);
+        if (found) {
+          sameClient(found.clientId);
+          related = { type: "gaylord", id: found.id };
+        } else {
+          const [created] = await orm
+            .insert(gaylords)
+            .values({ code, carrier: input.carrier, clientId: job.clientId, status: "open" })
+            .returning();
+          if (!created) throw new ConflictException("Could not add that gaylord.");
+          related = { type: "gaylord", id: created.id };
+        }
         title = `Sort into gaylord ${code}`;
         details = `Carrier ${input.carrier.toUpperCase()}.`;
       } else if (input.kind === "packing") {
@@ -392,8 +466,53 @@ export class JobsService {
       dependsOnId: input.dependsOnId,
       startAt: input.startAt,
       activityCode: WORK_ACTIVITY[input.kind],
+      ...(related ? { related } : {}),
     });
     return { message: `${title} is on ${job.reference}.` };
+  }
+
+  private async endAssigneeTimer(
+    jobId: string,
+    task: { assigneeId: string | null; activityCode: string | null; startAt: Date | null },
+  ) {
+    if (!task.assigneeId) return false;
+    const orm = this.db.db;
+    const matches = (row: { jobId: string | null; taskCode: string }) =>
+      row.jobId === jobId && (!task.activityCode || row.taskCode === task.activityCode);
+    let ended = false;
+    const [open] = await orm
+      .select()
+      .from(segments)
+      .where(and(eq(segments.employeeId, task.assigneeId), isNull(segments.endedAt)))
+      .limit(1);
+    if (open && matches(open)) {
+      await orm.update(segments).set({ endedAt: new Date(), endReason: "complete" }).where(eq(segments.id, open.id));
+      ended = true;
+    } else if (!open) {
+      const [last] = await orm
+        .select()
+        .from(segments)
+        .where(eq(segments.employeeId, task.assigneeId))
+        .orderBy(desc(segments.startedAt))
+        .limit(1);
+      if (last && (last.endReason === "pause" || last.endReason === "meal") && matches(last)) {
+        await orm.update(segments).set({ endReason: "complete" }).where(eq(segments.id, last.id));
+        ended = true;
+      }
+    }
+    if (task.startAt) {
+      await orm
+        .update(jobAssignees)
+        .set({ startAt: null, activityCode: null })
+        .where(
+          and(
+            eq(jobAssignees.jobId, jobId),
+            eq(jobAssignees.employeeId, task.assigneeId),
+            isNull(jobAssignees.autoStartedAt),
+          ),
+        );
+    }
+    return ended;
   }
 
   async completeTask(principal: Principal, jobId: string, taskId: string) {
@@ -407,7 +526,12 @@ export class JobsService {
       }
     }
     await this.db.db.update(tasks).set({ status: "done" }).where(eq(tasks.id, task.id));
-    return { message: `${task.title} is done.` };
+    const ended = task.assigneeId ? await this.endAssigneeTimer(job.id, task) : false;
+    return {
+      message: ended
+        ? `${task.title} is done. The timer on the floor phone is ended.`
+        : `${task.title} is done.`,
+    };
   }
 
   private async activeEmployee(employeeId: string) {

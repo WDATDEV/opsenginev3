@@ -25,6 +25,14 @@ function isUnique(err: unknown): boolean {
   return "cause" in err && isUnique(err.cause);
 }
 
+const WORK_ACTIVITY = {
+  receiving: "receive_shipment",
+  unloading: "unload_trailer",
+  packing: "pack_orders",
+  picking: "pick_batch",
+  sorting: "sort_gaylord",
+} as const;
+
 @Injectable()
 export class JobsService {
   constructor(@Inject(DbService) private readonly db: DbService) {}
@@ -95,6 +103,15 @@ export class JobsService {
                 dueOn: task.dueOn,
                 assigneeId: task.assigneeId,
                 assigneeName: task.assigneeId ? names.get(task.assigneeId) ?? null : null,
+                startAt: task.startAt,
+                activityCode: task.activityCode,
+                activityName: task.activityCode
+                  ? activities.find((item) => item.code === task.activityCode)?.name ?? task.activityCode
+                  : null,
+                started: Boolean(
+                  task.startAt &&
+                    assigneeRows.find((row) => row.jobId === job.id && row.employeeId === task.assigneeId)?.autoStartedAt,
+                ),
                 dependsOnId: task.dependsOnId,
                 dependsOnTitle: task.dependsOnId ? taskById.get(task.dependsOnId)?.title ?? null : null,
                 blocked: Boolean(task.dependsOnId && taskById.get(task.dependsOnId)?.status !== "done" && task.status !== "done"),
@@ -234,11 +251,27 @@ export class JobsService {
   async addTask(
     principal: Principal,
     jobId: string,
-    input: { title: string; details?: string; assigneeId?: string; dueOn?: string; dependsOnId?: string },
+    input: {
+      title: string;
+      details?: string;
+      assigneeId?: string;
+      dueOn?: string;
+      dependsOnId?: string;
+      startAt?: string;
+      activityCode?: string;
+    },
   ) {
     const job = await this.requireJob(principal, jobId);
     const assignee = input.assigneeId ? await this.activeEmployee(input.assigneeId) : null;
-    if (assignee) await this.assign(principal, job.id, assignee.id);
+    if (input.startAt && !assignee) throw new ConflictException("Choose who does this task before setting a start time.");
+    if (assignee) {
+      await this.assign(
+        principal,
+        job.id,
+        assignee.id,
+        input.startAt ? { startAt: input.startAt, ...(input.activityCode ? { activityCode: input.activityCode } : {}) } : undefined,
+      );
+    }
     if (input.dependsOnId) {
       const [earlier] = await this.db.db.select().from(tasks).where(eq(tasks.id, input.dependsOnId)).limit(1);
       if (!earlier || earlier.jobId !== job.id) {
@@ -257,10 +290,47 @@ export class JobsService {
         assigneeId: assignee?.id ?? null,
         dueOn: input.dueOn ?? null,
         dependsOnId: input.dependsOnId ?? null,
+        startAt: input.startAt ? new Date(input.startAt) : null,
+        activityCode: input.activityCode ?? null,
       })
       .returning();
     if (!created) throw new ConflictException("Could not add that task.");
+    if (input.startAt) {
+      return { message: `${created.title} is on ${job.reference} and starts automatically at the set time.` };
+    }
     return { message: `${created.title} is on ${job.reference}.` };
+  }
+
+  async setTaskStart(
+    principal: Principal,
+    jobId: string,
+    taskId: string,
+    input: { startAt: string | null; activityCode?: string },
+  ) {
+    const job = await this.requireJob(principal, jobId);
+    const [task] = await this.db.db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
+    if (!task || task.jobId !== job.id) throw new NotFoundException("That task is not on this job.");
+    if (task.status === "done") throw new ConflictException("That task is already done.");
+    if (!task.assigneeId) throw new ConflictException("Choose who does this task before setting a start time.");
+    const activityCode = input.activityCode ?? task.activityCode ?? undefined;
+    await this.assign(
+      principal,
+      job.id,
+      task.assigneeId,
+      input.startAt === null ? { startAt: null } : { startAt: input.startAt, ...(activityCode ? { activityCode } : {}) },
+    );
+    await this.db.db
+      .update(tasks)
+      .set({
+        startAt: input.startAt ? new Date(input.startAt) : null,
+        activityCode: input.startAt ? activityCode ?? null : null,
+      })
+      .where(eq(tasks.id, task.id));
+    return {
+      message: input.startAt
+        ? `${task.title} starts automatically at the set time.`
+        : `${task.title} will be started by hand on the floor phone.`,
+    };
   }
 
   async addWork(principal: Principal, jobId: string, input: z.infer<typeof createJobWorkSchema>) {
@@ -320,6 +390,8 @@ export class JobsService {
       assigneeId: input.assigneeId,
       dueOn: input.dueOn,
       dependsOnId: input.dependsOnId,
+      startAt: input.startAt,
+      activityCode: WORK_ACTIVITY[input.kind],
     });
     return { message: `${title} is on ${job.reference}.` };
   }

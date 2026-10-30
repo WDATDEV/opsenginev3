@@ -16,6 +16,10 @@ type JobTask = {
   dependsOnId: string | null;
   dependsOnTitle: string | null;
   blocked: boolean;
+  startAt: string | null;
+  activityCode: string | null;
+  activityName: string | null;
+  started: boolean;
 };
 
 type JobBoard = {
@@ -64,6 +68,13 @@ function startNote(person: { startAt: string | null; activityName: string | null
   return person.started
     ? `Started by the set time ${stamp(person.startAt)}${what}`
     : `Starts by itself at ${stamp(person.startAt)}${what}`;
+}
+
+function taskStartNote(task: { startAt: string | null; activityName: string | null; started: boolean }) {
+  if (!task.startAt) return "No start time. They start it from the floor phone.";
+  return task.started
+    ? `Timer started by the set time ${stamp(task.startAt)}`
+    : `Timer starts by itself at ${stamp(task.startAt)}`;
 }
 
 function billNote(basis: string) {
@@ -240,20 +251,6 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                           </button>
                         ) : null}
                       </div>
-                      {canManageJobs(user?.role) && job.status !== "done" ? (
-                        <StartTime
-                          key={`${person.employeeId}-${person.startAt ?? "none"}-${person.started}`}
-                          activities={startChoices(board.data?.activities ?? [], job.enabledServices)}
-                          current={person}
-                          onSave={(startAt, activityCode) =>
-                            act(`/jobs/${job.id}/assignees`, {
-                              employeeId: person.employeeId,
-                              startAt,
-                              ...(activityCode ? { activityCode } : {}),
-                            })
-                          }
-                        />
-                      ) : null}
                     </li>
                   ))}
                 </ul>
@@ -264,13 +261,7 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                       .map((person) => person.id)
                       .join(",")}
                     people={people.filter((person) => !job.assignees.some((assigned) => assigned.employeeId === person.id))}
-                    activities={startChoices(board.data?.activities ?? [], job.enabledServices)}
-                    onAssign={(employeeId, startAt, activityCode) =>
-                      act(`/jobs/${job.id}/assignees`, {
-                        employeeId,
-                        ...(startAt ? { startAt, activityCode } : {}),
-                      })
-                    }
+                    onAssign={(employeeId) => act(`/jobs/${job.id}/assignees`, { employeeId })}
                   />
                 ) : null}
               </div>
@@ -290,6 +281,22 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                           {task.dependsOnTitle ? ` · after ${task.dependsOnTitle}` : ""}
                           {task.blocked ? " · waiting" : ""}
                         </span>
+                        {task.status !== "done" && task.assigneeId ? (
+                          <span className="block text-xs text-muted">{taskStartNote(task)}</span>
+                        ) : null}
+                        {canManageJobs(user?.role) && task.status !== "done" && task.assigneeId && job.status !== "done" ? (
+                          <StartTime
+                            key={`${task.id}-${task.startAt ?? "none"}-${task.started}`}
+                            activities={startChoices(board.data?.activities ?? [], job.enabledServices)}
+                            current={task}
+                            onSave={(startAt, activityCode) =>
+                              act(`/jobs/${job.id}/tasks/${task.id}/start`, {
+                                startAt,
+                                ...(activityCode ? { activityCode } : {}),
+                              })
+                            }
+                          />
+                        ) : null}
                       </span>
                       {canManageJobs(user?.role) && task.status !== "done" && !task.blocked ? (
                         <button className="btn btn-ghost" type="button" onClick={() => void act(`/jobs/${job.id}/tasks/${task.id}/done`, {})}>
@@ -304,6 +311,7 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                     people={people}
                     tasks={job.tasks}
                     services={job.enabledServices}
+                    activities={startChoices(board.data?.activities ?? [], job.enabledServices)}
                     closed={job.status === "done"}
                     onAdd={(body) => act(`/jobs/${job.id}/tasks`, body)}
                     onAddWork={(body) => act(`/jobs/${job.id}/work`, body)}
@@ -388,9 +396,9 @@ function StartFields({
         <input className="field" type="datetime-local" value={startAt} onChange={(event) => onStartAt(event.target.value)} />
       </Field>
       {startAt ? (
-        <Field label="Starts this task">
+        <Field label="Timer is for">
           <select className="field" value={activityCode} onChange={(event) => onActivity(event.target.value)}>
-            <option value="">Choose a task type</option>
+            <option value="">Choose the kind of work</option>
             {activities.map((item) => (
               <option key={item.code} value={item.code}>
                 {item.name}
@@ -459,26 +467,19 @@ function StartTime({
 
 function AssignForm({
   people,
-  activities,
   onAssign,
 }: {
   people: { id: string; name: string }[];
-  activities: StartChoice[];
-  onAssign: (employeeId: string, startAt?: string, activityCode?: string) => Promise<boolean>;
+  onAssign: (employeeId: string) => Promise<boolean>;
 }) {
   const [employeeId, setEmployeeId] = useState(people[0]?.id ?? "");
-  const [startAt, setStartAt] = useState("");
-  const [activityCode, setActivityCode] = useState(activities[0]?.code ?? "");
   return (
     <form
       className="mt-3 flex flex-wrap items-end gap-2"
       onSubmit={(event) => {
         event.preventDefault();
         if (!employeeId) return;
-        if (startAt && !activityCode) return;
-        void onAssign(employeeId, startAt ? toIso(startAt) : undefined, startAt ? activityCode : undefined).then((ok) => {
-          if (ok) setStartAt("");
-        });
+        void onAssign(employeeId);
       }}
     >
       <Field label="Assign someone">
@@ -491,15 +492,10 @@ function AssignForm({
           ))}
         </select>
       </Field>
-      <StartFields activities={activities} startAt={startAt} activityCode={activityCode} onStartAt={setStartAt} onActivity={setActivityCode} />
-      <button className="btn btn-ghost" type="submit" disabled={people.length === 0 || (Boolean(startAt) && !activityCode)}>
+      <button className="btn btn-ghost" type="submit" disabled={people.length === 0}>
         Assign
       </button>
-      {!startAt ? (
-        <p className="w-full text-xs text-muted">With no start time, the person starts this job from the floor phone and the timer begins then.</p>
-      ) : (
-        <p className="w-full text-xs text-muted">With a start time, the timer begins by itself then, once the person is checked in.</p>
-      )}
+      <p className="w-full text-xs text-muted">Set a start time on a task below to make its timer begin by itself.</p>
     </form>
   );
 }
@@ -518,15 +514,24 @@ function TaskForm({
   people,
   tasks,
   services,
+  activities,
   closed,
   onAdd,
   onAddWork,
 }: {
   people: { id: string; name: string }[];
+  activities: StartChoice[];
   tasks: JobTask[];
   services: string[];
   closed: boolean;
-  onAdd: (body: { title: string; assigneeId?: string; dueOn?: string; dependsOnId?: string }) => Promise<boolean>;
+  onAdd: (body: {
+    title: string;
+    assigneeId?: string;
+    dueOn?: string;
+    dependsOnId?: string;
+    startAt?: string;
+    activityCode?: string;
+  }) => Promise<boolean>;
   onAddWork: (body: Record<string, unknown>) => Promise<boolean>;
 }) {
   const kinds = WORK_KINDS.filter(([code]) => services.includes(code));
@@ -545,8 +550,13 @@ function TaskForm({
   const [orders, setOrders] = useState(1);
   const [note, setNote] = useState("");
   const [units, setUnits] = useState(1);
+  const [startAt, setStartAt] = useState("");
+  const [activityCode, setActivityCode] = useState(activities[0]?.code ?? "");
+  const needsActivity = kind === "" && Boolean(startAt);
   const common = {
     ...(assigneeId ? { assigneeId } : {}),
+    ...(assigneeId && startAt ? { startAt: toIso(startAt) } : {}),
+    ...(assigneeId && startAt && kind === "" ? { activityCode } : {}),
     ...(dueOn ? { dueOn } : {}),
     ...(dependsOnId ? { dependsOnId } : {}),
   };
@@ -570,6 +580,7 @@ function TaskForm({
     setOrders(1);
     setNote("");
     setUnits(1);
+    setStartAt("");
   }
 
   return (
@@ -577,6 +588,7 @@ function TaskForm({
       className="mt-3 grid gap-3 md:grid-cols-4"
       onSubmit={(event) => {
         event.preventDefault();
+        if (needsActivity && assigneeId && !activityCode) return;
         const send = kind ? onAddWork(body()) : onAdd({ title, ...common });
         void send.then((ok) => {
           if (ok) reset();
@@ -687,6 +699,25 @@ function TaskForm({
           ))}
         </select>
       </Field>
+      {assigneeId ? (
+        <>
+          <Field label="Start time (optional)">
+            <input className="field" type="datetime-local" value={startAt} onChange={(event) => setStartAt(event.target.value)} />
+          </Field>
+          {needsActivity ? (
+            <Field label="Timer is for">
+              <select className="field" value={activityCode} onChange={(event) => setActivityCode(event.target.value)}>
+                <option value="">Choose the kind of work</option>
+                {activities.map((item) => (
+                  <option key={item.code} value={item.code}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : null}
+        </>
+      ) : null}
       <Field label="Due">
         <input className="field" type="date" value={dueOn} onChange={(event) => setDueOn(event.target.value)} />
       </Field>
@@ -701,11 +732,18 @@ function TaskForm({
         </select>
       </Field>
       <div className="md:col-span-4">
-        <button className="btn btn-ghost" type="submit">
+        <button className="btn btn-ghost" type="submit" disabled={Boolean(assigneeId) && needsActivity && !activityCode}>
           {kind ? `Add ${WORK_KINDS.find(([code]) => code === kind)?.[1].toLowerCase()}` : "Add task"}
         </button>
         {kind ? (
           <span className="ml-3 text-sm text-muted">This also opens the record on the {kind} board.</span>
+        ) : null}
+        {assigneeId ? (
+          <p className="mt-2 text-xs text-muted">
+            {startAt
+              ? "The timer for this task begins by itself at that time, once the person is checked in."
+              : "With no start time, the person starts this task from the floor phone and the timer begins then."}
+          </p>
         ) : null}
       </div>
     </form>

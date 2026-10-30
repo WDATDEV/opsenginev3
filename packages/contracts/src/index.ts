@@ -295,12 +295,21 @@ export const assignCrewSchema = z.object({
   activityCode: z.string().trim().min(1).max(40).optional(),
 });
 
+const taskStartAt = z.string().datetime({ offset: true, message: "Choose a start date and time." });
+
 export const createJobTaskSchema = z.object({
   title: z.string().trim().min(1).max(120),
   details: z.string().trim().max(400).optional(),
   assigneeId: z.string().uuid().optional(),
   dueOn: day.optional(),
   dependsOnId: z.string().uuid().optional(),
+  startAt: taskStartAt.optional(),
+  activityCode: z.string().trim().min(1).max(40).optional(),
+});
+
+export const setTaskStartSchema = z.object({
+  startAt: taskStartAt.nullable(),
+  activityCode: z.string().trim().min(1).max(40).optional(),
 });
 
 export const jobWorkKinds = ["receiving", "unloading", "packing", "picking", "sorting"] as const;
@@ -310,6 +319,7 @@ const jobWorkBase = {
   assigneeId: z.string().uuid().optional(),
   dueOn: day.optional(),
   dependsOnId: z.string().uuid().optional(),
+  startAt: taskStartAt.optional(),
 };
 
 export const createJobWorkSchema = z.discriminatedUnion("kind", [

@@ -105,6 +105,8 @@ export const tasks = work.table("tasks", {
   assigneeId: uuid("assignee_id"),
   dueOn: date("due_on"),
   dependsOnId: uuid("depends_on_id"),
+  startAt: timestamp("start_at", { withTimezone: true }),
+  activityCode: text("activity_code"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

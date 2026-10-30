@@ -5,6 +5,7 @@ import {
   createJobSchema,
   createJobTaskSchema,
   createJobWorkSchema,
+  setTaskStartSchema,
 } from "@opsengine/contracts";
 import type { z } from "zod";
 import { authorize, can, ForbiddenError, type Principal, type RequestContext } from "@opsengine/kernel";
@@ -70,10 +71,29 @@ export class JobsController {
     @CurrentUser() ctx: RequestContext,
     @Param("id") id: string,
     @Body(new ZodPipe(createJobTaskSchema))
-    body: { title: string; details?: string; assigneeId?: string; dueOn?: string; dependsOnId?: string },
+    body: {
+      title: string;
+      details?: string;
+      assigneeId?: string;
+      dueOn?: string;
+      dependsOnId?: string;
+      startAt?: string;
+      activityCode?: string;
+    },
   ) {
     authorize(ctx, "job.manage");
     return this.jobs.addTask(ctx.principal, id, body);
+  }
+
+  @Post(":id/tasks/:taskId/start")
+  taskStart(
+    @CurrentUser() ctx: RequestContext,
+    @Param("id") id: string,
+    @Param("taskId") taskId: string,
+    @Body(new ZodPipe(setTaskStartSchema)) body: { startAt: string | null; activityCode?: string },
+  ) {
+    authorize(ctx, "job.manage");
+    return this.jobs.setTaskStart(ctx.principal, id, taskId, body);
   }
 
   @Post(":id/work")

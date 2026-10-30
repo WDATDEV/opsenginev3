@@ -109,6 +109,8 @@ ALTER TABLE work.tasks ADD COLUMN IF NOT EXISTS job_id uuid;
 ALTER TABLE work.tasks ADD COLUMN IF NOT EXISTS assignee_id uuid;
 ALTER TABLE work.tasks ADD COLUMN IF NOT EXISTS due_on date;
 ALTER TABLE work.tasks ADD COLUMN IF NOT EXISTS depends_on_id uuid;
+ALTER TABLE work.tasks ADD COLUMN IF NOT EXISTS start_at timestamptz;
+ALTER TABLE work.tasks ADD COLUMN IF NOT EXISTS activity_code text;
 
 CREATE TABLE IF NOT EXISTS audit.activity (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS work.job_assignees (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE tracking.employees ADD COLUMN IF NOT EXISTS departments jsonb;
 ALTER TABLE work.job_assignees ADD COLUMN IF NOT EXISTS start_at timestamptz;
 ALTER TABLE work.job_assignees ADD COLUMN IF NOT EXISTS activity_code text;
 ALTER TABLE work.job_assignees ADD COLUMN IF NOT EXISTS auto_started_at timestamptz;

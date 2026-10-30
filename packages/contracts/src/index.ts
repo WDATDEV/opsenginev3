@@ -175,7 +175,8 @@ export const checkoutSchema = z.object({
 export const createEmployeeSchema = z.object({
   name: z.string().trim().min(1).max(80),
   badgeCode: code,
-  departmentHome: z.enum(departments),
+  departmentHome: z.enum(departments).optional(),
+  departments: z.array(z.enum(departments)).max(departments.length).optional(),
   employmentType: z.enum(["employee", "temp"]).default("employee"),
   warehanceUserId: optionalText,
   clientId: z.string().uuid().optional(),

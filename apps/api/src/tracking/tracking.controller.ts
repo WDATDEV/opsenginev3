@@ -270,7 +270,8 @@ export class TrackingController {
     body: {
       name: string;
       badgeCode: string;
-      departmentHome: "packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect";
+      departmentHome?: "packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect";
+      departments?: ("packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect")[];
       employmentType: "employee" | "temp";
       warehanceUserId?: string;
       clientId?: string;

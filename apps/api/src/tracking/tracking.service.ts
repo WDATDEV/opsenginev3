@@ -361,6 +361,7 @@ export class TrackingService {
           name: employee.name,
           badgeCode: employee.badgeCode,
           departmentHome: employee.departmentHome,
+          departments: employee.departments?.length ? employee.departments : null,
           clientId: employee.clientId,
           warehanceUserId: employee.warehanceUserId,
           clockedIn: Boolean(shift),
@@ -710,6 +711,9 @@ export class TrackingService {
       if (!department) throw new TrackingError("Choose an activity.");
       const taskCode = activity?.code ?? taskFor(department);
       const billable = activity ? activity.billable : taskCode !== "indirect";
+      if (employee.departments?.length && department !== "indirect" && !employee.departments.includes(department)) {
+        throw new TrackingError(`${employee.name} is not set up for ${department}. Ask a manager to add it.`);
+      }
       const jobCheck = assertBillableJob({ billable, jobId: input.jobId ?? null });
       if (!jobCheck.ok) throw new TrackingError(jobCheck.reason);
       const job = jobCheck.jobId ? await this.jobForEmployee(tx, employee, jobCheck.jobId, department) : null;
@@ -1175,19 +1179,28 @@ export class TrackingService {
   async createEmployee(input: {
     name: string;
     badgeCode: string;
-    departmentHome: Department;
+    departmentHome?: Department;
+    departments?: Department[];
     employmentType: "employee" | "temp";
     warehanceUserId?: string;
     clientId?: string;
   }) {
     const owner = input.clientId ? await assertClientService(this.db.db, input.clientId, "people") : null;
+    const allowed = [...new Set(input.departments?.length ? input.departments : input.departmentHome ? [input.departmentHome] : [])];
+    if (allowed.length === 0) throw new TrackingError("Choose at least one kind of work.");
+    if (input.clientId) {
+      for (const department of allowed) {
+        if (department !== "indirect") await assertClientService(this.db.db, input.clientId, department);
+      }
+    }
     return this.inTx(async (tx) => {
       const [created] = await tx
         .insert(employees)
         .values({
           name: input.name.trim(),
           badgeCode: clean(input.badgeCode),
-          departmentHome: input.departmentHome,
+          departmentHome: allowed[0] ?? "packing",
+          departments: allowed,
           employmentType: input.employmentType,
           warehanceUserId: input.warehanceUserId ? clean(input.warehanceUserId) : null,
           clientId: owner?.id ?? null,

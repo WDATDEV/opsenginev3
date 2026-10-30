@@ -130,6 +130,7 @@ export const employees = tracking.table("employees", {
   name: text("name").notNull(),
   badgeCode: text("badge_code").notNull().unique(),
   departmentHome: text("department_home").notNull(),
+  departments: jsonb("departments").$type<string[] | null>(),
   employmentType: text("employment_type").notNull().default("employee"),
   warehanceUserId: text("warehance_user_id").unique(),
   clientId: uuid("client_id"),

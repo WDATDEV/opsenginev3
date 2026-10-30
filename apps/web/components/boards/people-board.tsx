@@ -95,8 +95,8 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string; e
                     return (
                       <label
                         key={item}
-                        className={`tap cursor-pointer rounded-full border px-4 py-2 text-sm capitalize ${
-                          on ? "border-moss bg-moss text-paper" : "border-black/10 bg-white"
+                        className={`inline-flex min-h-11 cursor-pointer select-none items-center justify-center rounded-full border px-4 text-sm font-medium capitalize leading-none transition-colors focus-within:ring-2 focus-within:ring-moss/40 ${
+                          on ? "border-moss bg-moss text-paper" : "border-black/15 bg-white text-ink hover:border-moss"
                         }`}
                       >
                         <input

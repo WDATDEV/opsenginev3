@@ -16,7 +16,7 @@ export function runSeed() {
       cwd: root,
       stdio: "inherit",
       shell: process.platform === "win32",
-      env: { ...process.env, SEED_DEMO: process.env.SEED_DEMO === "1" ? "1" : "0" },
+      env: { ...process.env, SEED_DEMO: "0" },
     });
     child.on("error", reject);
     child.on("exit", (code) => {

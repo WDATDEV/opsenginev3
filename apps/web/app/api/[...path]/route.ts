@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const API = process.env.API_UPSTREAM ?? "http://localhost:3011";
+const API = (process.env.API_UPSTREAM ?? "http://localhost:3011").replace(/\/$/, "");
+
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 async function proxy(request: NextRequest, path: string[]) {
   const url = `${API}/${path.join("/")}${request.nextUrl.search}`;
@@ -15,7 +18,7 @@ async function proxy(request: NextRequest, path: string[]) {
       ? undefined
       : await request.arrayBuffer();
 
-  const upstream = await fetch(url, { method: request.method, headers, body });
+  const upstream = await fetch(url, { method: request.method, headers, body, cache: "no-store" });
   const payload = await upstream.arrayBuffer();
   const response = new NextResponse(payload, { status: upstream.status });
   const type = upstream.headers.get("content-type");

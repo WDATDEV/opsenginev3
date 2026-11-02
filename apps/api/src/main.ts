@@ -13,8 +13,8 @@ async function bootstrap() {
     origin: process.env.WEB_ORIGIN ?? "http://localhost:3010",
     credentials: true,
   });
-  const port = Number(process.env.API_PORT ?? 3011);
-  await app.listen(port);
+  const port = Number(process.env.PORT ?? process.env.API_PORT ?? 3011);
+  await app.listen(port, "0.0.0.0");
   console.log(`API listening on ${port}`);
 }
 

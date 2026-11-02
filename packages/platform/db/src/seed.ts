@@ -253,8 +253,6 @@ async function seedPlan() {
   }
 }
 
-await seedPlan();
-
 await upsertRate(icecartel.id, "unload_trailer", "hour", 4500, "Unload labor");
 await upsertRate(icecartel.id, "unload_trailer", "pallet", 1200, "Pallet unload");
 await upsertRate(icecartel.id, "receive_shipment", "hour", 4000, "Receiving labor");
@@ -277,8 +275,13 @@ if (existingNorthwindLoad && !existingNorthwindLoad.jobId) {
   await db.update(loads).set({ jobId: northwindJob.id, clientId: northwind.id }).where(eq(loads.id, existingNorthwindLoad.id));
 }
 
-const [already] = await db.select({ id: employees.id }).from(employees).limit(1);
+const [already] = await db
+  .select({ id: employees.id })
+  .from(employees)
+  .where(eq(employees.badgeCode, "B-10441"))
+  .limit(1);
 if (already) {
+  await seedPlan();
   console.log("Tracking floor already seeded. Client jobs are ready.");
   console.log("IceCartel manager  lina@opsengine.local / OpsEngine!dev");
   console.log("IceCartel client   ice@opsengine.local  / OpsEngine!dev");

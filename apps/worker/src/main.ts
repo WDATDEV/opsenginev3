@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { config } from "dotenv";
 import { resolve } from "node:path";
 
@@ -26,6 +27,14 @@ async function tick() {
   } catch (err) {
     console.log(err instanceof Error ? err.message : "Tick failed.");
   }
+}
+
+const port = Number(process.env.PORT ?? 0);
+if (port > 0) {
+  createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true, role: "worker" }));
+  }).listen(port, "0.0.0.0");
 }
 
 await tick();

@@ -17,6 +17,20 @@ CREATE TABLE IF NOT EXISTS mail.connectors (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS mail.letters (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  gmail_id text NOT NULL UNIQUE,
+  thread_id text NOT NULL,
+  from_email text NOT NULL,
+  from_name text,
+  subject text NOT NULL DEFAULT '',
+  body text NOT NULL DEFAULT '',
+  received_at timestamptz NOT NULL,
+  client_id uuid,
+  status text NOT NULL DEFAULT 'new',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS identity.users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   email text NOT NULL UNIQUE,

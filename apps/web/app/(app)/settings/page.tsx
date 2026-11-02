@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, ApiError, post } from "@/lib/api";
 import { useSession } from "@/components/shell";
 import { Field, Notice, PageTitle, useResource } from "@/components/ui";
 
-type Connector = { connected: boolean; label: string | null; detail: string | null; address: string | null };
+type Connector = { connected: boolean; label: string | null; detail: string | null; address: string | null; googleReady?: boolean };
 type Connectors = { gmail: Connector; warehance: Connector; slack: Connector };
 
 export default function SettingsPage() {
@@ -23,6 +23,28 @@ export default function SettingsPage() {
       reload();
     } catch (err) {
       setProblem(err instanceof ApiError ? err.message : "Could not update the connector.");
+    }
+  }
+
+  // Google brings the owner back to this page with the result in the address.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("gmail");
+    if (!result) return;
+    if (result === "connected") setNotice("Gmail is connected. New mail is checked every minute.");
+    else if (result === "denied") setProblem("Google sign-in was cancelled.");
+    else setProblem(params.get("reason") ?? "Could not finish the Google sign-in.");
+    window.history.replaceState(null, "", "/settings");
+  }, []);
+
+  async function connectGmail() {
+    setNotice(null);
+    setProblem(null);
+    try {
+      const { url } = await post<{ url: string }>("/settings/connectors/gmail/connect", {});
+      window.location.href = url;
+    } catch (err) {
+      setProblem(err instanceof ApiError ? err.message : "Could not start the Google sign-in.");
     }
   }
 
@@ -66,7 +88,7 @@ export default function SettingsPage() {
       {problem ? <Notice tone="bad">{problem}</Notice> : null}
       {data ? (
         <div className="grid max-w-3xl gap-4">
-          <GmailCard key={data.gmail.detail ?? "gmail"} connector={data.gmail} onSave={(email) => save("/settings/connectors/gmail", { email })} onTest={() => test("gmail")} onDisconnect={() => disconnect("gmail")} />
+          <GmailCard connector={data.gmail} onConnect={connectGmail} onTest={() => test("gmail")} onDisconnect={() => disconnect("gmail")} />
           <WarehanceCard key={`${data.warehance.address ?? ""}-${data.warehance.detail ?? ""}`} connector={data.warehance} onSave={(url, key) => save("/settings/connectors/warehance", { url, key })} onTest={() => test("warehance")} onDisconnect={() => disconnect("warehance")} />
           <SlackCard key={`${data.slack.label ?? ""}-${data.slack.detail ?? ""}`} connector={data.slack} onSave={(token, channel) => save("/settings/connectors/slack", { token, channel })} onTest={() => test("slack")} onDisconnect={() => disconnect("slack")} />
         </div>
@@ -109,31 +131,37 @@ function Actions({ onTest, onDisconnect }: { onTest: () => void; onDisconnect: (
 
 function GmailCard({
   connector,
-  onSave,
+  onConnect,
   onTest,
   onDisconnect,
 }: {
   connector: Connector;
-  onSave: (email: string) => void;
+  onConnect: () => void;
   onTest: () => void;
   onDisconnect: () => void;
 }) {
-  const [email, setEmail] = useState(connector.label ?? "");
   return (
     <Card title="Gmail" connector={connector}>
-      <form
-        className="space-y-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onSave(email);
-        }}
-      >
-        <Field label="Warehouse mailbox">
-          <input className="field" type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
-        </Field>
-        <p className="text-sm text-muted">This stores the mailbox only. Test does not sign in to Google.</p>
-        <Actions onTest={onTest} onDisconnect={onDisconnect} />
-      </form>
+      {connector.googleReady === false ? (
+        <p className="text-sm text-muted">Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to the API first.</p>
+      ) : (
+        <p className="text-sm text-muted">Sign in as the warehouse mailbox. Ops Engine keeps Google’s token, never the password.</p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <button className="btn btn-primary" type="button" disabled={connector.googleReady === false} onClick={onConnect}>
+          {connector.connected ? "Sign in again" : "Connect with Google"}
+        </button>
+        {connector.connected ? (
+          <>
+            <button className="btn" type="button" onClick={onTest}>
+              Test
+            </button>
+            <button className="btn" type="button" onClick={onDisconnect}>
+              Disconnect
+            </button>
+          </>
+        ) : null}
+      </div>
     </Card>
   );
 }

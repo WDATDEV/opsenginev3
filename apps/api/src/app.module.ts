@@ -15,6 +15,8 @@ import { InternalController } from "./internal/internal.controller.js";
 import { SchedulerService } from "./tracking/scheduler.service.js";
 import { TrackingController } from "./tracking/tracking.controller.js";
 import { TrackingService } from "./tracking/tracking.service.js";
+import { GmailService } from "./mail/gmail.service.js";
+import { MailController } from "./mail/mail.controller.js";
 import { SettingsController } from "./settings/settings.controller.js";
 import { SettingsService } from "./settings/settings.service.js";
 import { WorkController } from "./work/work.controller.js";
@@ -36,6 +38,7 @@ import { WorkService } from "./work/work.service.js";
     TrackingController,
     WorkController,
     SettingsController,
+    MailController,
     InternalController,
   ],
   providers: [
@@ -49,6 +52,7 @@ import { WorkService } from "./work/work.service.js";
     BillingService,
     WorkService,
     SettingsService,
+    GmailService,
   ],
 })
 export class AppModule {}

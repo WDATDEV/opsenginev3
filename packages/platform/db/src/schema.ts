@@ -27,6 +27,20 @@ export const connectors = mail.table("connectors", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const letters = mail.table("letters", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  gmailId: text("gmail_id").notNull().unique(),
+  threadId: text("thread_id").notNull(),
+  fromEmail: text("from_email").notNull(),
+  fromName: text("from_name"),
+  subject: text("subject").notNull().default(""),
+  body: text("body").notNull().default(""),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  clientId: uuid("client_id"),
+  status: text("status").notNull().default("new"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const users = identity.table("users", {
   id: uuid("id").defaultRandom().primaryKey(),
   email: text("email").notNull().unique(),

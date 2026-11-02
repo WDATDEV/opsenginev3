@@ -2,6 +2,7 @@ import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 import { connectors } from "@opsengine/db";
 import { eq } from "drizzle-orm";
 import { DbService } from "../db.service.js";
+import { GmailService } from "../mail/gmail.service.js";
 
 type Kind = "gmail" | "warehance" | "slack";
 
@@ -16,14 +17,22 @@ function view(row: ConnectorRow | undefined) {
   };
 }
 
+// True once the Google client id and secret are set on the API.
+function googleReady() {
+  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+}
+
 @Injectable()
 export class SettingsService {
-  constructor(@Inject(DbService) private readonly db: DbService) {}
+  constructor(
+    @Inject(DbService) private readonly db: DbService,
+    @Inject(GmailService) private readonly gmail: GmailService,
+  ) {}
 
   async list() {
     const rows = await this.db.db.select().from(connectors);
     return {
-      gmail: view(rows.find((row) => row.kind === "gmail")),
+      gmail: { ...view(rows.find((row) => row.kind === "gmail")), googleReady: googleReady() },
       warehance: view(rows.find((row) => row.kind === "warehance")),
       slack: view(rows.find((row) => row.kind === "slack")),
     };
@@ -36,11 +45,6 @@ export class SettingsService {
       warehance: all.warehance.connected,
       slack: all.slack.connected,
     };
-  }
-
-  async saveGmail(email: string) {
-    await this.upsert("gmail", { label: email, secret: null, extra: null, detail: "Mailbox saved. Replies send from this address." });
-    return this.list();
   }
 
   async saveWarehance(url: string, key: string) {
@@ -76,8 +80,8 @@ export class SettingsService {
     const row = await this.row(kind);
     if (!row) throw new BadRequestException("Save this connector first.");
     if (kind === "gmail") {
-      // Mailbox only. Google sign-in is a later step, so this test never calls Gmail.
-      await this.upsert("gmail", { ...row, detail: `Mailbox ${row.label} is saved. Google sign-in is not connected yet.` });
+      // Asks Google for the mailbox profile with the saved token, so it proves the sign-in still works.
+      await this.gmail.test();
       return this.list();
     }
     if (kind === "warehance") {

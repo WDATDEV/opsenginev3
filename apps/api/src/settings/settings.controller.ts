@@ -6,10 +6,6 @@ import { CurrentUser } from "../auth/current-user.js";
 import { ZodPipe } from "../http.js";
 import { SettingsService } from "./settings.service.js";
 
-const gmailSchema = z.object({
-  email: z.string().trim().email("Enter the warehouse mailbox."),
-});
-
 const warehanceSchema = z.object({
   url: z.string().trim().url("Enter the connector address, including https://."),
   key: z.string().trim().optional().default(""),
@@ -49,12 +45,6 @@ export class SettingsController {
       throw new ForbiddenError("Mail is for the warehouse manager.");
     }
     return this.settings.status();
-  }
-
-  @Post("settings/connectors/gmail")
-  saveGmail(@CurrentUser() ctx: RequestContext, @Body(new ZodPipe(gmailSchema)) body: z.infer<typeof gmailSchema>) {
-    ownerOnly(ctx);
-    return this.settings.saveGmail(body.email);
   }
 
   @Post("settings/connectors/warehance")

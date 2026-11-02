@@ -76,6 +76,7 @@ export class SettingsService {
     const row = await this.row(kind);
     if (!row) throw new BadRequestException("Save this connector first.");
     if (kind === "gmail") {
+      // Mailbox only. Google sign-in is a later step, so this test never calls Gmail.
       await this.upsert("gmail", { ...row, detail: `Mailbox ${row.label} is saved. Google sign-in is not connected yet.` });
       return this.list();
     }

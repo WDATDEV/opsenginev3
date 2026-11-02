@@ -15,6 +15,8 @@ import { InternalController } from "./internal/internal.controller.js";
 import { SchedulerService } from "./tracking/scheduler.service.js";
 import { TrackingController } from "./tracking/tracking.controller.js";
 import { TrackingService } from "./tracking/tracking.service.js";
+import { SettingsController } from "./settings/settings.controller.js";
+import { SettingsService } from "./settings/settings.service.js";
 import { WorkController } from "./work/work.controller.js";
 import { WorkService } from "./work/work.service.js";
 
@@ -33,6 +35,7 @@ import { WorkService } from "./work/work.service.js";
     BillingController,
     TrackingController,
     WorkController,
+    SettingsController,
     InternalController,
   ],
   providers: [
@@ -45,6 +48,7 @@ import { WorkService } from "./work/work.service.js";
     JobsService,
     BillingService,
     WorkService,
+    SettingsService,
   ],
 })
 export class AppModule {}

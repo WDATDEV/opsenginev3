@@ -43,7 +43,7 @@ export default function ClientHomePage() {
       <PageTitle
         kicker="Client"
         title={client.name}
-        detail={`${client.code}: turn a service on and it shows in the menu. Main menu brings back Clients, Floor, and Follow-ups.`}
+        detail={`${client.code}: turn a service on and it shows in the menu. Main menu brings back Time tracking.`}
       />
       {message ? <Notice tone="ok">{message}</Notice> : null}
       {error ? <Notice tone="bad">{error}</Notice> : null}

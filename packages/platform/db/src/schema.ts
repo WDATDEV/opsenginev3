@@ -16,6 +16,16 @@ export const clients = pgSchema("clients");
 export const work = pgSchema("work");
 export const audit = pgSchema("audit");
 export const tracking = pgSchema("tracking");
+export const mail = pgSchema("mail");
+
+export const connectors = mail.table("connectors", {
+  kind: text("kind").primaryKey(),
+  label: text("label"),
+  secret: text("secret"),
+  extra: text("extra"),
+  detail: text("detail"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
 
 export const users = identity.table("users", {
   id: uuid("id").defaultRandom().primaryKey(),

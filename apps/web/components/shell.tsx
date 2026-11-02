@@ -50,6 +50,41 @@ function linksFor(role?: string): readonly (readonly [string, string])[] {
   return FLOOR_LINKS;
 }
 
+function linkActive(pathname: string, href: string) {
+  if (href === "/") return pathname === "/" || pathname === "/clients";
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function ModuleTabs({ pathname, role }: { pathname: string; role?: string }) {
+  const mail = role === "owner" || role === "warehouse_manager";
+  const tabs = [
+    ["/", "Time tracking"],
+    ...(mail ? [["/mail", "Mail"]] : []),
+    ...(role === "owner" ? [["/settings", "Settings"]] : []),
+  ] as const;
+  return (
+    <div className="mb-3 flex gap-2 md:block">
+      {tabs.map(([href, label]) => {
+        const active =
+          href === "/"
+            ? !pathname.startsWith("/mail") && !pathname.startsWith("/settings")
+            : pathname === href || pathname.startsWith(`${href}/`);
+        return (
+          <Link
+            key={href}
+            href={href}
+            className={`mb-1 block whitespace-nowrap rounded-lg px-3 py-2 text-sm ${
+              active ? "bg-moss text-paper" : "text-ink hover:bg-black/5"
+            }`}
+          >
+            {label}
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
 function MenuIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -106,17 +141,17 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
         <aside className="border-b border-black/10 bg-surface md:min-h-screen md:border-b-0 md:border-r">
           <div className="flex items-center justify-between px-4 py-4 md:block">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-moss">Ops Engine</p>
-              <p className="text-lg font-semibold">Work tracking</p>
+              <p className="text-lg font-semibold">Ops Engine</p>
             </div>
             <button className="btn btn-ghost md:mt-4" onClick={logout} type="button">
               Sign out
             </button>
           </div>
           <nav className="flex gap-2 overflow-auto px-3 pb-3 md:block md:px-3">
+            <ModuleTabs pathname={pathname} role={user?.role} />
             {clientId ? (
               <>
-                <Link href="/" className="mb-1 flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 text-sm text-ink hover:bg-black/5">
+                <Link href="/" className="mb-1 flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 pl-6 text-sm text-ink hover:bg-black/5">
                   <MenuIcon />
                   Main menu
                 </Link>
@@ -151,15 +186,19 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
                   <p className="px-3 py-2 text-sm text-muted">{navClients ? "That client is not on your list." : "Loading…"}</p>
                 )}
               </>
+            ) : pathname.startsWith("/mail") || pathname.startsWith("/settings") ? (
+              <p className="mb-1 py-2 pl-6 pr-3 text-sm font-semibold text-ink">
+                {pathname.startsWith("/mail") ? "Inbox" : "Connectors"}
+              </p>
             ) : (
               linksFor(user?.role).map(([href, label]) => {
-                const active = href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
+                const active = linkActive(pathname, href);
                 return (
                   <Link
                     key={href}
                     href={href}
-                    className={`mb-1 block whitespace-nowrap rounded-lg px-3 py-2 text-sm ${
-                      active ? "bg-moss text-paper" : "text-ink hover:bg-black/5"
+                    className={`mb-1 block whitespace-nowrap rounded-lg py-2 pl-6 pr-3 text-sm ${
+                      active ? "bg-black/10 font-semibold text-ink" : "text-ink hover:bg-black/5"
                     }`}
                   >
                     {label}
@@ -170,7 +209,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
           </nav>
           <div className="hidden space-y-2 px-4 pb-6 text-sm text-muted md:block">
             <p>{user ? user.name : "Loading session"}</p>
-            {user && !clientId && user.role !== "external_customer" && user.role !== "client_services" ? (
+            {user && !clientId && !pathname.startsWith("/mail") && !pathname.startsWith("/settings") && user.role !== "external_customer" && user.role !== "client_services" ? (
               <>
                 <Link className="block text-moss" href="/phone">
                   Open floor phone

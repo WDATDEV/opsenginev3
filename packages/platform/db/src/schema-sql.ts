@@ -6,6 +6,16 @@ CREATE SCHEMA IF NOT EXISTS clients;
 CREATE SCHEMA IF NOT EXISTS work;
 CREATE SCHEMA IF NOT EXISTS audit;
 CREATE SCHEMA IF NOT EXISTS tracking;
+CREATE SCHEMA IF NOT EXISTS mail;
+
+CREATE TABLE IF NOT EXISTS mail.connectors (
+  kind text PRIMARY KEY,
+  label text,
+  secret text,
+  extra text,
+  detail text,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS identity.users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

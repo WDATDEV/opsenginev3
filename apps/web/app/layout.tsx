@@ -6,7 +6,7 @@ const sans = Geist({ subsets: ["latin"], variable: "--font-sans" });
 const mono = Geist_Mono({ subsets: ["latin"], variable: "--font-mono" });
 
 export const metadata: Metadata = {
-  title: "Ops Engine · Work tracking",
+  title: "Ops Engine",
   description: "Employee work tracking for packing, picking, receiving, unloading, and sorting.",
 };
 

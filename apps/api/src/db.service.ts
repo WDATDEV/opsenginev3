@@ -13,8 +13,9 @@ export class DbService implements OnModuleInit {
     if (!url) return;
     await ensureSchema(url);
 
-    this.log.log("Clearing the database.");
-    await this.db.execute(sql`
+    if (process.env.CLEAR_ON_BOOT === "1") {
+      this.log.log("Clearing the database.");
+      await this.db.execute(sql`
       TRUNCATE TABLE
         tracking.sort_scans,
         tracking.load_crew,
@@ -45,7 +46,8 @@ export class DbService implements OnModuleInit {
         identity.users
       RESTART IDENTITY CASCADE
     `);
-    this.log.log("Database cleared.");
+      this.log.log("Database cleared.");
+    }
 
     const count = await this.userCount();
     if (process.env.SEED_ON_BOOT !== "1" && count > 0) return;

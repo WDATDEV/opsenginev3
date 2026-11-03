@@ -1,7 +1,8 @@
-import { BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, HttpException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
-import { connectors, letters } from "@opsengine/db";
-import { desc, eq } from "drizzle-orm";
+import { connectors, letters, runs } from "@opsengine/db";
+import { and, desc, eq, isNull } from "drizzle-orm";
+import { randomBytes } from "node:crypto";
 import { DbService } from "../db.service.js";
 import { AutomationService } from "./automation.service.js";
 
@@ -68,6 +69,63 @@ function sender(value: string) {
   const match = value.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/);
   if (match) return { name: match[1]?.trim() || null, email: (match[2] ?? "").trim().toLowerCase() };
   return { name: null, email: value.trim().toLowerCase() };
+}
+
+// ---- Building the outgoing message (RFC 5322 / MIME) ----
+
+// Header values must never hold a line break, or a sender could inject extra headers.
+const oneLine = (value: string) => value.replace(/[\r\n]+/g, " ").trim();
+const encodeSubject = (value: string) => (/^[\x20-\x7e]*$/.test(value) ? value : `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`);
+const wrap64 = (base64: string) => (base64.match(/.{1,76}/g) ?? []).join("\r\n");
+const toBase64Url = (text: string) => Buffer.from(text, "utf8").toString("base64url");
+
+export function buildReply(input: {
+  to: string;
+  subject: string;
+  body: string;
+  inReplyTo: string;
+  references: string;
+  attachment: { name: string; csv: string } | null;
+}) {
+  const subject = oneLine(input.subject);
+  const headers = [
+    `To: ${oneLine(input.to)}`,
+    `Subject: ${encodeSubject(/^re:/i.test(subject) ? subject : `Re: ${subject}`)}`,
+    "MIME-Version: 1.0",
+  ];
+  if (input.inReplyTo) headers.push(`In-Reply-To: ${oneLine(input.inReplyTo)}`);
+  if (input.references) headers.push(`References: ${oneLine(input.references)}`);
+
+  const textPart = (type: string) =>
+    [
+      `Content-Type: ${type}`,
+      "Content-Transfer-Encoding: base64",
+      "",
+      wrap64(Buffer.from(input.body.replace(/\r?\n/g, "\r\n"), "utf8").toString("base64")),
+    ].join("\r\n");
+
+  if (!input.attachment) {
+    return toBase64Url([...headers, textPart('text/plain; charset="UTF-8"')].join("\r\n"));
+  }
+
+  const boundary = `ops_${randomBytes(12).toString("hex")}`;
+  const filename = input.attachment.name.replace(/[^\w.\- ]+/g, "_");
+  const message = [
+    ...headers,
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    textPart('text/plain; charset="UTF-8"'),
+    `--${boundary}`,
+    `Content-Type: text/csv; charset="UTF-8"; name="${filename}"`,
+    `Content-Disposition: attachment; filename="${filename}"`,
+    "Content-Transfer-Encoding: base64",
+    "",
+    wrap64(Buffer.from(input.attachment.csv, "utf8").toString("base64")),
+    `--${boundary}--`,
+    "",
+  ].join("\r\n");
+  return toBase64Url(message);
 }
 
 @Injectable()
@@ -196,6 +254,73 @@ export class GmailService {
     } finally {
       this.syncing = false;
     }
+  }
+
+  /**
+   * Sends the reply for one draft, as a reply in the same Gmail thread. A person clicked Send, with
+   * the text they approved. The claim on `sent_at` comes first, so a double click or a second tab
+   * cannot send it twice. If Gmail refuses, the claim is released so it can be tried again.
+   */
+  async sendRun(runId: string, subject: string, body: string) {
+    const [run] = await this.db.db.select().from(runs).where(eq(runs.id, runId)).limit(1);
+    if (!run) throw new NotFoundException("That draft was not found.");
+    if (run.status !== "done" || !run.draftBody) throw new BadRequestException("This draft is not ready to send.");
+    if (run.sentAt) throw new BadRequestException("This reply was already sent.");
+    const [letter] = await this.db.db.select().from(letters).where(eq(letters.id, run.letterId)).limit(1);
+    if (!letter) throw new NotFoundException("The original letter was not found.");
+
+    const to = letter.fromEmail.trim();
+    if (!/^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$/.test(to)) throw new BadRequestException("The sender's address looks invalid.");
+    const text = body.trim();
+    if (!text) throw new BadRequestException("The reply is empty.");
+
+    const claimed = await this.db.db
+      .update(runs)
+      .set({ sentAt: new Date(), sentTo: to, draftSubject: subject.trim(), draftBody: text })
+      .where(and(eq(runs.id, runId), isNull(runs.sentAt)))
+      .returning({ id: runs.id });
+    if (claimed.length === 0) throw new BadRequestException("This reply was already sent.");
+
+    try {
+      const token = await this.accessToken();
+      // The original Message-ID lets the reply thread correctly in the sender's mail app.
+      const original = await this.get<GmailMessage>(
+        `users/me/messages/${letter.gmailId}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=References`,
+        token,
+      );
+      const messageId = header(original.payload, "Message-ID");
+      const references = [header(original.payload, "References"), messageId].filter(Boolean).join(" ");
+
+      const raw = buildReply({
+        to,
+        subject: subject.trim() || `Re: ${letter.subject}`,
+        body: text,
+        inReplyTo: messageId,
+        references,
+        attachment: run.attachmentName && run.attachmentCsv ? { name: run.attachmentName, csv: run.attachmentCsv } : null,
+      });
+
+      const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ raw, threadId: letter.threadId }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!res.ok) {
+        const detail = ((await res.json().catch(() => ({}))) as { error?: { message?: string } }).error?.message;
+        if (res.status === 403) {
+          throw new BadRequestException("Google did not allow sending. Connect Gmail again in Settings and allow sending mail.");
+        }
+        throw new BadRequestException(`Gmail could not send it (${res.status}${detail ? `: ${detail}` : ""}).`);
+      }
+    } catch (err) {
+      await this.db.db.update(runs).set({ sentAt: null, sentTo: null }).where(eq(runs.id, runId));
+      if (err instanceof HttpException) throw err;
+      throw new BadRequestException("Could not reach Gmail. The reply was not sent.");
+    }
+
+    this.log.log(`Reply sent to ${to}.`);
+    return { sentTo: to };
   }
 
   private async accessToken() {

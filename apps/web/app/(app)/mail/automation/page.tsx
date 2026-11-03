@@ -43,6 +43,8 @@ type Run = {
   error: string | null;
   model: string | null;
   createdAt: string;
+  sentAt: string | null;
+  sentTo: string | null;
 };
 
 // The form keeps people and the client id as text, then converts them when saving.
@@ -215,7 +217,7 @@ export default function AutomationPage() {
       <PageTitle
         kicker="Mail"
         title="Email automation"
-        detail="Choose which emails a rule picks up. It can write a draft reply with Claude, look up Warehance data, attach a spreadsheet, and tell people in Slack. Nothing is ever sent to a client."
+        detail="Choose which emails a rule picks up. It can write a draft reply with Claude, look up Warehance data, attach a spreadsheet, and tell people in Slack. Claude only writes drafts. A person reads each one, edits it if needed, and clicks Send."
       />
       {notice ? <Notice tone="ok">{notice}</Notice> : null}
       {problem ? <Notice tone="bad">{problem}</Notice> : null}
@@ -287,12 +289,7 @@ export default function AutomationPage() {
             </div>
             {run.error ? <Notice tone="bad">{run.error}</Notice> : null}
             {run.needsReview ? <Notice tone="bad">Needs a person before it goes anywhere: {run.reviewReason || "check the draft."}</Notice> : null}
-            {run.draftBody ? (
-              <div className="rounded-xl bg-white p-3 text-sm">
-                <p className="font-semibold">{run.draftSubject}</p>
-                <p className="mt-2 whitespace-pre-wrap">{run.draftBody}</p>
-              </div>
-            ) : null}
+            {run.draftBody ? <DraftBox run={run} onSent={runs.reload} /> : null}
             {run.attachmentName ? (
               <a className="btn inline-block" href={`${API_URL}/mail/runs/${run.id}/attachment`}>
                 Download {run.attachmentName}
@@ -309,10 +306,59 @@ export default function AutomationPage() {
               </details>
             ) : null}
             {run.slackNote ? <p className="text-sm text-muted">Slack: {run.slackNote}</p> : null}
-            {run.model ? <p className="text-xs text-muted">Written by {run.model}. Draft only, nothing was sent.</p> : null}
+            {run.model ? (
+              <p className="text-xs text-muted">Written by {run.model}. {run.sentAt ? "This reply was sent by a person." : "Nothing is sent until a person clicks Send."}</p>
+            ) : null}
           </section>
         ))}
       </section>
+    </div>
+  );
+}
+
+// The draft, open for editing. Send is the only place a reply can leave the app, and it asks first.
+function DraftBox({ run, onSent }: { run: Run; onSent: () => void }) {
+  const [subject, setSubject] = useState(run.draftSubject ?? "");
+  const [body, setBody] = useState(run.draftBody ?? "");
+  const [sending, setSending] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  if (run.sentAt) {
+    return (
+      <div className="rounded-xl bg-white p-3 text-sm">
+        <p className="font-semibold text-moss">
+          Sent to {run.sentTo} on {new Date(run.sentAt).toLocaleString()}
+        </p>
+        <p className="mt-2 font-semibold">{run.draftSubject}</p>
+        <p className="mt-1 whitespace-pre-wrap">{run.draftBody}</p>
+      </div>
+    );
+  }
+
+  async function send() {
+    if (!window.confirm(`Send this reply to ${run.fromEmail}${run.attachmentName ? ` with ${run.attachmentName} attached` : ""}? It cannot be taken back.`)) return;
+    setSending(true);
+    setProblem(null);
+    try {
+      await post(`/mail/runs/${run.id}/send`, { subject, body });
+      onSent();
+    } catch (err) {
+      setProblem(err instanceof ApiError ? err.message : "Could not send the reply.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2 rounded-xl bg-white p-3 text-sm">
+      <p className="text-muted">To: {run.fromEmail}</p>
+      <input className="field" aria-label="Subject" value={subject} onChange={(event) => setSubject(event.target.value)} />
+      <textarea className="field min-h-[10rem]" aria-label="Reply" value={body} onChange={(event) => setBody(event.target.value)} />
+      {run.attachmentName ? <p className="text-muted">{run.attachmentName} will be attached.</p> : null}
+      {problem ? <Notice tone="bad">{problem}</Notice> : null}
+      <button className="btn btn-primary" type="button" disabled={sending || !subject.trim() || !body.trim()} onClick={send}>
+        {sending ? "Sending…" : "Send reply"}
+      </button>
     </div>
   );
 }

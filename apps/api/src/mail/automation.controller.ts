@@ -6,6 +6,7 @@ import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser } from "../auth/current-user.js";
 import { ZodPipe } from "../http.js";
 import { AutomationService } from "./automation.service.js";
+import { GmailService } from "./gmail.service.js";
 
 const condition = z.object({
   field: z.enum(["subject", "body", "sender", "domain"]),
@@ -38,6 +39,11 @@ const ruleSchema = z.object({
   }),
 });
 
+const sendSchema = z.object({
+  subject: z.string().trim().min(1, "The subject is empty.").max(300),
+  body: z.string().trim().min(1, "The reply is empty.").max(20_000),
+});
+
 const runSchema = z.object({ ruleId: z.string().uuid() });
 
 function access(ctx: RequestContext) {
@@ -49,7 +55,10 @@ function access(ctx: RequestContext) {
 @Controller("mail")
 @UseGuards(AuthGuard)
 export class AutomationController {
-  constructor(@Inject(AutomationService) private readonly automation: AutomationService) {}
+  constructor(
+    @Inject(AutomationService) private readonly automation: AutomationService,
+    @Inject(GmailService) private readonly gmail: GmailService,
+  ) {}
 
   @Get("rules")
   list(@CurrentUser() ctx: RequestContext) {
@@ -95,6 +104,13 @@ export class AutomationController {
   run(@CurrentUser() ctx: RequestContext, @Param("id") id: string, @Body(new ZodPipe(runSchema)) body: z.infer<typeof runSchema>) {
     access(ctx);
     return this.automation.runNow(id, body.ruleId);
+  }
+
+  // A person reads the draft, may edit it, and sends it. Nothing is ever sent without this call.
+  @Post("runs/:id/send")
+  send(@CurrentUser() ctx: RequestContext, @Param("id") id: string, @Body(new ZodPipe(sendSchema)) body: z.infer<typeof sendSchema>) {
+    access(ctx);
+    return this.gmail.sendRun(id, body.subject, body.body);
   }
 
   @Get("runs/:id/attachment")

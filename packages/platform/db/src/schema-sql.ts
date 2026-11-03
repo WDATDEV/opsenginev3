@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS mail.runs (
   finished_at timestamptz,
   UNIQUE (letter_id, rule_id)
 );
+ALTER TABLE mail.runs ADD COLUMN IF NOT EXISTS sent_at timestamptz;
+ALTER TABLE mail.runs ADD COLUMN IF NOT EXISTS sent_to text;
 
 CREATE TABLE IF NOT EXISTS identity.users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

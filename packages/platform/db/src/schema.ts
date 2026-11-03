@@ -97,6 +97,9 @@ export const runs = mail.table("runs", {
   model: text("model"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
+  // Set when a person sends the reply from the app. A draft is sent at most once.
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  sentTo: text("sent_to"),
 });
 
 export const users = identity.table("users", {

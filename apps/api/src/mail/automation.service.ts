@@ -138,6 +138,8 @@ export class AutomationService {
         model: row.model,
         createdAt: row.createdAt,
         finishedAt: row.finishedAt,
+        sentAt: row.sentAt,
+        sentTo: row.sentTo,
       };
     });
   }
@@ -153,6 +155,9 @@ export class AutomationService {
     const [letter] = await this.db.db.select().from(letters).where(eq(letters.id, letterId)).limit(1);
     const [rule] = await this.db.db.select().from(rules).where(eq(rules.id, ruleId)).limit(1);
     if (!letter || !rule) throw new NotFoundException("That letter or rule was not found.");
+    // Running again replaces the draft, so a reply that was already sent is never overwritten.
+    const [earlier] = await this.db.db.select().from(runs).where(and(eq(runs.letterId, letterId), eq(runs.ruleId, ruleId))).limit(1);
+    if (earlier?.sentAt) throw new BadRequestException("A reply was already sent for this letter with this rule.");
     await this.db.db.delete(runs).where(and(eq(runs.letterId, letterId), eq(runs.ruleId, ruleId)));
     const [run] = await this.db.db.insert(runs).values({ letterId, ruleId }).returning({ id: runs.id });
     if (!run) throw new BadRequestException("Could not start the run.");

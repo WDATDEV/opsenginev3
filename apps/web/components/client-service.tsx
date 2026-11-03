@@ -29,8 +29,8 @@ export function ClientService({
           title={`${label} is off`}
           detail={`Turn ${label.toLowerCase()} on for ${client.name} before opening it.`}
         />
-        <Link className="text-sm text-moss" href={`/clients/${client.id}`}>
-          Back to {client.name}
+        <Link className="text-sm text-moss" href={`/clients/${client.id}/settings`}>
+          Open {client.name} settings
         </Link>
       </div>
     );
@@ -38,9 +38,7 @@ export function ClientService({
   return (
     <div>
       <p className="mb-4 text-sm">
-        <Link className="text-moss" href={`/clients/${client.id}`}>
-          {client.name}
-        </Link>
+        <span className="font-medium">{client.name}</span>
         <span className="text-muted"> · {label}</span>
       </p>
       {children(client)}

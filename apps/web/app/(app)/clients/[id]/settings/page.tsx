@@ -11,7 +11,9 @@ const UNITS = ["hour", "pallet", "carton", "unit", "sku", "flat"] as const;
 
 type Activity = { code: string; name: string; clientId: string | null };
 
-export default function ClientHomePage() {
+// Setup for one client: which services are on, and what each activity costs.
+// It sits in the menu like Settings. Opening a client goes to Jobs instead (see ../page.tsx).
+export default function ClientSettingsPage() {
   const params = useParams<{ id: string }>();
   const clients = useResource<ClientRecord[]>("/clients");
   const catalog = useResource<Activity[]>("/tracking/activities");
@@ -41,9 +43,9 @@ export default function ClientHomePage() {
   return (
     <div>
       <PageTitle
-        kicker="Client"
-        title={client.name}
-        detail={`${client.code}: turn a service on and it shows in the menu. Main menu brings back Time tracking.`}
+        kicker={client.name}
+        title="Client settings"
+        detail={`${client.code}: turn a service on and it shows in the menu. Set what each activity costs below.`}
       />
       {message ? <Notice tone="ok">{message}</Notice> : null}
       {error ? <Notice tone="bad">{error}</Notice> : null}

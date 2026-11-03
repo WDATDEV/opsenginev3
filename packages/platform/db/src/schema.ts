@@ -52,6 +52,8 @@ export type RuleCondition = {
 export type RuleDraft = {
   enabled: boolean;
   instructions: string;
+  // Fixed business facts Claude may quote, such as opening hours. Rules saved before this field exist lack it.
+  facts?: string;
   model: "haiku" | "sonnet";
   useWarehance: boolean;
   warehanceClientId: number | null;

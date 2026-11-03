@@ -23,6 +23,7 @@ const ruleSchema = z.object({
   draft: z.object({
     enabled: z.boolean(),
     instructions: z.string().max(4000),
+    facts: z.string().max(6000).default(""),
     model: z.enum(["haiku", "sonnet"]),
     useWarehance: z.boolean(),
     warehanceClientId: z.number().int().positive().nullable(),
@@ -76,6 +77,12 @@ export class AutomationController {
   remove(@CurrentUser() ctx: RequestContext, @Param("id") id: string) {
     access(ctx);
     return this.automation.removeRule(id);
+  }
+
+  @Get("warehance/clients")
+  warehanceClients(@CurrentUser() ctx: RequestContext) {
+    access(ctx);
+    return this.automation.warehanceClients();
   }
 
   @Get("runs")

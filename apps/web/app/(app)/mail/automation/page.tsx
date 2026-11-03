@@ -18,6 +18,7 @@ type Rule = {
   draft: {
     enabled: boolean;
     instructions: string;
+    facts?: string;
     model: "haiku" | "sonnet";
     useWarehance: boolean;
     warehanceClientId: number | null;
@@ -51,7 +52,7 @@ type Form = {
   enabled: boolean;
   matchMode: "all" | "any";
   conditions: Condition[];
-  draft: { enabled: boolean; instructions: string; model: "haiku" | "sonnet"; useWarehance: boolean; clientId: string; spreadsheet: boolean };
+  draft: { enabled: boolean; instructions: string; facts: string; model: "haiku" | "sonnet"; useWarehance: boolean; clientId: string; spreadsheet: boolean };
   slack: { enabled: boolean; channel: string; mentions: string; direct: string; includeDraft: boolean };
 };
 
@@ -75,7 +76,7 @@ const blank = (): Form => ({
   enabled: true,
   matchMode: "all",
   conditions: [{ field: "subject", op: "contains_any", value: "" }],
-  draft: { enabled: true, instructions: "", model: "haiku", useWarehance: false, clientId: "", spreadsheet: false },
+  draft: { enabled: true, instructions: "", facts: "", model: "haiku", useWarehance: false, clientId: "", spreadsheet: false },
   slack: { enabled: false, channel: "", mentions: "", direct: "", includeDraft: false },
 });
 
@@ -88,6 +89,7 @@ const toForm = (rule: Rule): Form => ({
   draft: {
     enabled: rule.draft.enabled,
     instructions: rule.draft.instructions,
+    facts: rule.draft.facts ?? "",
     model: rule.draft.model,
     useWarehance: rule.draft.useWarehance,
     clientId: rule.draft.warehanceClientId ? String(rule.draft.warehanceClientId) : "",
@@ -116,6 +118,7 @@ const toPayload = (form: Form) => ({
   draft: {
     enabled: form.draft.enabled,
     instructions: form.draft.instructions,
+    facts: form.draft.facts,
     model: form.draft.model,
     useWarehance: form.draft.useWarehance,
     warehanceClientId: form.draft.clientId.trim() ? Number(form.draft.clientId) : null,
@@ -325,6 +328,13 @@ function Editor({
   onSave: () => void;
   onCancel: () => void;
 }) {
+  // The client list comes from the Warehance bot, and is only fetched once a rule asks for lookups.
+  const clients = useResource<{ connected: boolean; clients: { id: number; name: string }[]; error?: string }>(
+    form.draft.useWarehance ? "/mail/warehance/clients" : null,
+  );
+  const clientList = clients.data?.clients ?? [];
+  const pickable = clientList.length > 0;
+
   const set = (patch: Partial<Form>) => onChange({ ...form, ...patch });
   const setDraft = (patch: Partial<Form["draft"]>) => onChange({ ...form, draft: { ...form.draft, ...patch } });
   const setSlack = (patch: Partial<Form["slack"]>) => onChange({ ...form, slack: { ...form.slack, ...patch } });
@@ -392,6 +402,15 @@ function Editor({
                 onChange={(event) => setDraft({ instructions: event.target.value })}
               />
             </Field>
+            <Field label="Facts the reply may use (hours, addresses, prices, policies)">
+              <textarea
+                className="field min-h-[8rem]"
+                placeholder={"Opening hours: Monday to Friday 8:00 am to 5:00 pm. Closed on weekends and public holidays.\nWalk-in drop-offs: accepted weekdays 9:00 am to 4:00 pm at Dock 2. Please call ahead for pallets.\nAddress: 100 Warehouse Road, Austin, TX 78701."}
+                value={form.draft.facts}
+                onChange={(event) => setDraft({ facts: event.target.value })}
+              />
+            </Field>
+            <p className="text-sm text-muted">Claude quotes only what is written here and in the Warehance lookups. Anything else, it says the team will check.</p>
             <Field label="Claude model">
               <select className="field w-auto" value={form.draft.model} onChange={(event) => setDraft({ model: event.target.value as "haiku" | "sonnet" })}>
                 <option value="haiku">Haiku (fast, low cost)</option>
@@ -401,14 +420,35 @@ function Editor({
             <Check label="Look up Warehance data when the email needs it" checked={form.draft.useWarehance} onChange={(useWarehance) => setDraft({ useWarehance })} />
             {form.draft.useWarehance ? (
               <div className="space-y-3 pl-6">
-                <Field label="Warehance client ID">
-                  <input
-                    className="field w-40"
-                    inputMode="numeric"
-                    value={form.draft.clientId}
-                    onChange={(event) => setDraft({ clientId: event.target.value.replace(/\D/g, "") })}
-                  />
+                <Field label="Warehance client">
+                  {pickable ? (
+                    <select className="field w-auto min-w-[16rem]" value={form.draft.clientId} onChange={(event) => setDraft({ clientId: event.target.value })}>
+                      <option value="">Choose a client</option>
+                      {/* Keeps a saved ID visible even when it is missing from the list. */}
+                      {form.draft.clientId && !clientList.some((entry) => String(entry.id) === form.draft.clientId) ? (
+                        <option value={form.draft.clientId}>Client ID {form.draft.clientId}</option>
+                      ) : null}
+                      {clientList.map((entry) => (
+                        <option key={entry.id} value={String(entry.id)}>
+                          {entry.name} (ID {entry.id})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      className="field w-40"
+                      inputMode="numeric"
+                      placeholder="Client ID"
+                      value={form.draft.clientId}
+                      onChange={(event) => setDraft({ clientId: event.target.value.replace(/\D/g, "") })}
+                    />
+                  )}
                 </Field>
+                {clients.loading ? <p className="text-sm text-muted">Loading your Warehance clients…</p> : null}
+                {clients.data && !clients.data.connected ? (
+                  <p className="text-sm text-muted">The Warehance bot is not connected, so type the client ID. Connect it in Settings to pick from a list.</p>
+                ) : null}
+                {clients.data?.error ? <p className="text-sm text-rust">Could not load the client list: {clients.data.error} Type the client ID instead.</p> : null}
                 <p className="text-sm text-muted">Every lookup is limited to this one client, so a letter cannot pull in another brand’s data.</p>
                 <Check label="Attach a spreadsheet when the sender asks for a list or export" checked={form.draft.spreadsheet} onChange={(spreadsheet) => setDraft({ spreadsheet })} />
               </div>

@@ -9,6 +9,19 @@ export class ApiError extends Error {
   }
 }
 
+// Pages that work without a sign-in. A 401 there is not an expired session.
+const OPEN_PAGES = ["/login", "/phone", "/gate", "/warehouse"];
+
+// When the saved sign-in is no longer accepted (it expired, or the server's secret changed), the
+// page used to show a bare 401 and stay stuck. Clear the stale cookie and go to sign-in instead.
+async function endExpiredSession(path: string) {
+  if (typeof window === "undefined" || path === "/auth/login" || path === "/auth/logout") return;
+  const here = window.location.pathname;
+  if (OPEN_PAGES.some((page) => here === page || here.startsWith(`${page}/`))) return;
+  await fetch(`${API_URL}/auth/logout`, { method: "POST", credentials: "include" }).catch(() => undefined);
+  window.location.assign(`/login?next=${encodeURIComponent(here)}`);
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
@@ -18,6 +31,8 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
+
+  if (res.status === 401) await endExpiredSession(path);
 
   if (!res.ok) {
     let message = "Something went wrong.";

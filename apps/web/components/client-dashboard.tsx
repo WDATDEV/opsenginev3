@@ -93,7 +93,7 @@ export function ClientDashboard() {
                       .join(" · ")}
               </p>
               <Link className="btn btn-ghost mt-3" href={`/clients/${client.id}`}>
-                View
+                Open
               </Link>
             </article>
         ))}

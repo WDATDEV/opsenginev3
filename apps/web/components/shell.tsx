@@ -241,11 +241,20 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
                         {insideClient ? (
                           <>
                             <p className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">{insideClient.name}</p>
-                            <SubLink href={`/clients/${insideClient.id}`} label="Services" active={pathname === `/clients/${insideClient.id}`} />
                             {clientServices.map(([service, label]) => {
                               const href = `/clients/${insideClient.id}/${service}`;
                               return <SubLink key={service} href={href} label={label} active={pathname === href || pathname.startsWith(`${href}/`)} />;
                             })}
+                            {/* Which services are on and what they cost. Set up once, so it sits apart at the bottom. */}
+                            {user?.role !== "external_customer" ? (
+                              <div className="mt-2 border-t border-black/10 pt-2">
+                                <SubLink
+                                  href={`/clients/${insideClient.id}/settings`}
+                                  label="Settings"
+                                  active={pathname === `/clients/${insideClient.id}/settings`}
+                                />
+                              </div>
+                            ) : null}
                           </>
                         ) : (
                           <p className="px-3 py-2 text-sm text-muted">{navClients ? "That client is not on your list." : "Loading…"}</p>

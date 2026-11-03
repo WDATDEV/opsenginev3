@@ -8,8 +8,9 @@ import { badgeFromScan } from "@/lib/qr";
 
 type Action = "in" | "out";
 
-const PLACES = ["Front gate", "Dock", "Packing", "Picking", "Receiving", "Unloading", "Sorting"] as const;
 const PLACE_KEY = "oe_gate_place";
+
+type Status = { mode: "location" | "qr_gate"; ready: boolean; places: { id: string; name: string }[] };
 
 type Fix = { latitude: number; longitude: number; accuracy: number; capturedAt: number };
 
@@ -35,7 +36,9 @@ function readPosition() {
 
 export default function GatePage() {
   const [action, setAction] = useState<Action>("in");
-  const [place, setPlace] = useState<(typeof PLACES)[number]>("Front gate");
+  const [place, setPlace] = useState("");
+  const [places, setPlaces] = useState<string[]>([]);
+  const [mode, setMode] = useState<"location" | "qr_gate">("location");
   const [scan, setScan] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -49,27 +52,32 @@ export default function GatePage() {
   const scannerRef = useRef<{ stop: () => Promise<void> } | null>(null);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(PLACE_KEY);
-    if (saved && PLACES.includes(saved as (typeof PLACES)[number])) {
-      setPlace(saved as (typeof PLACES)[number]);
-    }
     inputRef.current?.focus();
-    void api<{ ready: boolean }>("/tracking/gate")
-      .then((status) => setSiteReady(status.ready))
+    void api<Status>("/tracking/gate")
+      .then((status) => {
+        const names = status.places.map((item) => item.name);
+        setPlaces(names);
+        setMode(status.mode);
+        setSiteReady(status.ready);
+        const saved = window.localStorage.getItem(PLACE_KEY);
+        setPlace(saved && names.includes(saved) ? saved : (names[0] ?? ""));
+        if (status.mode === "location") {
+          void readPosition().then((fix) => {
+            setGpsLabel(
+              fix
+                ? "Location check is on. This device has a fresh position."
+                : "Location check is on. This device has not shared a position.",
+            );
+          });
+        }
+      })
       .catch(() => setSiteReady(null));
-    void readPosition().then((fix) => {
-      setGpsLabel(
-        fix
-          ? "Location check is on. This device has a fresh position."
-          : "Location check is on. This device has not shared a position.",
-      );
-    });
     return () => {
       void scannerRef.current?.stop().catch(() => undefined);
     };
   }, []);
 
-  function choosePlace(next: (typeof PLACES)[number]) {
+  function choosePlace(next: string) {
     setPlace(next);
     window.localStorage.setItem(PLACE_KEY, next);
   }
@@ -84,23 +92,25 @@ export default function GatePage() {
     setError(null);
     setMessage(null);
     try {
-      const fix = await readPosition();
-      if (!fix) {
-        lastScan.current = null;
-        setGpsLabel("Location check is on. This device has not shared a position.");
-        setError("This device must share its location. A scan without it is not recorded.");
-        return;
+      let fix: Fix | null = null;
+      if (mode === "location") {
+        fix = await readPosition();
+        if (!fix) {
+          lastScan.current = null;
+          setGpsLabel("Location check is on. This device has not shared a position.");
+          setError("This device must share its location. A scan without it is not recorded.");
+          return;
+        }
+        setGpsLabel("Location check is on. This device has a fresh position.");
       }
-      setGpsLabel("Location check is on. This device has a fresh position.");
       const result = await post<{ message: string }>("/tracking/clock", {
         badge,
         action,
         source: "qr",
         place,
-        latitude: fix.latitude,
-        longitude: fix.longitude,
-        accuracy: fix.accuracy,
-        capturedAt: fix.capturedAt,
+        ...(fix
+          ? { latitude: fix.latitude, longitude: fix.longitude, accuracy: fix.accuracy, capturedAt: fix.capturedAt }
+          : {}),
       });
       setMessage(result.message);
       setScan("");
@@ -150,11 +160,18 @@ export default function GatePage() {
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-moss">QR gate</p>
           <h1 className="mt-1 text-3xl font-semibold">Check in</h1>
           <p className="mt-2 text-sm text-muted">
-            Scan an employee QR ID. The device location is checked every time. A scan away from the warehouse is refused.
+            {mode === "qr_gate"
+              ? "Scan an employee QR ID. This gate only records who is in. The device location is not checked."
+              : "Scan an employee QR ID. The device location is checked every time. A scan away from the warehouse is refused."}
           </p>
         </div>
         {siteReady === false ? (
-          <Notice tone="bad">A supervisor still needs to mark the warehouse. Until then, scans are refused.</Notice>
+          <Notice tone="bad">
+            A supervisor still needs to mark the warehouse. Until then, scans are refused.{" "}
+            <Link className="font-semibold underline" href="/checkin">
+              Supervisor? Mark it here.
+            </Link>
+          </Notice>
         ) : null}
         {message ? <Notice tone="ok">{message}</Notice> : null}
         {error ? <Notice tone="bad">{error}</Notice> : null}
@@ -180,15 +197,20 @@ export default function GatePage() {
             className="field"
             value={place}
             aria-label="Gate location"
-            onChange={(event) => choosePlace(event.target.value as (typeof PLACES)[number])}
+            onChange={(event) => choosePlace(event.target.value)}
           >
-            {PLACES.map((item) => (
+            {places.map((item) => (
               <option key={item} value={item}>
                 {item}
               </option>
             ))}
           </select>
-          <span className="mt-1 block text-xs text-muted">{gpsLabel}</span>
+          <span className="mt-1 block text-xs text-muted">
+            {mode === "location" ? gpsLabel : "QR gate mode. The device location is not checked."}{" "}
+            <Link className="text-moss" href="/checkin">
+              Add a gate location
+            </Link>
+          </span>
         </label>
         <form
           onSubmit={(event) => {
@@ -205,7 +227,7 @@ export default function GatePage() {
             aria-label="Scan ID"
             autoComplete="off"
           />
-          <button className="btn btn-primary mt-3 w-full" type="submit" disabled={pending}>
+          <button className="btn btn-primary mt-3 w-full" type="submit" disabled={pending || !place}>
             Record scan
           </button>
         </form>

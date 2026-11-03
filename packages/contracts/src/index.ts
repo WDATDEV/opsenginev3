@@ -138,6 +138,22 @@ export const siteSchema = z.object({
   radiusMeters: z.number().int().min(50).max(2000).default(250),
 });
 
+export const gateModes = ["location", "qr_gate"] as const;
+export type GateMode = (typeof gateModes)[number];
+
+export const gateModeSchema = z.object({ mode: z.enum(gateModes) });
+
+export const gatePlaceSchema = z.object({ name: z.string().trim().min(1).max(40) });
+
+// The floor phone sends the device position when someone opens it in location mode.
+export const arriveSchema = z.object({
+  badge: code,
+  latitude: z.number().gte(-90).lte(90).optional(),
+  longitude: z.number().gte(-180).lte(180).optional(),
+  accuracy: z.number().positive().max(100_000).optional(),
+  capturedAt: z.number().int().optional(),
+});
+
 export const badgeSchema = z.object({
   badge: code,
 });

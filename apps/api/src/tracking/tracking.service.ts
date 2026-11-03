@@ -11,6 +11,8 @@ import {
   deviceCheckouts,
   devices,
   employees,
+  gateConfig,
+  gatePlaces,
   gaylords,
   jobAssignees,
   jobs,
@@ -47,7 +49,7 @@ import {
   type LoginMode,
   type Ownership,
 } from "@opsengine/tracking";
-import type { ClientService } from "@opsengine/contracts";
+import type { ClientService, GateMode } from "@opsengine/contracts";
 import { assertClientService } from "../clients/access.js";
 import { DbService } from "../db.service.js";
 
@@ -56,6 +58,7 @@ type Employee = typeof employees.$inferSelect;
 type Device = typeof devices.$inferSelect;
 
 const SCHEDULE_WINDOW_MS = 12 * 60 * 60 * 1000;
+const DEFAULT_GATE_PLACES = ["Front gate", "Dock", "Packing", "Picking", "Receiving", "Unloading", "Sorting"];
 
 function isUnique(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
@@ -518,9 +521,107 @@ export class TrackingService {
     };
   }
 
+  private async gateMode(): Promise<GateMode> {
+    const [row] = await this.db.db.select().from(gateConfig).limit(1);
+    return row?.mode === "qr_gate" ? "qr_gate" : "location";
+  }
+
+  private async gatePlaceNames() {
+    const orm = this.db.db;
+    let rows = await orm.select().from(gatePlaces).orderBy(asc(gatePlaces.createdAt), asc(gatePlaces.name));
+    if (rows.length === 0) {
+      const base = Date.now();
+      await orm
+        .insert(gatePlaces)
+        .values(DEFAULT_GATE_PLACES.map((name, index) => ({ name, createdAt: new Date(base + index) })))
+        .onConflictDoNothing();
+      rows = await orm.select().from(gatePlaces).orderBy(asc(gatePlaces.createdAt), asc(gatePlaces.name));
+    }
+    return rows;
+  }
+
   async gateStatus() {
+    const mode = await this.gateMode();
     const [row] = await this.db.db.select({ id: site.id }).from(site).limit(1);
-    return { ready: Boolean(row), locationCheck: "on" as const };
+    const places = await this.gatePlaceNames();
+    return {
+      mode,
+      ready: mode === "qr_gate" || Boolean(row),
+      locationCheck: mode === "location" ? ("on" as const) : ("off" as const),
+      places: places.map((place) => ({ id: place.id, name: place.name })),
+    };
+  }
+
+  async setGateMode(mode: GateMode) {
+    await this.inTx(async (tx) => {
+      await tx
+        .insert(gateConfig)
+        .values({ id: 1, mode })
+        .onConflictDoUpdate({ target: gateConfig.id, set: { mode, updatedAt: new Date() } });
+      await this.audit(
+        tx,
+        null,
+        "tracking.gate_mode",
+        "gate",
+        "gate",
+        mode === "qr_gate"
+          ? "Check-in method set to the QR gate. The floor phone only checks that a person is checked in."
+          : "Check-in method set to location. Devices must be at the warehouse.",
+      );
+    });
+    return this.gateStatus();
+  }
+
+  async addGatePlace(name: string) {
+    const label = name.trim().replace(/\s+/g, " ");
+    const existing = await this.gatePlaceNames();
+    if (existing.some((place) => place.name.toLowerCase() === label.toLowerCase())) {
+      throw new TrackingError(`"${label}" is already a gate location.`);
+    }
+    await this.db.db.insert(gatePlaces).values({ name: label });
+    return this.gateStatus();
+  }
+
+  async removeGatePlace(id: string) {
+    const existing = await this.gatePlaceNames();
+    if (!existing.some((place) => place.id === id)) throw new TrackingError("That gate location is not on the list.");
+    if (existing.length <= 1) throw new TrackingError("Keep at least one gate location.");
+    await this.db.db.delete(gatePlaces).where(eq(gatePlaces.id, id));
+    return this.gateStatus();
+  }
+
+  /**
+   * Floor phone entry. In location mode the device must be at the warehouse, and that
+   * also checks the person in. In QR gate mode nothing is checked here: the person
+   * must already be checked in at the gate.
+   */
+  async phoneArrive(input: {
+    badge: string;
+    latitude?: number;
+    longitude?: number;
+    accuracy?: number;
+    capturedAt?: number;
+  }) {
+    const mode = await this.gateMode();
+    const orm = this.db.db;
+    const [employee] = await orm
+      .select()
+      .from(employees)
+      .where(eq(employees.badgeCode, clean(input.badge)))
+      .limit(1);
+    if (!employee || !employee.active) throw new TrackingError("That badge is not on the floor.");
+    const open = await this.openShift(orm, employee.id);
+    if (mode === "qr_gate") {
+      return {
+        mode,
+        checkedIn: Boolean(open),
+        message: open ? `${employee.name} is checked in.` : `${employee.name} is not checked in. Use the QR gate first.`,
+      };
+    }
+    await this.requireDeviceAtWarehouse(input.badge, "in", input, "floor phone");
+    if (open) return { mode, checkedIn: true, message: `${employee.name} is checked in.` };
+    const result = await this.clock(input.badge, "in", "kiosk", { ...input, place: "Floor phone" });
+    return { mode, checkedIn: true, message: result.message };
   }
 
   async readSite() {
@@ -573,7 +674,14 @@ export class TrackingService {
     },
   ) {
     if (source === "qr" && (action === "in" || action === "out")) {
-      await this.requireDeviceAtWarehouse(badge, action, where);
+      const places = await this.gatePlaceNames();
+      const place = where?.place?.trim();
+      if (place && !places.some((item) => item.name === place)) {
+        throw new TrackingError("Choose a gate location from the list.");
+      }
+      if ((await this.gateMode()) === "location") {
+        await this.requireDeviceAtWarehouse(badge, action, where, "QR");
+      }
     }
     const result = await this.clockInTx(badge, action, source, where);
     if (action === "in" || action === "meal_end") {
@@ -1836,6 +1944,7 @@ export class TrackingService {
     badge: string,
     action: "in" | "out",
     where?: { latitude?: number; longitude?: number; accuracy?: number; capturedAt?: number },
+    via = "QR",
   ) {
     const orm = this.db.db;
     const [employee] = await orm
@@ -1864,7 +1973,7 @@ export class TrackingService {
       module: "tracking",
       entityType: "employee",
       entityId: employee.id,
-      after: { summary: `${employee.name}'s QR ${verb} was refused. ${verdict.reason}${away}` },
+      after: { summary: `${employee.name}'s ${via} ${verb} was refused. ${verdict.reason}${away}` },
     });
     throw new TrackingError(verdict.reason);
   }

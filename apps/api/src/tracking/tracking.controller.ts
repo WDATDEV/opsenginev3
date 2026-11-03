@@ -1,14 +1,19 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Inject,
   Param,
   Post,
   UseGuards,
 } from "@nestjs/common";
+import type { GateMode } from "@opsengine/contracts";
 import {
   addCrewSchema,
+  arriveSchema,
+  gateModeSchema,
+  gatePlaceSchema,
   badgeSchema,
   checkoutSchema,
   claimStationSchema,
@@ -86,6 +91,41 @@ export class TrackingController {
   @Get("gate")
   gate() {
     return this.tracking.gateStatus();
+  }
+
+  @Post("gate/mode")
+  @UseGuards(AuthGuard)
+  gateMode(
+    @CurrentUser() ctx: RequestContext,
+    @Body(new ZodPipe(gateModeSchema)) body: { mode: GateMode },
+  ) {
+    authorize(ctx, "tracking.manage");
+    return this.tracking.setGateMode(body.mode);
+  }
+
+  @Post("gate/places")
+  @UseGuards(AuthGuard)
+  addGatePlace(
+    @CurrentUser() ctx: RequestContext,
+    @Body(new ZodPipe(gatePlaceSchema)) body: { name: string },
+  ) {
+    authorize(ctx, "tracking.manage");
+    return this.tracking.addGatePlace(body.name);
+  }
+
+  @Delete("gate/places/:id")
+  @UseGuards(AuthGuard)
+  removeGatePlace(@CurrentUser() ctx: RequestContext, @Param("id") id: string) {
+    authorize(ctx, "tracking.manage");
+    return this.tracking.removeGatePlace(id);
+  }
+
+  @Post("phone/arrive")
+  arrive(
+    @Body(new ZodPipe(arriveSchema))
+    body: { badge: string; latitude?: number; longitude?: number; accuracy?: number; capturedAt?: number },
+  ) {
+    return this.tracking.phoneArrive(body);
   }
 
   @Get("site")

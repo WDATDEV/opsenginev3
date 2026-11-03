@@ -114,12 +114,11 @@ function Card({ title, connector, children }: { title: string; connector: Connec
   );
 }
 
-function Actions({ onTest, onDisconnect }: { onTest: () => void; onDisconnect: () => void }) {
+// Once a connector is saved its key stays hidden. All that is left is Test and Disconnect.
+// To change a key, disconnect first and add it again.
+function SavedActions({ onTest, onDisconnect }: { onTest: () => void; onDisconnect: () => void }) {
   return (
     <div className="flex flex-wrap gap-2">
-      <button className="btn btn-primary" type="submit">
-        Save
-      </button>
       <button className="btn" type="button" onClick={onTest}>
         Test
       </button>
@@ -127,6 +126,14 @@ function Actions({ onTest, onDisconnect }: { onTest: () => void; onDisconnect: (
         Disconnect
       </button>
     </div>
+  );
+}
+
+function SaveButton() {
+  return (
+    <button className="btn btn-primary" type="submit">
+      Save
+    </button>
   );
 }
 
@@ -180,6 +187,14 @@ function WarehanceCard({
 }) {
   const [url, setUrl] = useState(connector.address ?? "");
   const [key, setKey] = useState("");
+  if (connector.connected) {
+    return (
+      <Card title="Warehance bot" connector={connector}>
+        {connector.address ? <p className="break-all text-sm text-muted">{connector.address}</p> : null}
+        <SavedActions onTest={onTest} onDisconnect={onDisconnect} />
+      </Card>
+    );
+  }
   return (
     <Card title="Warehance bot" connector={connector}>
       <form
@@ -194,9 +209,9 @@ function WarehanceCard({
           <input className="field" placeholder="https://your-connector.example/mcp" value={url} onChange={(event) => setUrl(event.target.value)} />
         </Field>
         <Field label="Staff key">
-          <input className="field" type="password" placeholder={connector.connected ? "Saved. Paste only to replace it." : ""} value={key} onChange={(event) => setKey(event.target.value)} />
+          <input className="field" type="password" value={key} onChange={(event) => setKey(event.target.value)} />
         </Field>
-        <Actions onTest={onTest} onDisconnect={onDisconnect} />
+        <SaveButton />
       </form>
     </Card>
   );
@@ -214,6 +229,13 @@ function ClaudeCard({
   onDisconnect: () => void;
 }) {
   const [key, setKey] = useState("");
+  if (connector.connected) {
+    return (
+      <Card title="Claude" connector={connector}>
+        <SavedActions onTest={onTest} onDisconnect={onDisconnect} />
+      </Card>
+    );
+  }
   return (
     <Card title="Claude" connector={connector}>
       <form
@@ -226,9 +248,9 @@ function ClaudeCard({
       >
         <p className="text-sm text-muted">The Anthropic API key writes the draft replies. It is billed per use and is separate from a Claude subscription.</p>
         <Field label="API key">
-          <input className="field" type="password" placeholder={connector.connected ? "Saved. Paste only to replace it." : "sk-ant-"} value={key} onChange={(event) => setKey(event.target.value)} />
+          <input className="field" type="password" placeholder="sk-ant-" value={key} onChange={(event) => setKey(event.target.value)} />
         </Field>
-        <Actions onTest={onTest} onDisconnect={onDisconnect} />
+        <SaveButton />
       </form>
     </Card>
   );
@@ -246,6 +268,13 @@ function SlackCard({
   onDisconnect: () => void;
 }) {
   const [token, setToken] = useState("");
+  if (connector.connected) {
+    return (
+      <Card title="Slack" connector={connector}>
+        <SavedActions onTest={onTest} onDisconnect={onDisconnect} />
+      </Card>
+    );
+  }
   return (
     <Card title="Slack" connector={connector}>
       <form
@@ -258,9 +287,9 @@ function SlackCard({
       >
         <p className="text-sm text-muted">Only the bot token is needed. Each automation rule chooses its own channels or people.</p>
         <Field label="Bot token">
-          <input className="field" type="password" placeholder={connector.connected ? "Saved. Paste only to replace it." : "xoxb-"} value={token} onChange={(event) => setToken(event.target.value)} />
+          <input className="field" type="password" placeholder="xoxb-" value={token} onChange={(event) => setToken(event.target.value)} />
         </Field>
-        <Actions onTest={onTest} onDisconnect={onDisconnect} />
+        <SaveButton />
       </form>
     </Card>
   );

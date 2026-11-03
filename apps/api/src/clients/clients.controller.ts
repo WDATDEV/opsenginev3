@@ -1,5 +1,13 @@
 import { Body, ConflictException, Controller, Get, Inject, NotFoundException, Param, Post, UseGuards } from "@nestjs/common";
-import { createClientSchema, createInvoiceSchema, createRateSchema, setClientServiceSchema, type ClientService } from "@opsengine/contracts";
+import {
+  createClientSchema,
+  createInvoiceSchema,
+  createRateSchema,
+  setClientServiceSchema,
+  setHourlyRatesSchema,
+  type ClientService,
+  type HourlyService,
+} from "@opsengine/contracts";
 import { clientRecords, rateCards } from "@opsengine/db";
 import { eq } from "drizzle-orm";
 import { authorize, assertClientVisible, canSeeClient, type RequestContext } from "@opsengine/kernel";
@@ -41,6 +49,7 @@ export class ClientsController {
           .map((rate) => ({
             id: rate.id,
             activityCode: rate.activityCode,
+            department: rate.department,
             unit: rate.unit,
             rateCents: rate.rateCents,
             label: rate.label,
@@ -111,6 +120,16 @@ export class ClientsController {
   ) {
     authorize(ctx, "billing.approve");
     return this.billing.issueInvoice(ctx.principal, id, body.jobId);
+  }
+
+  @Post(":id/rates/hourly")
+  saveHourlyRates(
+    @CurrentUser() ctx: RequestContext,
+    @Param("id") id: string,
+    @Body(new ZodPipe(setHourlyRatesSchema)) body: { rates: { department: HourlyService; rateCents: number | null }[] },
+  ) {
+    authorize(ctx, "job.manage");
+    return this.billing.saveHourlyRates(ctx.principal, id, body.rates);
   }
 
   @Post(":id/rates")

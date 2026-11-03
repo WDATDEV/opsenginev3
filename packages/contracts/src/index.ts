@@ -373,6 +373,24 @@ export const createActivitySchema = z.object({
   clientId: z.string().uuid().optional(),
 });
 
+// The services a client is billed hourly for. One price per hour for each.
+export const hourlyServices = ["receiving", "unloading", "packing", "picking", "sorting"] as const;
+
+export type HourlyService = (typeof hourlyServices)[number];
+
+export const setHourlyRatesSchema = z.object({
+  rates: z
+    .array(
+      z.object({
+        department: z.enum(hourlyServices),
+        // null clears the price for that service.
+        rateCents: z.number().int().min(0).max(10_000_000).nullable(),
+      }),
+    )
+    .min(1)
+    .max(hourlyServices.length),
+});
+
 export const createRateSchema = z.object({
   activityCode: z
     .string()

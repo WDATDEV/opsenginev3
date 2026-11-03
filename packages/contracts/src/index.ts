@@ -329,6 +329,15 @@ export const setTaskStartSchema = z.object({
   activityCode: z.string().trim().min(1).max(40).optional(),
 });
 
+// A manager adds time for someone who did a task but never ran the timer.
+export const addTaskTimeSchema = z.object({
+  startAt: taskStartAt,
+  endAt: z.string().datetime({ offset: true, message: "Choose an end date and time." }),
+  breakStartAt: z.string().datetime({ offset: true, message: "Choose when the break started." }).optional(),
+  breakEndAt: z.string().datetime({ offset: true, message: "Choose when the break ended." }).optional(),
+  activityCode: z.string().trim().min(1).max(40).optional(),
+});
+
 export const jobWorkKinds = ["receiving", "unloading", "packing", "picking", "sorting"] as const;
 export type JobWorkKind = (typeof jobWorkKinds)[number];
 

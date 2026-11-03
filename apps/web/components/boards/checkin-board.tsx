@@ -48,6 +48,7 @@ function spot(place: string | null, lat: number | null, lng: number | null) {
 }
 
 function how(source: string) {
+  if (source === "manual") return "Added by a manager";
   return source === "qr" ? "QR gate" : "Earlier punch";
 }
 

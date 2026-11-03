@@ -297,6 +297,14 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                             }
                           />
                         ) : null}
+                        {canManageJobs(user?.role) && task.assigneeId && task.assigneeName ? (
+                          <AddTime
+                            person={task.assigneeName}
+                            activities={startChoices(board.data?.activities ?? [], job.enabledServices)}
+                            activityCode={task.activityCode}
+                            onSave={(body) => act(`/jobs/${job.id}/tasks/${task.id}/time`, body)}
+                          />
+                        ) : null}
                       </span>
                       {canManageJobs(user?.role) && task.status !== "done" && !task.blocked ? (
                         <button className="btn btn-ghost" type="button" onClick={() => void act(`/jobs/${job.id}/tasks/${task.id}/done`, {})}>
@@ -461,6 +469,111 @@ function StartTime({
       <button className="btn btn-ghost" type="button" onClick={() => setOpen(false)}>
         Cancel
       </button>
+    </form>
+  );
+}
+
+// For a task the person did without running the timer: add the hours and the break by hand.
+function AddTime({
+  person,
+  activities,
+  activityCode,
+  onSave,
+}: {
+  person: string;
+  activities: StartChoice[];
+  activityCode: string | null;
+  onSave: (body: {
+    startAt: string;
+    endAt: string;
+    breakStartAt?: string;
+    breakEndAt?: string;
+    activityCode?: string;
+  }) => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [startAt, setStartAt] = useState("");
+  const [endAt, setEndAt] = useState("");
+  const [withBreak, setWithBreak] = useState(false);
+  const [breakStartAt, setBreakStartAt] = useState("");
+  const [breakEndAt, setBreakEndAt] = useState("");
+  const [kind, setKind] = useState(activities[0]?.code ?? "");
+  const needsKind = !activityCode;
+  if (!open) {
+    return (
+      <button className="mt-1 block text-xs text-moss underline" type="button" onClick={() => setOpen(true)}>
+        Add work time for {person}
+      </button>
+    );
+  }
+  const ready =
+    Boolean(startAt && endAt) && (!withBreak || Boolean(breakStartAt && breakEndAt)) && (!needsKind || Boolean(kind));
+  return (
+    <form
+      className="mt-2 grid gap-2 rounded-xl border border-black/10 bg-black/[0.02] p-3 sm:grid-cols-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!ready) return;
+        void onSave({
+          startAt: toIso(startAt),
+          endAt: toIso(endAt),
+          ...(withBreak ? { breakStartAt: toIso(breakStartAt), breakEndAt: toIso(breakEndAt) } : {}),
+          ...(needsKind ? { activityCode: kind } : {}),
+        }).then((ok) => {
+          if (ok) {
+            setOpen(false);
+            setStartAt("");
+            setEndAt("");
+            setWithBreak(false);
+            setBreakStartAt("");
+            setBreakEndAt("");
+          }
+        });
+      }}
+    >
+      <p className="text-xs text-muted sm:col-span-2">
+        Use this when {person} did the work but never ran the timer. The time counts toward the job and the bill.
+      </p>
+      <Field label="Worked from">
+        <input className="field" type="datetime-local" value={startAt} onChange={(event) => setStartAt(event.target.value)} />
+      </Field>
+      <Field label="Worked until">
+        <input className="field" type="datetime-local" value={endAt} onChange={(event) => setEndAt(event.target.value)} />
+      </Field>
+      {needsKind ? (
+        <Field label="Kind of work">
+          <select className="field" value={kind} onChange={(event) => setKind(event.target.value)}>
+            <option value="">Choose the kind of work</option>
+            {activities.map((item) => (
+              <option key={item.code} value={item.code}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      ) : null}
+      <label className="flex items-center gap-2 text-sm sm:col-span-2">
+        <input type="checkbox" checked={withBreak} onChange={(event) => setWithBreak(event.target.checked)} />
+        {person} took a break (it is taken out of the work time)
+      </label>
+      {withBreak ? (
+        <>
+          <Field label="Break from">
+            <input className="field" type="datetime-local" value={breakStartAt} onChange={(event) => setBreakStartAt(event.target.value)} />
+          </Field>
+          <Field label="Break until">
+            <input className="field" type="datetime-local" value={breakEndAt} onChange={(event) => setBreakEndAt(event.target.value)} />
+          </Field>
+        </>
+      ) : null}
+      <div className="flex gap-2 sm:col-span-2">
+        <button className="btn btn-primary" type="submit" disabled={!ready}>
+          Add time
+        </button>
+        <button className="btn btn-ghost" type="button" onClick={() => setOpen(false)}>
+          Cancel
+        </button>
+      </div>
     </form>
   );
 }

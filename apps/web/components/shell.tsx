@@ -288,6 +288,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
                     <SubTabs>
                       <SubLink href="/mail" label="Inbox" active={pathname === "/mail"} />
                       <SubLink href="/mail/automation" label="Email automation" active={pathname.startsWith("/mail/automation")} />
+                      <SubLink href="/mail/bulk" label="Bulk email" active={pathname.startsWith("/mail/bulk")} />
                     </SubTabs>
                   ) : null}
                 </div>

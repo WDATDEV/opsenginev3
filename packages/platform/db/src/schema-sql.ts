@@ -65,6 +65,65 @@ CREATE TABLE IF NOT EXISTS mail.runs (
 ALTER TABLE mail.runs ADD COLUMN IF NOT EXISTS sent_at timestamptz;
 ALTER TABLE mail.runs ADD COLUMN IF NOT EXISTS sent_to text;
 
+CREATE TABLE IF NOT EXISTS mail.contacts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  email text NOT NULL UNIQUE,
+  name text NOT NULL DEFAULT '',
+  client_id uuid,
+  groups jsonb NOT NULL DEFAULT '[]'::jsonb,
+  do_not_email boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS mail.broadcasts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  category text NOT NULL DEFAULT 'notice',
+  subject text NOT NULL,
+  body text NOT NULL,
+  audience jsonb NOT NULL,
+  status text NOT NULL DEFAULT 'draft',
+  scheduled_at timestamptz,
+  started_at timestamptz,
+  finished_at timestamptz,
+  created_by uuid,
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS mail.broadcast_recipients (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  broadcast_id uuid NOT NULL REFERENCES mail.broadcasts(id) ON DELETE CASCADE,
+  email text NOT NULL,
+  name text NOT NULL DEFAULT '',
+  client_name text NOT NULL DEFAULT '',
+  status text NOT NULL DEFAULT 'pending',
+  error text,
+  sent_at timestamptz,
+  UNIQUE (broadcast_id, email)
+);
+CREATE INDEX IF NOT EXISTS broadcast_recipients_by_broadcast ON mail.broadcast_recipients (broadcast_id, status);
+
+CREATE TABLE IF NOT EXISTS mail.broadcast_templates (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  category text NOT NULL DEFAULT 'notice',
+  subject text NOT NULL,
+  body text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS mail.broadcast_settings (
+  id integer PRIMARY KEY DEFAULT 1,
+  sender_name text NOT NULL DEFAULT '',
+  reply_to text NOT NULL DEFAULT '',
+  signature text NOT NULL DEFAULT '',
+  daily_limit integer NOT NULL DEFAULT 400,
+  per_minute integer NOT NULL DEFAULT 30,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS identity.users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   email text NOT NULL UNIQUE,

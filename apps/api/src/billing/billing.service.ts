@@ -14,6 +14,7 @@ import {
   segments,
   shipments,
 } from "@opsengine/db";
+import type { HourlyService } from "@opsengine/contracts";
 import { assertClientVisible, type Principal } from "@opsengine/kernel";
 import { assertClientService } from "../clients/access.js";
 import { DbService } from "../db.service.js";
@@ -43,7 +44,7 @@ export class BillingService {
     const existingRates = await this.db.db.select().from(rateCards).where(eq(rateCards.clientId, clientId));
     const activityCode = input.activityCode ?? null;
     const existing = existingRates.find(
-      (rate) => rate.unit === input.unit && (rate.activityCode ?? null) === activityCode,
+      (rate) => !rate.department && rate.unit === input.unit && (rate.activityCode ?? null) === activityCode,
     );
     if (existing) {
       await this.db.db
@@ -60,6 +61,43 @@ export class BillingService {
       label: input.label.trim(),
     });
     return { message: `${input.label.trim()} added for ${client.name}.` };
+  }
+
+  /**
+   * The hourly price of each service for one client: receiving, unloading, packing, picking, sorting.
+   * A price of null clears that service. Hours worked in a service are charged at its price.
+   */
+  async saveHourlyRates(
+    principal: Principal,
+    clientId: string,
+    input: { department: HourlyService; rateCents: number | null }[],
+  ) {
+    assertClientVisible(principal, clientId);
+    const [client] = await this.db.db.select().from(clientRecords).where(eq(clientRecords.id, clientId)).limit(1);
+    if (!client) throw new NotFoundException("That client is not on file.");
+
+    const current = await this.db.db.select().from(rateCards).where(eq(rateCards.clientId, clientId));
+    for (const entry of input) {
+      const existing = current.find((rate) => rate.department === entry.department && rate.unit === "hour");
+      if (entry.rateCents === null) {
+        if (existing) await this.db.db.delete(rateCards).where(eq(rateCards.id, existing.id));
+        continue;
+      }
+      const label = `${entry.department.charAt(0).toUpperCase()}${entry.department.slice(1)} per hour`;
+      if (existing) {
+        await this.db.db.update(rateCards).set({ rateCents: entry.rateCents, label }).where(eq(rateCards.id, existing.id));
+      } else {
+        await this.db.db.insert(rateCards).values({
+          clientId,
+          activityCode: null,
+          department: entry.department,
+          unit: "hour",
+          rateCents: entry.rateCents,
+          label,
+        });
+      }
+    }
+    return { message: `Hourly prices saved for ${client.name}.` };
   }
 
   async generate(principal: Principal, jobId: string) {
@@ -118,7 +156,8 @@ export class BillingService {
     for (const segment of jobSegments) {
       if (!billsUnit(basis, "hour") || !segment.endedAt) continue;
       const minutes = Math.max(0, Math.round((segment.endedAt.getTime() - segment.startedAt.getTime()) / 60_000));
-      const rate = latest(rates, segment.taskCode, "hour");
+      // A price set for this exact activity wins. Otherwise the hourly price of the whole service applies.
+      const rate = latest(rates, segment.taskCode, "hour") ?? serviceRate(rates, segment.department);
       if (!rate || minutes === 0) continue;
       const label = names.get(segment.taskCode) ?? segment.taskCode;
       await draft({
@@ -347,6 +386,10 @@ function billsUnit(basis: string, unit: string) {
   if (basis === "mixed") return true;
   if (basis === "time") return unit === "hour";
   return basis === unit;
+}
+
+function serviceRate(rates: Rate[], department: string) {
+  return rates.find((rate) => rate.department === department && rate.unit === "hour");
 }
 
 function latest(rates: Rate[], activityCode: string, unit: string) {

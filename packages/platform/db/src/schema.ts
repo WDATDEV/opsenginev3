@@ -124,6 +124,8 @@ export const rateCards = clients.table("rate_cards", {
   id: uuid("id").defaultRandom().primaryKey(),
   clientId: uuid("client_id").notNull(),
   activityCode: text("activity_code"),
+  // Set on the hourly price of a whole service (packing, picking, ...). Then activityCode is empty.
+  department: text("department"),
   unit: text("unit").notNull(),
   rateCents: integer("rate_cents").notNull(),
   label: text("label").notNull(),

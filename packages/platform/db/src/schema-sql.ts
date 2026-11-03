@@ -109,6 +109,10 @@ CREATE TABLE IF NOT EXISTS clients.rate_cards (
 CREATE UNIQUE INDEX IF NOT EXISTS rate_cards_client_activity_unit
   ON clients.rate_cards (client_id, activity_code, unit);
 
+ALTER TABLE clients.rate_cards ADD COLUMN IF NOT EXISTS department text;
+CREATE UNIQUE INDEX IF NOT EXISTS rate_cards_client_department_unit
+  ON clients.rate_cards (client_id, department, unit) WHERE department IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS clients.charges (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   client_id uuid NOT NULL REFERENCES clients.clients(id),

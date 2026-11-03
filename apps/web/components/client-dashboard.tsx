@@ -11,7 +11,7 @@ export type ClientRecord = {
   name: string;
   code: string;
   enabledServices: string[];
-  rates: { id: string; activityCode: string | null; unit: string; rateCents: number; label: string }[];
+  rates: { id: string; activityCode: string | null; department: string | null; unit: string; rateCents: number; label: string }[];
 };
 
 export function ClientDashboard() {

@@ -10,6 +10,7 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
+import { encryptedText } from "./secret-box.js";
 
 export const identity = pgSchema("identity");
 export const clients = pgSchema("clients");
@@ -21,7 +22,8 @@ export const mail = pgSchema("mail");
 export const connectors = mail.table("connectors", {
   kind: text("kind").primaryKey(),
   label: text("label"),
-  secret: text("secret"),
+  // Encrypted at rest. See secret-box.ts.
+  secret: encryptedText("secret"),
   extra: text("extra"),
   detail: text("detail"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

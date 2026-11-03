@@ -421,9 +421,10 @@ function Editor({
         <Check label="Send a Slack message" checked={form.slack.enabled} onChange={(enabled) => setSlack({ enabled })} />
         {form.slack.enabled ? (
           <div className="space-y-3 pl-6">
-            <Field label="Channel (leave empty to use the channel from Settings)">
-              <input className="field" placeholder="#client-mail" value={form.slack.channel} onChange={(event) => setSlack({ channel: event.target.value })} />
+            <Field label="Channels (several allowed, separated by commas)">
+              <input className="field" placeholder="#client-mail, #ops-alerts" value={form.slack.channel} onChange={(event) => setSlack({ channel: event.target.value })} />
             </Field>
+            <p className="text-sm text-muted">The bot must be in each channel. Use /invite @bot in the channel, or give the bot the chat:write.public scope. Leave this empty to use the default channel from Settings, if one is set.</p>
             <Field label="Mention in the channel">
               <input
                 className="field"

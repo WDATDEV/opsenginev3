@@ -13,7 +13,7 @@ const warehanceSchema = z.object({
 
 const slackSchema = z.object({
   token: z.string().trim().optional().default(""),
-  channel: z.string().trim().min(1, "Enter the Slack channel, such as #client-mail.").max(80),
+  channel: z.string().trim().max(200).optional().default(""),
 });
 
 const anthropicSchema = z.object({

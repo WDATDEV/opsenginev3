@@ -1,5 +1,5 @@
 import { Injectable, Logger, type OnModuleInit } from "@nestjs/common";
-import { createDb, ensureSchema, type Database } from "@opsengine/db";
+import { createDb, ensureSchema, seal, type Database } from "@opsengine/db";
 import { sql } from "drizzle-orm";
 import { runSeed } from "./seed-on-boot.js";
 
@@ -49,12 +49,25 @@ export class DbService implements OnModuleInit {
       this.log.log("Database cleared.");
     }
 
+    await this.encryptLegacySecrets();
+
     const count = await this.userCount();
     if (process.env.SEED_ON_BOOT !== "1" && count > 0) return;
 
     this.log.log("Seeding the database.");
     await runSeed();
     this.log.log("Database seed finished.");
+  }
+
+  /** Connector keys saved before encryption was added are plain text. Encrypt them once, on boot. */
+  private async encryptLegacySecrets() {
+    const rows = await this.db.execute<{ kind: string; secret: string }>(
+      sql`select kind, secret from mail.connectors where secret is not null and secret not like 'enc:v1:%'`,
+    );
+    for (const row of rows) {
+      await this.db.execute(sql`update mail.connectors set secret = ${seal(row.secret)} where kind = ${row.kind}`);
+    }
+    if (rows.length > 0) this.log.log(`Encrypted ${rows.length} stored connector key(s).`);
   }
 
   private async userCount() {

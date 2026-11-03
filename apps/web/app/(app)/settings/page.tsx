@@ -80,7 +80,7 @@ export default function SettingsPage() {
       <PageTitle
         kicker="Settings"
         title="Connectors"
-        detail="Gmail receives the client’s letter. The Warehance bot looks up the order. Slack shows the draft on the floor."
+        detail="Gmail receives the client’s letter. The Warehance bot looks up the order. Claude writes the draft. Slack tells people about it."
       />
       {loading ? <p className="text-muted">Loading…</p> : null}
       {error ? <Notice tone="bad">{error}</Notice> : null}
@@ -90,7 +90,7 @@ export default function SettingsPage() {
         <div className="grid max-w-3xl gap-4">
           <GmailCard connector={data.gmail} onConnect={connectGmail} onTest={() => test("gmail")} onDisconnect={() => disconnect("gmail")} />
           <WarehanceCard key={`${data.warehance.address ?? ""}-${data.warehance.detail ?? ""}`} connector={data.warehance} onSave={(url, key) => save("/settings/connectors/warehance", { url, key })} onTest={() => test("warehance")} onDisconnect={() => disconnect("warehance")} />
-          <SlackCard key={`${data.slack.label ?? ""}-${data.slack.detail ?? ""}`} connector={data.slack} onSave={(token, channel) => save("/settings/connectors/slack", { token, channel })} onTest={() => test("slack")} onDisconnect={() => disconnect("slack")} />
+          <SlackCard key={`${data.slack.label ?? ""}-${data.slack.detail ?? ""}`} connector={data.slack} onSave={(token) => save("/settings/connectors/slack", { token })} onTest={() => test("slack")} onDisconnect={() => disconnect("slack")} />
           <ClaudeCard connector={data.anthropic} onSave={(key) => save("/settings/connectors/anthropic", { key })} onTest={() => test("anthropic")} onDisconnect={() => disconnect("anthropic")} />
         </div>
       ) : null}
@@ -241,25 +241,22 @@ function SlackCard({
   onDisconnect,
 }: {
   connector: Connector;
-  onSave: (token: string, channel: string) => void;
+  onSave: (token: string) => void;
   onTest: () => void;
   onDisconnect: () => void;
 }) {
   const [token, setToken] = useState("");
-  const [channel, setChannel] = useState(connector.label ?? "");
   return (
     <Card title="Slack" connector={connector}>
       <form
         className="space-y-3"
         onSubmit={(event) => {
           event.preventDefault();
-          onSave(token, channel);
+          onSave(token);
           setToken("");
         }}
       >
-        <Field label="Channel">
-          <input className="field" placeholder="#client-mail" value={channel} onChange={(event) => setChannel(event.target.value)} />
-        </Field>
+        <p className="text-sm text-muted">Only the bot token is needed. Each automation rule chooses its own channels or people.</p>
         <Field label="Bot token">
           <input className="field" type="password" placeholder={connector.connected ? "Saved. Paste only to replace it." : "xoxb-"} value={token} onChange={(event) => setToken(event.target.value)} />
         </Field>

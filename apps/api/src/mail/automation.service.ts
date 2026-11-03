@@ -438,16 +438,21 @@ export class AutomationService {
 
     const done: string[] = [];
     const mentions = (await ids(rule.slack.mentions)).map((id) => `<@${id}>`).join(" ");
-    const channel = rule.slack.channel.trim() || slack.extra || "";
-    if (channel) {
+    // A rule can name several channels. With none named, the default from Settings is used, if there is one.
+    const channels = (rule.slack.channel.trim() || slack.extra || "")
+      .split(/[,\n]/)
+      .map((name) => name.trim())
+      .filter(Boolean);
+    for (const channel of channels) {
       try {
         await post(token, channel, mentions ? `${mentions} ${text}` : text);
         done.push(`Posted in ${channel}`);
       } catch (err) {
         problems.push(err instanceof Error ? err.message : "Could not post to Slack.");
       }
-    } else if (rule.slack.direct.length === 0) {
-      problems.push("No Slack channel is set.");
+    }
+    if (channels.length === 0 && rule.slack.direct.length === 0) {
+      problems.push("This rule has no Slack channel and no default channel is set in Settings.");
     }
 
     for (const id of await ids(rule.slack.direct)) {

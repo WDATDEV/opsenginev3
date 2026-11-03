@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { DbService } from "../db.service.js";
 import { checkKey, modelFor } from "../mail/anthropic.js";
 import { GmailService } from "../mail/gmail.service.js";
+import { WarehanceClient } from "../mail/warehance-client.js";
 
 type Kind = "gmail" | "warehance" | "slack" | "anthropic";
 
@@ -78,10 +79,11 @@ export class SettingsService {
   async saveSlack(token: string, channel: string) {
     const stored = token || (await this.secret("slack"));
     if (!stored) throw new BadRequestException("Paste the Slack bot token.");
+    // Only the bot token is required. The channel is an optional default, because each rule picks its own channels.
     await this.upsert("slack", {
-      label: channel,
+      label: channel || "Bot token saved",
       secret: stored,
-      extra: channel,
+      extra: channel || null,
       detail: "Saved. Test the connection before drafts go to Slack.",
     });
     return this.list();
@@ -101,7 +103,12 @@ export class SettingsService {
       return this.list();
     }
     if (kind === "warehance") {
-      const detail = await pingWarehance(row.extra || "", row.secret || "");
+      let detail: string;
+      try {
+        detail = await new WarehanceClient(row.extra || "", row.secret || "").check();
+      } catch (err) {
+        throw new BadRequestException(err instanceof Error ? err.message : "Could not reach the Warehance connector.");
+      }
       await this.upsert("warehance", { ...row, detail });
       return this.list();
     }
@@ -116,7 +123,7 @@ export class SettingsService {
       return this.list();
     }
     const detail = await pingSlack(row.secret || "", row.extra || "");
-    await this.upsert("slack", { ...row, label: row.extra, detail });
+    await this.upsert("slack", { ...row, label: row.extra || "Bot token saved", detail });
     return this.list();
   }
 
@@ -156,43 +163,6 @@ function hostOf(url: string) {
   return new URL(url).host;
 }
 
-async function pingWarehance(url: string, key: string) {
-  let endpoint: string;
-  try {
-    const parsed = new URL(url);
-    endpoint = parsed.pathname.endsWith("/mcp") ? parsed.toString() : new URL("/mcp", parsed.origin).toString();
-  } catch {
-    throw new BadRequestException("The Warehance connector address is not a valid URL.");
-  }
-  let res: Response;
-  try {
-    res = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2024-11-05",
-          capabilities: {},
-          clientInfo: { name: "ops-engine", version: "0.0.1" },
-        },
-      }),
-      signal: AbortSignal.timeout(8000),
-    });
-  } catch {
-    throw new BadRequestException("Could not reach the Warehance connector.");
-  }
-  if (res.status === 401) throw new BadRequestException("The Warehance connector rejected the staff key.");
-  if (!res.ok) throw new BadRequestException(`The Warehance connector answered ${res.status}.`);
-  return "Warehance connector accepted the staff key.";
-}
-
 async function pingSlack(token: string, channel: string) {
   let res: Response;
   try {
@@ -206,5 +176,6 @@ async function pingSlack(token: string, channel: string) {
   }
   const body = (await res.json()) as { ok?: boolean; error?: string; team?: string };
   if (!body.ok) throw new BadRequestException(body.error === "invalid_auth" ? "Slack rejected that bot token." : "Slack did not accept the bot token.");
-  return `Slack workspace ${body.team ?? "connected"} accepted the bot token. Channel is set to ${channel}.`;
+  const where = channel ? `Default channel is ${channel}.` : "Each rule chooses its own channels.";
+  return `Slack workspace ${body.team ?? "connected"} accepted the bot token. ${where}`;
 }

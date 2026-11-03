@@ -1,7 +1,9 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import {
+  activity as auditLog,
   activityTypes,
+  breaks,
   charges,
   clientRecords,
   employees,
@@ -10,11 +12,12 @@ import {
   jobs,
   loads,
   segments,
+  shifts,
   shipments,
   tasks,
 } from "@opsengine/db";
 import type { z } from "zod";
-import type { ClientService, createJobWorkSchema } from "@opsengine/contracts";
+import type { ClientService, addTaskTimeSchema, createJobWorkSchema } from "@opsengine/contracts";
 import { assertClientVisible, canSeeClient, type Principal } from "@opsengine/kernel";
 import { assertClientService, enabledServiceList } from "../clients/access.js";
 import { DbService } from "../db.service.js";
@@ -531,6 +534,137 @@ export class JobsService {
       message: ended
         ? `${task.title} is done. The timer on the floor phone is ended.`
         : `${task.title} is done.`,
+    };
+  }
+
+  /**
+   * Adds worked time (and an optional meal break) for the person on a task who never ran
+   * the timer. The time lands as normal activity segments, so labor and billing count it.
+   */
+  async addTaskTime(
+    principal: Principal,
+    jobId: string,
+    taskId: string,
+    input: z.infer<typeof addTaskTimeSchema>,
+  ) {
+    const job = await this.requireJob(principal, jobId);
+    const orm = this.db.db;
+    const [task] = await orm.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
+    if (!task || task.jobId !== job.id) throw new NotFoundException("That task is not on this job.");
+    if (!task.assigneeId) throw new ConflictException("Choose who does this task before adding time.");
+    const person = await this.activeEmployee(task.assigneeId);
+
+    const start = new Date(input.startAt);
+    const end = new Date(input.endAt);
+    if (!(end.getTime() > start.getTime())) throw new ConflictException("The end must be after the start.");
+    if (end.getTime() > Date.now() + 60_000) throw new ConflictException("Time cannot be added in the future.");
+    if (end.getTime() - start.getTime() > 24 * 60 * 60_000) {
+      throw new ConflictException("One entry can cover at most 24 hours. Add it in parts.");
+    }
+    if ((input.breakStartAt == null) !== (input.breakEndAt == null)) {
+      throw new ConflictException("Give both the start and the end of the break, or neither.");
+    }
+    const breakStart = input.breakStartAt ? new Date(input.breakStartAt) : null;
+    const breakEnd = input.breakEndAt ? new Date(input.breakEndAt) : null;
+    if (breakStart && breakEnd) {
+      if (!(breakEnd.getTime() > breakStart.getTime())) {
+        throw new ConflictException("The break must end after it starts.");
+      }
+      if (breakStart.getTime() <= start.getTime() || breakEnd.getTime() >= end.getTime()) {
+        throw new ConflictException("The break must fall inside the work time.");
+      }
+    }
+
+    const code = input.activityCode ?? task.activityCode;
+    if (!code) throw new ConflictException("Choose the kind of work this time is for.");
+    const rows = await orm.select().from(activityTypes).where(eq(activityTypes.code, code));
+    const kind = rows.find((row) => row.clientId == null || row.clientId === job.clientId);
+    if (!kind || !kind.active || kind.department === "indirect") {
+      throw new ConflictException("That kind of work cannot be added to a job.");
+    }
+    await assertClientService(orm, job.clientId, kind.department as ClientService);
+
+    const overlaps = (aStart: Date, aEnd: Date | null) =>
+      aStart.getTime() < end.getTime() && (aEnd === null || aEnd.getTime() > start.getTime());
+    const clash = (await orm.select().from(segments).where(eq(segments.employeeId, person.id))).some((row) =>
+      overlaps(row.startedAt, row.endedAt),
+    );
+    if (clash) {
+      throw new ConflictException(`${person.name} already has work recorded during that time.`);
+    }
+
+    const theirShifts = (await orm.select().from(shifts).where(eq(shifts.employeeId, person.id))).filter((row) =>
+      overlaps(row.clockIn, row.clockOut),
+    );
+    const containing = theirShifts.find(
+      (row) => row.clockIn.getTime() <= start.getTime() && (row.clockOut === null || row.clockOut.getTime() >= end.getTime()),
+    );
+    if (theirShifts.length > 0 && !containing) {
+      throw new ConflictException(
+        `That time runs past the edge of ${person.name}'s shift. Choose times inside the shift, or fix the shift first.`,
+      );
+    }
+
+    const minutes = (from: Date, to: Date) => Math.round((to.getTime() - from.getTime()) / 60_000);
+    const breakMinutes = breakStart && breakEnd ? minutes(breakStart, breakEnd) : 0;
+    const workMinutes = minutes(start, end) - breakMinutes;
+
+    await orm.transaction(async (tx) => {
+      let shiftId = containing?.id;
+      if (!shiftId) {
+        const [created] = await tx
+          .insert(shifts)
+          .values({
+            employeeId: person.id,
+            clockIn: start,
+            clockOut: end,
+            source: "manual",
+            clockInPlace: "Added by a manager",
+            clockOutPlace: "Added by a manager",
+          })
+          .returning({ id: shifts.id });
+        if (!created) throw new ConflictException("Could not add that time.");
+        shiftId = created.id;
+      }
+      const base = {
+        employeeId: person.id,
+        shiftId,
+        department: kind.department,
+        taskCode: kind.code,
+        jobId: job.id,
+        activityId: kind.id,
+        note: `Added by a manager for ${task.title}`,
+      };
+      if (breakStart && breakEnd) {
+        await tx.insert(segments).values([
+          { ...base, startedAt: start, endedAt: breakStart, endReason: "meal" },
+          { ...base, startedAt: breakEnd, endedAt: end, endReason: "complete" },
+        ]);
+        await tx.insert(breaks).values({ shiftId, kind: "meal", startedAt: breakStart, endedAt: breakEnd });
+      } else {
+        await tx.insert(segments).values({ ...base, startedAt: start, endedAt: end, endReason: "complete" });
+      }
+      await tx.insert(auditLog).values({
+        actorId: principal.id,
+        action: "jobs.time_added",
+        module: "jobs",
+        entityType: "task",
+        entityId: task.id,
+        after: {
+          summary: `${workMinutes} min of ${kind.name} added for ${person.name} on ${task.title}${
+            breakMinutes ? `, with a ${breakMinutes} min break` : ""
+          }.`,
+        },
+      });
+    });
+
+    const whole = Math.floor(workMinutes / 60);
+    const rest = workMinutes % 60;
+    const worked = whole === 0 ? `${rest} min` : `${whole} h ${rest} min`;
+    return {
+      message: `Added ${worked} of work for ${person.name} on ${task.title}${
+        breakMinutes ? `, with a ${breakMinutes} min break` : ""
+      }.`,
     };
   }
 

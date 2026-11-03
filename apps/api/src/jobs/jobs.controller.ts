@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Inject, Param, Post, UseGuards } from "@nestjs/common";
 import {
+  addTaskTimeSchema,
   assignCrewSchema,
   assignEmployeeSchema,
   createJobSchema,
@@ -94,6 +95,17 @@ export class JobsController {
   ) {
     authorize(ctx, "job.manage");
     return this.jobs.setTaskStart(ctx.principal, id, taskId, body);
+  }
+
+  @Post(":id/tasks/:taskId/time")
+  taskTime(
+    @CurrentUser() ctx: RequestContext,
+    @Param("id") id: string,
+    @Param("taskId") taskId: string,
+    @Body(new ZodPipe(addTaskTimeSchema)) body: z.infer<typeof addTaskTimeSchema>,
+  ) {
+    authorize(ctx, "job.manage");
+    return this.jobs.addTaskTime(ctx.principal, id, taskId, body);
   }
 
   @Post(":id/work")

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { ApiError, post } from "@/lib/api";
 import { useSession } from "@/components/shell";
-import { Notice, PageTitle, useResource } from "@/components/ui";
+import { Badge, EmptyState, initials, Notice, PageTitle, SkeletonList, Spinner, timeAgo, useResource } from "@/components/ui";
 
 type Status = { gmail: boolean; warehance: boolean; slack: boolean; claude: boolean };
 type Rule = { id: string; name: string; enabled: boolean };
@@ -18,17 +18,22 @@ type Letter = {
   clientId: string | null;
   status: string;
 };
+type RunSummary = { id: string; letterId: string; status: "working" | "done" | "failed"; sentAt: string | null };
 
 // Runs one rule on this email now, even if it arrived before the rule existed.
 function RunRule({ letterId, rules }: { letterId: string; rules: Rule[] }) {
   const [ruleId, setRuleId] = useState("");
+  const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
 
   if (rules.length === 0) {
     return (
       <p className="text-sm text-muted">
-        No rules yet. <Link className="text-moss" href="/mail/automation">Create one in Email automation.</Link>
+        No rules yet.{" "}
+        <Link className="font-medium text-moss hover:underline" href="/mail/automation">
+          Create one in Email automation.
+        </Link>
       </p>
     );
   }
@@ -36,18 +41,21 @@ function RunRule({ letterId, rules }: { letterId: string; rules: Rule[] }) {
   async function run() {
     setNote(null);
     setProblem(null);
+    setBusy(true);
     try {
       await post(`/mail/letters/${letterId}/run`, { ruleId });
       setNote("Started. The draft appears in Email automation in a moment.");
     } catch (err) {
       setProblem(err instanceof ApiError ? err.message : "Could not start the rule.");
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <select className="field max-w-xs" value={ruleId} onChange={(event) => setRuleId(event.target.value)}>
+        <select className="field max-w-xs" aria-label="Rule to run" value={ruleId} onChange={(event) => setRuleId(event.target.value)}>
           <option value="">Run a rule on this email…</option>
           {rules.map((rule) => (
             <option key={rule.id} value={rule.id}>
@@ -56,13 +64,56 @@ function RunRule({ letterId, rules }: { letterId: string; rules: Rule[] }) {
             </option>
           ))}
         </select>
-        <button className="btn" type="button" disabled={!ruleId} onClick={run}>
+        <button className="btn btn-primary" type="button" disabled={!ruleId || busy} onClick={run}>
+          {busy ? <Spinner /> : null}
           Run
         </button>
       </div>
-      {note ? <Notice tone="ok">{note}</Notice> : null}
+      {note ? (
+        <Notice tone="ok">
+          {note}{" "}
+          <Link className="font-medium underline" href="/mail/automation">
+            Open drafts
+          </Link>
+        </Notice>
+      ) : null}
       {problem ? <Notice tone="bad">{problem}</Notice> : null}
     </div>
+  );
+}
+
+// One line per connector, so it is obvious what is still missing.
+function Setup({ status, owner }: { status: Status; owner: boolean }) {
+  const items: [string, boolean][] = [
+    ["Gmail", status.gmail],
+    ["Claude", status.claude],
+    ["Warehance bot", status.warehance],
+    ["Slack", status.slack],
+  ];
+  if (items.every(([, ok]) => ok)) return null;
+  return (
+    <section className="card mb-5 flex flex-wrap items-center justify-between gap-4 p-4">
+      <div className="min-w-0 space-y-2">
+        <p className="text-sm font-semibold">
+          {status.gmail ? "Finish setup to unlock replies" : "Connect Gmail so letters can arrive"}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {items.map(([name, ok]) => (
+            <Badge key={name} tone={ok ? "ok" : "neutral"} dot>
+              {name}
+              {ok ? "" : " not connected"}
+            </Badge>
+          ))}
+        </div>
+      </div>
+      {owner ? (
+        <Link className="btn btn-primary" href="/settings">
+          Open Settings
+        </Link>
+      ) : (
+        <p className="text-sm text-muted">Ask the owner to connect them.</p>
+      )}
+    </section>
   );
 }
 
@@ -72,6 +123,7 @@ export default function MailPage() {
   const { data, error, loading } = useResource<Status>(allowed ? "/mail/status" : null);
   const letters = useResource<Letter[]>(allowed && data?.gmail ? "/mail/letters" : null);
   const rules = useResource<Rule[]>(allowed ? "/mail/rules" : null);
+  const runs = useResource<RunSummary[]>(allowed && data?.gmail ? "/mail/runs" : null);
   const [checking, setChecking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
@@ -82,6 +134,7 @@ export default function MailPage() {
     try {
       await post("/mail/sync", {});
       letters.reload();
+      runs.reload();
     } catch (err) {
       setProblem(err instanceof ApiError ? err.message : "Could not check the mailbox.");
     } finally {
@@ -89,82 +142,95 @@ export default function MailPage() {
     }
   }
 
-  if (!user) return <p className="text-muted">Loading…</p>;
+  if (!user) return <SkeletonList rows={2} />;
   if (!allowed) return <Notice tone="bad">Mail is for the warehouse manager.</Notice>;
 
-  const missing = data
-    ? [
-        data.gmail ? null : "Gmail",
-        data.warehance ? null : "the Warehance bot",
-        data.slack ? null : "Slack",
-        data.claude ? null : "the Claude API key",
-      ].filter(Boolean)
-    : [];
+  // The newest draft decides the badge shown on a letter.
+  const stateOf = (letterId: string) => {
+    const mine = (runs.data ?? []).filter((run) => run.letterId === letterId);
+    if (mine.some((run) => run.sentAt)) return <Badge tone="ok" dot>Replied</Badge>;
+    if (mine.some((run) => run.status === "working")) return <Badge tone="warn" dot>Writing draft</Badge>;
+    if (mine.some((run) => run.status === "done")) return <Badge tone="ok">Draft ready</Badge>;
+    if (mine.some((run) => run.status === "failed")) return <Badge tone="bad">Draft failed</Badge>;
+    return null;
+  };
 
   return (
-    <div>
+    <div className="max-w-4xl">
       <PageTitle
         kicker="Mail"
         title="Inbox"
         detail="Letters from the warehouse mailbox. Nothing is answered or sent until a person approves it."
-      />
-      {loading ? <p className="text-muted">Loading…</p> : null}
-      {error ? <Notice tone="bad">{error}</Notice> : null}
-      {problem ? <Notice tone="bad">{problem}</Notice> : null}
-      {data && missing.length > 0 ? (
-        <section className="card mb-4 max-w-3xl space-y-3 p-5">
-          <p>
-            Not connected yet: {missing.join(", ")}.
-            {data.gmail ? " Letters still arrive, but replies need the rest." : " Connect Gmail before letters can arrive."}
-          </p>
-          {user.role === "owner" ? (
-            <Link className="btn btn-primary" href="/settings">
-              Open Settings
-            </Link>
-          ) : (
-            <p className="text-sm text-muted">Ask the owner to connect them.</p>
-          )}
-        </section>
-      ) : null}
-      {data?.gmail ? (
-        <div className="max-w-3xl space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-muted">New mail is checked every minute.</p>
+        actions={
+          data?.gmail ? (
             <button className="btn" type="button" disabled={checking} onClick={checkNow}>
+              {checking ? <Spinner /> : null}
               {checking ? "Checking" : "Check now"}
             </button>
-          </div>
+          ) : null
+        }
+      />
+
+      {loading ? <SkeletonList rows={4} /> : null}
+      {error ? <Notice tone="bad">{error}</Notice> : null}
+      {problem ? (
+        <div className="mb-4">
+          <Notice tone="bad">{problem}</Notice>
+        </div>
+      ) : null}
+      {data ? <Setup status={data} owner={user.role === "owner"} /> : null}
+
+      {data?.gmail ? (
+        <div className="space-y-3">
           {letters.error ? <Notice tone="bad">{letters.error}</Notice> : null}
+          {letters.loading && !letters.data ? <SkeletonList rows={4} /> : null}
           {letters.data && letters.data.length === 0 ? (
-            <section className="card p-5">
-              <p>No letters yet. Mail from the last 7 days appears here after the next check.</p>
+            <EmptyState title="No letters yet">Mail from the last 7 days appears here after the next check. New mail is checked every minute.</EmptyState>
+          ) : null}
+
+          {letters.data && letters.data.length > 0 ? (
+            <section className="card divide-y divide-black/5 overflow-hidden">
+              {letters.data.map((letter) => {
+                const isOpen = open === letter.id;
+                const who = letter.fromName || letter.fromEmail;
+                return (
+                  <article key={letter.id} className={isOpen ? "bg-white" : ""}>
+                    <button
+                      className="flex w-full items-start gap-3 px-4 py-3.5 text-left transition-colors hover:bg-black/[0.03]"
+                      type="button"
+                      aria-expanded={isOpen}
+                      onClick={() => setOpen(isOpen ? null : letter.id)}
+                    >
+                      <span className="grid h-10 w-10 flex-none place-items-center rounded-full bg-moss/15 text-sm font-semibold text-moss">{initials(who)}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-baseline justify-between gap-3">
+                          <span className="truncate font-semibold">{who}</span>
+                          <span className="flex-none text-xs text-muted" title={new Date(letter.receivedAt).toLocaleString()}>
+                            {timeAgo(letter.receivedAt)}
+                          </span>
+                        </span>
+                        <span className="mt-0.5 block truncate text-sm font-medium">{letter.subject || "(no subject)"}</span>
+                        {!isOpen ? <span className="mt-0.5 block truncate text-sm text-muted">{letter.body || "(empty)"}</span> : null}
+                        <span className="mt-1.5 flex flex-wrap gap-1.5 empty:hidden">
+                          {stateOf(letter.id)}
+                          {letter.clientId ? <Badge>Matched to a client</Badge> : null}
+                        </span>
+                      </span>
+                    </button>
+                    {isOpen ? (
+                      <div className="space-y-4 border-t border-black/5 px-4 pb-4 pl-[4.25rem] pt-3">
+                        <p className="text-xs text-muted">
+                          From {letter.fromEmail} · {new Date(letter.receivedAt).toLocaleString()}
+                        </p>
+                        <p className="max-h-80 overflow-y-auto whitespace-pre-wrap text-sm leading-6">{letter.body || "(empty)"}</p>
+                        <RunRule letterId={letter.id} rules={rules.data ?? []} />
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
             </section>
           ) : null}
-          {letters.data?.map((letter) => (
-            <section key={letter.id} className="card p-4">
-              <button className="w-full text-left" type="button" onClick={() => setOpen(open === letter.id ? null : letter.id)}>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-semibold">{letter.subject || "(no subject)"}</p>
-                    <p className="text-sm text-muted">
-                      {letter.fromName ? `${letter.fromName} · ` : ""}
-                      {letter.fromEmail}
-                    </p>
-                  </div>
-                  <div className="text-right text-sm text-muted">
-                    <p>{new Date(letter.receivedAt).toLocaleString()}</p>
-                    <p>{letter.clientId ? "Matched" : "Unassigned"}</p>
-                  </div>
-                </div>
-              </button>
-              {open === letter.id ? (
-                <div className="mt-3 space-y-3 border-t border-black/10 pt-3">
-                  <p className="whitespace-pre-wrap text-sm">{letter.body || "(empty)"}</p>
-                  <RunRule letterId={letter.id} rules={rules.data ?? []} />
-                </div>
-              ) : null}
-            </section>
-          ))}
         </div>
       ) : null}
     </div>

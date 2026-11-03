@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, post } from "@/lib/api";
 import { useSession } from "@/components/shell";
-import { Field, Notice, PageTitle, useResource } from "@/components/ui";
+import { Badge, Field, Notice, PageTitle, SkeletonList, useResource } from "@/components/ui";
 
 type Connector = { connected: boolean; label: string | null; detail: string | null; address: string | null; googleReady?: boolean };
 type Connectors = { gmail: Connector; warehance: Connector; slack: Connector; anthropic: Connector };
@@ -72,7 +72,7 @@ export default function SettingsPage() {
     }
   }
 
-  if (!user) return <p className="text-muted">Loading…</p>;
+  if (!user) return <SkeletonList rows={2} />;
   if (user.role !== "owner") return <Notice tone="bad">Only the owner can change connectors.</Notice>;
 
   return (
@@ -82,10 +82,12 @@ export default function SettingsPage() {
         title="Connectors"
         detail="Gmail receives the client’s letter. The Warehance bot looks up the order. Claude writes the draft. Slack tells people about it."
       />
-      {loading ? <p className="text-muted">Loading…</p> : null}
-      {error ? <Notice tone="bad">{error}</Notice> : null}
-      {notice ? <Notice tone="ok">{notice}</Notice> : null}
-      {problem ? <Notice tone="bad">{problem}</Notice> : null}
+      {loading && !data ? <SkeletonList rows={4} /> : null}
+      <div className="mb-4 max-w-3xl space-y-3 empty:hidden">
+        {error ? <Notice tone="bad">{error}</Notice> : null}
+        {notice ? <Notice tone="ok">{notice}</Notice> : null}
+        {problem ? <Notice tone="bad">{problem}</Notice> : null}
+      </div>
       {data ? (
         <div className="grid max-w-3xl gap-4">
           <GmailCard connector={data.gmail} onConnect={connectGmail} onTest={() => test("gmail")} onDisconnect={() => disconnect("gmail")} />
@@ -100,15 +102,18 @@ export default function SettingsPage() {
 
 function Card({ title, connector, children }: { title: string; connector: Connector; children: React.ReactNode }) {
   return (
-    <section className="card space-y-4 p-5">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">{title}</h2>
-        <span className={`text-sm ${connector.connected ? "text-moss" : "text-muted"}`}>
-          {connector.connected ? "Connected" : "Not connected"}
+    <section className="card space-y-4 p-5 sm:p-6">
+      <div className="flex items-center gap-3">
+        <span className={`grid h-10 w-10 flex-none place-items-center rounded-xl text-sm font-bold ${connector.connected ? "bg-moss text-paper" : "bg-black/10 text-muted"}`}>
+          {title.charAt(0)}
         </span>
+        <h2 className="min-w-0 flex-1 truncate text-lg font-semibold">{title}</h2>
+        <Badge tone={connector.connected ? "ok" : "neutral"} dot>
+          {connector.connected ? "Connected" : "Not connected"}
+        </Badge>
       </div>
-      {connector.label ? <p className="text-sm">{connector.label}</p> : null}
-      {connector.detail ? <p className="text-sm text-muted">{connector.detail}</p> : null}
+      {connector.label ? <p className="break-all text-sm font-medium">{connector.label}</p> : null}
+      {connector.detail ? <p className="text-sm leading-6 text-muted">{connector.detail}</p> : null}
       {children}
     </section>
   );
@@ -122,7 +127,7 @@ function SavedActions({ onTest, onDisconnect }: { onTest: () => void; onDisconne
       <button className="btn" type="button" onClick={onTest}>
         Test
       </button>
-      <button className="btn" type="button" onClick={onDisconnect}>
+      <button className="btn btn-danger" type="button" onClick={onDisconnect}>
         Disconnect
       </button>
     </div>
@@ -164,7 +169,7 @@ function GmailCard({
             <button className="btn" type="button" onClick={onTest}>
               Test
             </button>
-            <button className="btn" type="button" onClick={onDisconnect}>
+            <button className="btn btn-danger" type="button" onClick={onDisconnect}>
               Disconnect
             </button>
           </>

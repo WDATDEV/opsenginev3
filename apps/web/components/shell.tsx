@@ -58,7 +58,7 @@ function linkActive(pathname: string, href: string) {
 
 // ---------------------------------------------------------------- icons
 
-type IconName = "clock" | "mail" | "settings" | "menu" | "close" | "logout" | "grid";
+type IconName = "clock" | "mail" | "chat" | "settings" | "menu" | "close" | "logout" | "grid";
 
 const ICON_PATHS: Record<IconName, React.ReactNode> = {
   clock: (
@@ -73,6 +73,7 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
       <path d="m3.5 6 6.5 4.8L16.5 6" />
     </>
   ),
+  chat: <path d="M4.5 4h11A1.5 1.5 0 0 1 17 5.5v7a1.5 1.5 0 0 1-1.5 1.5H9l-3.5 3v-3h-1A1.5 1.5 0 0 1 3 12.5v-7A1.5 1.5 0 0 1 4.5 4z" />,
   settings: (
     <>
       <circle cx="10" cy="10" r="2.5" />
@@ -196,8 +197,9 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
   const clientServices = insideClient
     ? CLIENT_SERVICES.filter(([service]) => insideClient.enabledServices.includes(service) && canOpenService(user?.role, service))
     : [];
-  const timeActive = !pathname.startsWith("/mail") && !pathname.startsWith("/settings");
+  const timeActive = !pathname.startsWith("/mail") && !pathname.startsWith("/settings") && !pathname.startsWith("/chat");
   const mailActive = pathname.startsWith("/mail");
+  const chatActive = pathname.startsWith("/chat");
   const settingsActive = pathname.startsWith("/settings");
   const showMail = user?.role === "owner" || user?.role === "warehouse_manager";
 
@@ -291,6 +293,12 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
                       <SubLink href="/mail/bulk" label="Bulk email" active={pathname.startsWith("/mail/bulk")} />
                     </SubTabs>
                   ) : null}
+                </div>
+              ) : null}
+
+              {user?.role === "owner" ? (
+                <div>
+                  <MainTab href="/chat" label="Chat" icon="chat" active={chatActive} />
                 </div>
               ) : null}
 

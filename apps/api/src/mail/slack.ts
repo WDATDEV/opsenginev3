@@ -66,6 +66,77 @@ export async function post(token: string, channel: string, text: string) {
   }
 }
 
+const CHANNEL_ID = /^[CGD][A-Z0-9]{6,}$/;
+
+// Turns what a person typed into a Slack conversation ID: a channel ID, a #channel name, or a person
+// (member ID, email or @name), who gets a direct message.
+export async function conversationFor(token: string, target: string) {
+  const text = target.trim();
+  if (!text) throw new Error("Choose where to send it in Slack.");
+  if (CHANNEL_ID.test(text)) return text;
+  if (!text.startsWith("#")) {
+    const person = await findPerson(token, text);
+    const opened = await call<{ channel?: { id: string } }>(token, "conversations.open", { users: person });
+    if (!opened.ok || !opened.channel) {
+      throw new Error(opened.error === "missing_scope" ? "Slack needs the im:write scope to send direct messages." : `Slack: ${opened.error}`);
+    }
+    return opened.channel.id;
+  }
+  const wanted = text.slice(1).toLowerCase();
+  let cursor = "";
+  for (let page = 0; page < 10; page += 1) {
+    const reply = await call<{ channels?: { id: string; name: string }[]; response_metadata?: { next_cursor?: string } }>(
+      token,
+      "conversations.list",
+      null,
+      { limit: "200", types: "public_channel,private_channel", exclude_archived: "true", ...(cursor ? { cursor } : {}) },
+    );
+    if (!reply.ok) {
+      throw new Error(reply.error === "missing_scope" ? "Slack needs the channels:read scope to find a channel by name." : `Slack: ${reply.error}`);
+    }
+    const found = (reply.channels ?? []).find((channel) => channel.name.toLowerCase() === wanted);
+    if (found) return found.id;
+    cursor = reply.response_metadata?.next_cursor ?? "";
+    if (!cursor) break;
+  }
+  throw new Error(`Slack cannot find ${text}. The bot may need to be invited to it.`);
+}
+
+// Uploads a file into a conversation with a message above it.
+export async function uploadFile(
+  token: string,
+  conversation: string,
+  file: { name: string; data: Buffer },
+  comment: string,
+) {
+  const slot = await call<{ upload_url?: string; file_id?: string }>(token, "files.getUploadURLExternal", null, {
+    filename: file.name,
+    length: String(file.data.length),
+  });
+  if (!slot.ok || !slot.upload_url || !slot.file_id) {
+    throw new Error(slot.error === "missing_scope" ? "Slack needs the files:write scope to upload files." : `Slack: ${slot.error}`);
+  }
+  const sent = await fetch(slot.upload_url, {
+    method: "POST",
+    headers: { "content-type": "application/octet-stream" },
+    body: new Uint8Array(file.data),
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!sent.ok) throw new Error(`Slack did not accept the file (${sent.status}).`);
+
+  const done = await call<unknown>(token, "files.completeUploadExternal", {
+    files: [{ id: slot.file_id, title: file.name }],
+    channel_id: conversation,
+    ...(comment ? { initial_comment: comment } : {}),
+  });
+  if (!done.ok) {
+    if (done.error === "not_in_channel" || done.error === "channel_not_found") {
+      throw new Error("The bot is not in that channel. Invite it with /invite.");
+    }
+    throw new Error(`Slack: ${done.error}`);
+  }
+}
+
 // Slack reads <, > and & as markup, so text from an email has them escaped.
 export function plain(value: string) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

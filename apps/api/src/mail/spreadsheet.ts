@@ -59,12 +59,18 @@ function safeCell(cell: string) {
   return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
-export function toCsv(records: Record<string, unknown>[], wanted?: string[]) {
+// The records as a flat table: one list of column names and one list of text cells per row.
+export function toTable(records: Record<string, unknown>[], wanted?: string[]) {
   const rows = records.flatMap((record) => flatten(record)).slice(0, MAX_ROWS);
-  const seen: string[] = [];
-  for (const row of rows) for (const column of Object.keys(row)) if (!seen.includes(column)) seen.push(column);
-  const columns = wanted && wanted.length > 0 ? wanted.filter((column) => seen.includes(column)) : seen;
-  const lines = [columns.map(safeCell).join(",")];
-  for (const row of rows) lines.push(columns.map((column) => safeCell(row[column] ?? "")).join(","));
-  return { csv: lines.join("\r\n"), rows: rows.length, columns };
+  const seen = new Set<string>();
+  for (const row of rows) for (const column of Object.keys(row)) seen.add(column);
+  const columns = wanted && wanted.length > 0 ? wanted.filter((column) => seen.has(column)) : [...seen];
+  return { columns, cells: rows.map((row) => columns.map((column) => row[column] ?? "")) };
+}
+
+export function toCsv(records: Record<string, unknown>[], wanted?: string[]) {
+  const table = toTable(records, wanted);
+  const lines = [table.columns.map(safeCell).join(",")];
+  for (const row of table.cells) lines.push(row.map(safeCell).join(","));
+  return { csv: lines.join("\r\n"), rows: table.cells.length, columns: table.columns };
 }

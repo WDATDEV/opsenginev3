@@ -85,7 +85,9 @@ export function buildReply(input: {
   body: string;
   inReplyTo: string;
   references: string;
-  attachment: { name: string; csv: string } | null;
+  attachment?: { name: string; csv: string } | null;
+  /** Any files to attach, already built. */
+  files?: { name: string; mime: string; data: Buffer }[];
   /** A new message, not a reply: the subject is used as written. */
   fresh?: boolean;
   /** Display name for the From line. The address is always the connected account. */
@@ -115,28 +117,37 @@ export function buildReply(input: {
       wrap64(Buffer.from(input.body.replace(/\r?\n/g, "\r\n"), "utf8").toString("base64")),
     ].join("\r\n");
 
-  if (!input.attachment) {
+  const attachments = [
+    ...(input.attachment
+      ? [{ name: input.attachment.name, mime: 'text/csv; charset="UTF-8"', data: Buffer.from(input.attachment.csv, "utf8") }]
+      : []),
+    ...(input.files ?? []),
+  ];
+  if (attachments.length === 0) {
     return toBase64Url([...headers, textPart('text/plain; charset="UTF-8"')].join("\r\n"));
   }
 
   const boundary = `ops_${randomBytes(12).toString("hex")}`;
-  const filename = input.attachment.name.replace(/[^\w.\- ]+/g, "_");
   const message = [
     ...headers,
     `Content-Type: multipart/mixed; boundary="${boundary}"`,
     "",
     `--${boundary}`,
     textPart('text/plain; charset="UTF-8"'),
-    `--${boundary}`,
-    `Content-Type: text/csv; charset="UTF-8"; name="${filename}"`,
-    `Content-Disposition: attachment; filename="${filename}"`,
-    "Content-Transfer-Encoding: base64",
-    "",
-    wrap64(Buffer.from(input.attachment.csv, "utf8").toString("base64")),
-    `--${boundary}--`,
-    "",
-  ].join("\r\n");
-  return toBase64Url(message);
+  ];
+  for (const file of attachments) {
+    const filename = file.name.replace(/[^\w.\- ]+/g, "_");
+    message.push(
+      `--${boundary}`,
+      `Content-Type: ${file.mime}; name="${filename}"`,
+      `Content-Disposition: attachment; filename="${filename}"`,
+      "Content-Transfer-Encoding: base64",
+      "",
+      wrap64(file.data.toString("base64")),
+    );
+  }
+  message.push(`--${boundary}--`, "");
+  return toBase64Url(message.join("\r\n"));
 }
 
 @Injectable()
@@ -345,7 +356,14 @@ export class GmailService {
    * token once per batch and passes it back in. Throws a plain Error with a readable reason on failure.
    */
   async sendMessage(
-    message: { to: string; subject: string; body: string; fromName?: string; replyTo?: string },
+    message: {
+      to: string;
+      subject: string;
+      body: string;
+      fromName?: string;
+      replyTo?: string;
+      files?: { name: string; mime: string; data: Buffer }[];
+    },
     token?: string,
   ) {
     const access = token ?? (await this.accessToken());
@@ -357,6 +375,7 @@ export class GmailService {
       inReplyTo: "",
       references: "",
       attachment: null,
+      ...(message.files ? { files: message.files } : {}),
       fresh: true,
       ...(message.fromName && account ? { from: { name: message.fromName, email: account } } : {}),
       ...(message.replyTo ? { replyTo: message.replyTo } : {}),

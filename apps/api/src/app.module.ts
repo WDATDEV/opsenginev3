@@ -15,6 +15,8 @@ import { InternalController } from "./internal/internal.controller.js";
 import { SchedulerService } from "./tracking/scheduler.service.js";
 import { TrackingController } from "./tracking/tracking.controller.js";
 import { TrackingService } from "./tracking/tracking.service.js";
+import { ChatController } from "./mail/chat.controller.js";
+import { ChatService } from "./mail/chat.service.js";
 import { BroadcastController } from "./mail/broadcast.controller.js";
 import { BroadcastService } from "./mail/broadcast.service.js";
 import { AutomationController } from "./mail/automation.controller.js";
@@ -45,6 +47,7 @@ import { WorkService } from "./work/work.service.js";
     MailController,
     AutomationController,
     BroadcastController,
+    ChatController,
     InternalController,
   ],
   providers: [
@@ -61,6 +64,7 @@ import { WorkService } from "./work/work.service.js";
     GmailService,
     AutomationService,
     BroadcastService,
+    ChatService,
   ],
 })
 export class AppModule {}

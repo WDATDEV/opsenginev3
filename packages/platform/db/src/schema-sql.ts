@@ -17,6 +17,54 @@ CREATE TABLE IF NOT EXISTS mail.connectors (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS mail.letters (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  gmail_id text NOT NULL UNIQUE,
+  thread_id text NOT NULL,
+  from_email text NOT NULL,
+  from_name text,
+  subject text NOT NULL DEFAULT '',
+  body text NOT NULL DEFAULT '',
+  received_at timestamptz NOT NULL,
+  client_id uuid,
+  status text NOT NULL DEFAULT 'new',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS mail.rules (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  enabled boolean NOT NULL DEFAULT true,
+  match_mode text NOT NULL DEFAULT 'all',
+  conditions jsonb NOT NULL DEFAULT '[]'::jsonb,
+  draft jsonb NOT NULL,
+  slack jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS mail.runs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  letter_id uuid NOT NULL,
+  rule_id uuid NOT NULL,
+  status text NOT NULL DEFAULT 'working',
+  draft_subject text,
+  draft_body text,
+  needs_review boolean NOT NULL DEFAULT false,
+  review_reason text,
+  attachment_name text,
+  attachment_csv text,
+  lookups jsonb NOT NULL DEFAULT '[]'::jsonb,
+  slack_note text,
+  error text,
+  model text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz,
+  UNIQUE (letter_id, rule_id)
+);
+ALTER TABLE mail.runs ADD COLUMN IF NOT EXISTS sent_at timestamptz;
+ALTER TABLE mail.runs ADD COLUMN IF NOT EXISTS sent_to text;
+
 CREATE TABLE IF NOT EXISTS identity.users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   email text NOT NULL UNIQUE,

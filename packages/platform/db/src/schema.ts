@@ -10,6 +10,7 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
+import { encryptedText } from "./secret-box.js";
 
 export const identity = pgSchema("identity");
 export const clients = pgSchema("clients");
@@ -21,10 +22,84 @@ export const mail = pgSchema("mail");
 export const connectors = mail.table("connectors", {
   kind: text("kind").primaryKey(),
   label: text("label"),
-  secret: text("secret"),
+  // Encrypted at rest. See secret-box.ts.
+  secret: encryptedText("secret"),
   extra: text("extra"),
   detail: text("detail"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const letters = mail.table("letters", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  gmailId: text("gmail_id").notNull().unique(),
+  threadId: text("thread_id").notNull(),
+  fromEmail: text("from_email").notNull(),
+  fromName: text("from_name"),
+  subject: text("subject").notNull().default(""),
+  body: text("body").notNull().default(""),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
+  clientId: uuid("client_id"),
+  status: text("status").notNull().default("new"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export type RuleCondition = {
+  field: "subject" | "body" | "sender" | "domain";
+  op: "contains_any" | "contains_all" | "not_contains" | "equals" | "ends_with";
+  value: string;
+};
+
+export type RuleDraft = {
+  enabled: boolean;
+  instructions: string;
+  // Fixed business facts Claude may quote, such as opening hours. Rules saved before this field exist lack it.
+  facts?: string;
+  model: "haiku" | "sonnet";
+  useWarehance: boolean;
+  warehanceClientId: number | null;
+  spreadsheet: boolean;
+};
+
+export type RuleSlack = {
+  enabled: boolean;
+  channel: string;
+  mentions: string[];
+  direct: string[];
+  includeDraft: boolean;
+};
+
+export const rules = mail.table("rules", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  matchMode: text("match_mode").notNull().default("all"),
+  conditions: jsonb("conditions").$type<RuleCondition[]>().notNull().default([]),
+  draft: jsonb("draft").$type<RuleDraft>().notNull(),
+  slack: jsonb("slack").$type<RuleSlack>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const runs = mail.table("runs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  letterId: uuid("letter_id").notNull(),
+  ruleId: uuid("rule_id").notNull(),
+  status: text("status").notNull().default("working"),
+  draftSubject: text("draft_subject"),
+  draftBody: text("draft_body"),
+  needsReview: boolean("needs_review").notNull().default(false),
+  reviewReason: text("review_reason"),
+  attachmentName: text("attachment_name"),
+  attachmentCsv: text("attachment_csv"),
+  lookups: jsonb("lookups").$type<{ tool: string; summary: string }[]>().notNull().default([]),
+  slackNote: text("slack_note"),
+  error: text("error"),
+  model: text("model"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  // Set when a person sends the reply from the app. A draft is sent at most once.
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  sentTo: text("sent_to"),
 });
 
 export const users = identity.table("users", {

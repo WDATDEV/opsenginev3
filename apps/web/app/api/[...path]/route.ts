@@ -23,6 +23,9 @@ async function proxy(request: NextRequest, path: string[]) {
   const response = new NextResponse(payload, { status: upstream.status });
   const type = upstream.headers.get("content-type");
   if (type) response.headers.set("content-type", type);
+  // Lets a spreadsheet download keep its file name.
+  const disposition = upstream.headers.get("content-disposition");
+  if (disposition) response.headers.set("content-disposition", disposition);
 
   const setCookie = upstream.headers.getSetCookie?.() ?? [];
   for (const cookie of setCookie) {

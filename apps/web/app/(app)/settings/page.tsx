@@ -6,7 +6,7 @@ import { useSession } from "@/components/shell";
 import { Field, Notice, PageTitle, useResource } from "@/components/ui";
 
 type Connector = { connected: boolean; label: string | null; detail: string | null; address: string | null; googleReady?: boolean };
-type Connectors = { gmail: Connector; warehance: Connector; slack: Connector };
+type Connectors = { gmail: Connector; warehance: Connector; slack: Connector; anthropic: Connector };
 
 export default function SettingsPage() {
   const user = useSession();
@@ -91,6 +91,7 @@ export default function SettingsPage() {
           <GmailCard connector={data.gmail} onConnect={connectGmail} onTest={() => test("gmail")} onDisconnect={() => disconnect("gmail")} />
           <WarehanceCard key={`${data.warehance.address ?? ""}-${data.warehance.detail ?? ""}`} connector={data.warehance} onSave={(url, key) => save("/settings/connectors/warehance", { url, key })} onTest={() => test("warehance")} onDisconnect={() => disconnect("warehance")} />
           <SlackCard key={`${data.slack.label ?? ""}-${data.slack.detail ?? ""}`} connector={data.slack} onSave={(token, channel) => save("/settings/connectors/slack", { token, channel })} onTest={() => test("slack")} onDisconnect={() => disconnect("slack")} />
+          <ClaudeCard connector={data.anthropic} onSave={(key) => save("/settings/connectors/anthropic", { key })} onTest={() => test("anthropic")} onDisconnect={() => disconnect("anthropic")} />
         </div>
       ) : null}
     </div>
@@ -194,6 +195,38 @@ function WarehanceCard({
         </Field>
         <Field label="Staff key">
           <input className="field" type="password" placeholder={connector.connected ? "Saved. Paste only to replace it." : ""} value={key} onChange={(event) => setKey(event.target.value)} />
+        </Field>
+        <Actions onTest={onTest} onDisconnect={onDisconnect} />
+      </form>
+    </Card>
+  );
+}
+
+function ClaudeCard({
+  connector,
+  onSave,
+  onTest,
+  onDisconnect,
+}: {
+  connector: Connector;
+  onSave: (key: string) => void;
+  onTest: () => void;
+  onDisconnect: () => void;
+}) {
+  const [key, setKey] = useState("");
+  return (
+    <Card title="Claude" connector={connector}>
+      <form
+        className="space-y-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSave(key);
+          setKey("");
+        }}
+      >
+        <p className="text-sm text-muted">The Anthropic API key writes the draft replies. It is billed per use and is separate from a Claude subscription.</p>
+        <Field label="API key">
+          <input className="field" type="password" placeholder={connector.connected ? "Saved. Paste only to replace it." : "sk-ant-"} value={key} onChange={(event) => setKey(event.target.value)} />
         </Field>
         <Actions onTest={onTest} onDisconnect={onDisconnect} />
       </form>

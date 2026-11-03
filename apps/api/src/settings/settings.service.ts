@@ -2,9 +2,10 @@ import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 import { connectors } from "@opsengine/db";
 import { eq } from "drizzle-orm";
 import { DbService } from "../db.service.js";
+import { checkKey, modelFor } from "../mail/anthropic.js";
 import { GmailService } from "../mail/gmail.service.js";
 
-type Kind = "gmail" | "warehance" | "slack";
+type Kind = "gmail" | "warehance" | "slack" | "anthropic";
 
 type ConnectorRow = typeof connectors.$inferSelect;
 
@@ -35,6 +36,7 @@ export class SettingsService {
       gmail: { ...view(rows.find((row) => row.kind === "gmail")), googleReady: googleReady() },
       warehance: view(rows.find((row) => row.kind === "warehance")),
       slack: view(rows.find((row) => row.kind === "slack")),
+      anthropic: view(rows.find((row) => row.kind === "anthropic")),
     };
   }
 
@@ -44,7 +46,21 @@ export class SettingsService {
       gmail: all.gmail.connected,
       warehance: all.warehance.connected,
       slack: all.slack.connected,
+      // A key set as ANTHROPIC_API_KEY on the API also counts.
+      claude: all.anthropic.connected || Boolean(process.env.ANTHROPIC_API_KEY),
     };
+  }
+
+  async saveAnthropic(key: string) {
+    const stored = key || (await this.secret("anthropic"));
+    if (!stored) throw new BadRequestException("Paste the Claude API key.");
+    await this.upsert("anthropic", {
+      label: "API key saved",
+      secret: stored,
+      extra: null,
+      detail: "Saved. Test it to confirm Anthropic accepts the key.",
+    });
+    return this.list();
   }
 
   async saveWarehance(url: string, key: string) {
@@ -87,6 +103,16 @@ export class SettingsService {
     if (kind === "warehance") {
       const detail = await pingWarehance(row.extra || "", row.secret || "");
       await this.upsert("warehance", { ...row, detail });
+      return this.list();
+    }
+    if (kind === "anthropic") {
+      const model = modelFor("haiku");
+      try {
+        await checkKey(row.secret || "", model);
+      } catch (err) {
+        throw new BadRequestException(err instanceof Error ? err.message : "Could not reach Anthropic.");
+      }
+      await this.upsert("anthropic", { ...row, detail: `Anthropic accepted the key. Drafts use ${model}.` });
       return this.list();
     }
     const detail = await pingSlack(row.secret || "", row.extra || "");

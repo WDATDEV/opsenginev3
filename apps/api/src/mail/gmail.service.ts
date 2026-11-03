@@ -3,6 +3,7 @@ import { JwtService } from "@nestjs/jwt";
 import { connectors, letters } from "@opsengine/db";
 import { desc, eq } from "drizzle-orm";
 import { DbService } from "../db.service.js";
+import { AutomationService } from "./automation.service.js";
 
 const SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
@@ -77,6 +78,7 @@ export class GmailService {
   constructor(
     @Inject(DbService) private readonly db: DbService,
     @Inject(JwtService) private readonly jwt: JwtService,
+    @Inject(AutomationService) private readonly automation: AutomationService,
   ) {}
 
   configured() {
@@ -166,6 +168,7 @@ export class GmailService {
         token,
       );
       let added = 0;
+      const savedIds: string[] = [];
       for (const { id } of found.messages ?? []) {
         const message = await this.get<GmailMessage>(`users/me/messages/${id}?format=full`, token);
         const from = sender(header(message.payload, "From"));
@@ -184,8 +187,11 @@ export class GmailService {
           .onConflictDoNothing({ target: letters.gmailId })
           .returning({ id: letters.id });
         added += inserted.length;
+        savedIds.push(...inserted.map((row) => row.id));
       }
       if (added > 0) this.log.log(`Saved ${added} new letter(s).`);
+      // Rules run in the background so a slow Claude reply never holds up the mailbox check.
+      if (savedIds.length > 0) void this.automation.processNew(savedIds);
       return { added, skipped: false };
     } finally {
       this.syncing = false;

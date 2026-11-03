@@ -16,7 +16,11 @@ const slackSchema = z.object({
   channel: z.string().trim().min(1, "Enter the Slack channel, such as #client-mail.").max(80),
 });
 
-const kindSchema = z.enum(["gmail", "warehance", "slack"]);
+const anthropicSchema = z.object({
+  key: z.string().trim().optional().default(""),
+});
+
+const kindSchema = z.enum(["gmail", "warehance", "slack", "anthropic"]);
 
 function kindOf(value: string) {
   const parsed = kindSchema.safeParse(value);
@@ -60,6 +64,12 @@ export class SettingsController {
   saveSlack(@CurrentUser() ctx: RequestContext, @Body(new ZodPipe(slackSchema)) body: z.infer<typeof slackSchema>) {
     ownerOnly(ctx);
     return this.settings.saveSlack(body.token, body.channel);
+  }
+
+  @Post("settings/connectors/anthropic")
+  saveAnthropic(@CurrentUser() ctx: RequestContext, @Body(new ZodPipe(anthropicSchema)) body: z.infer<typeof anthropicSchema>) {
+    ownerOnly(ctx);
+    return this.settings.saveAnthropic(body.key);
   }
 
   @Post("settings/connectors/:kind/test")

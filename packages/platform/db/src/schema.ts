@@ -41,6 +41,60 @@ export const letters = mail.table("letters", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+export type RuleCondition = {
+  field: "subject" | "body" | "sender" | "domain";
+  op: "contains_any" | "contains_all" | "not_contains" | "equals" | "ends_with";
+  value: string;
+};
+
+export type RuleDraft = {
+  enabled: boolean;
+  instructions: string;
+  model: "haiku" | "sonnet";
+  useWarehance: boolean;
+  warehanceClientId: number | null;
+  spreadsheet: boolean;
+};
+
+export type RuleSlack = {
+  enabled: boolean;
+  channel: string;
+  mentions: string[];
+  direct: string[];
+  includeDraft: boolean;
+};
+
+export const rules = mail.table("rules", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  matchMode: text("match_mode").notNull().default("all"),
+  conditions: jsonb("conditions").$type<RuleCondition[]>().notNull().default([]),
+  draft: jsonb("draft").$type<RuleDraft>().notNull(),
+  slack: jsonb("slack").$type<RuleSlack>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const runs = mail.table("runs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  letterId: uuid("letter_id").notNull(),
+  ruleId: uuid("rule_id").notNull(),
+  status: text("status").notNull().default("working"),
+  draftSubject: text("draft_subject"),
+  draftBody: text("draft_body"),
+  needsReview: boolean("needs_review").notNull().default(false),
+  reviewReason: text("review_reason"),
+  attachmentName: text("attachment_name"),
+  attachmentCsv: text("attachment_csv"),
+  lookups: jsonb("lookups").$type<{ tool: string; summary: string }[]>().notNull().default([]),
+  slackNote: text("slack_note"),
+  error: text("error"),
+  model: text("model"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+
 export const users = identity.table("users", {
   id: uuid("id").defaultRandom().primaryKey(),
   email: text("email").notNull().unique(),

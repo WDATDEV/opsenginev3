@@ -6,7 +6,8 @@ import { ApiError, post } from "@/lib/api";
 import { useSession } from "@/components/shell";
 import { Notice, PageTitle, useResource } from "@/components/ui";
 
-type Status = { gmail: boolean; warehance: boolean; slack: boolean };
+type Status = { gmail: boolean; warehance: boolean; slack: boolean; claude: boolean };
+type Rule = { id: string; name: string; enabled: boolean };
 type Letter = {
   id: string;
   fromEmail: string;
@@ -18,11 +19,59 @@ type Letter = {
   status: string;
 };
 
+// Runs one rule on this email now, even if it arrived before the rule existed.
+function RunRule({ letterId, rules }: { letterId: string; rules: Rule[] }) {
+  const [ruleId, setRuleId] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  if (rules.length === 0) {
+    return (
+      <p className="text-sm text-muted">
+        No rules yet. <Link className="text-moss" href="/mail/automation">Create one in Email automation.</Link>
+      </p>
+    );
+  }
+
+  async function run() {
+    setNote(null);
+    setProblem(null);
+    try {
+      await post(`/mail/letters/${letterId}/run`, { ruleId });
+      setNote("Started. The draft appears in Email automation in a moment.");
+    } catch (err) {
+      setProblem(err instanceof ApiError ? err.message : "Could not start the rule.");
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <select className="field max-w-xs" value={ruleId} onChange={(event) => setRuleId(event.target.value)}>
+          <option value="">Run a rule on this email…</option>
+          {rules.map((rule) => (
+            <option key={rule.id} value={rule.id}>
+              {rule.name}
+              {rule.enabled ? "" : " (off)"}
+            </option>
+          ))}
+        </select>
+        <button className="btn" type="button" disabled={!ruleId} onClick={run}>
+          Run
+        </button>
+      </div>
+      {note ? <Notice tone="ok">{note}</Notice> : null}
+      {problem ? <Notice tone="bad">{problem}</Notice> : null}
+    </div>
+  );
+}
+
 export default function MailPage() {
   const user = useSession();
   const allowed = user?.role === "owner" || user?.role === "warehouse_manager";
   const { data, error, loading } = useResource<Status>(allowed ? "/mail/status" : null);
   const letters = useResource<Letter[]>(allowed && data?.gmail ? "/mail/letters" : null);
+  const rules = useResource<Rule[]>(allowed ? "/mail/rules" : null);
   const [checking, setChecking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
@@ -48,6 +97,7 @@ export default function MailPage() {
         data.gmail ? null : "Gmail",
         data.warehance ? null : "the Warehance bot",
         data.slack ? null : "Slack",
+        data.claude ? null : "the Claude API key",
       ].filter(Boolean)
     : [];
 
@@ -107,7 +157,12 @@ export default function MailPage() {
                   </div>
                 </div>
               </button>
-              {open === letter.id ? <p className="mt-3 whitespace-pre-wrap border-t border-black/10 pt-3 text-sm">{letter.body || "(empty)"}</p> : null}
+              {open === letter.id ? (
+                <div className="mt-3 space-y-3 border-t border-black/10 pt-3">
+                  <p className="whitespace-pre-wrap text-sm">{letter.body || "(empty)"}</p>
+                  <RunRule letterId={letter.id} rules={rules.data ?? []} />
+                </div>
+              ) : null}
             </section>
           ))}
         </div>

@@ -124,6 +124,47 @@ CREATE TABLE IF NOT EXISTS mail.broadcast_settings (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS mail.chat_threads (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id uuid NOT NULL,
+  title text NOT NULL DEFAULT 'New chat',
+  warehance_client_id integer,
+  warehance_client_name text,
+  model text NOT NULL DEFAULT 'haiku',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS chat_threads_by_owner ON mail.chat_threads (owner_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS mail.chat_messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  thread_id uuid NOT NULL REFERENCES mail.chat_threads(id) ON DELETE CASCADE,
+  role text NOT NULL,
+  content text NOT NULL DEFAULT '',
+  status text NOT NULL DEFAULT 'done',
+  error text,
+  lookups jsonb NOT NULL DEFAULT '[]'::jsonb,
+  proposal jsonb,
+  sends jsonb NOT NULL DEFAULT '[]'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS chat_messages_by_thread ON mail.chat_messages (thread_id, created_at);
+
+CREATE TABLE IF NOT EXISTS mail.chat_files (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  thread_id uuid NOT NULL REFERENCES mail.chat_threads(id) ON DELETE CASCADE,
+  message_id uuid NOT NULL REFERENCES mail.chat_messages(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  format text NOT NULL,
+  mime text NOT NULL,
+  rows integer NOT NULL DEFAULT 0,
+  columns jsonb NOT NULL DEFAULT '[]'::jsonb,
+  size integer NOT NULL DEFAULT 0,
+  data text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS chat_files_by_thread ON mail.chat_files (thread_id);
+
 CREATE TABLE IF NOT EXISTS identity.users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   email text NOT NULL UNIQUE,

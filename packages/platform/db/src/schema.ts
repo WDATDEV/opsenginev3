@@ -172,6 +172,70 @@ export const broadcastSettings = mail.table("broadcast_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+// ---- Chat with the Warehance bot ----
+
+export type ChatLookup = { tool: string; summary: string };
+
+export type ChatSend = {
+  kind: "email" | "slack";
+  to: string;
+  at: string;
+  ok: boolean;
+  note: string;
+  file: string | null;
+};
+
+// A send that Claude prepared from what was asked. Nothing goes out until a person presses Send.
+export type ChatProposal = {
+  kind: "email" | "slack";
+  to: string;
+  subject: string;
+  body: string;
+  fileId: string | null;
+  fileName: string | null;
+};
+
+export const chatThreads = mail.table("chat_threads", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  ownerId: uuid("owner_id").notNull(),
+  title: text("title").notNull().default("New chat"),
+  // A Warehance client ID locks every lookup to that client. Empty means all clients.
+  warehanceClientId: integer("warehance_client_id"),
+  warehanceClientName: text("warehance_client_name"),
+  model: text("model").notNull().default("haiku"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const chatMessages = mail.table("chat_messages", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  threadId: uuid("thread_id").notNull(),
+  role: text("role").notNull(),
+  content: text("content").notNull().default(""),
+  // working | done | failed. Only answers from Claude are ever "working".
+  status: text("status").notNull().default("done"),
+  error: text("error"),
+  lookups: jsonb("lookups").$type<ChatLookup[]>().notNull().default([]),
+  proposal: jsonb("proposal").$type<ChatProposal | null>(),
+  sends: jsonb("sends").$type<ChatSend[]>().notNull().default([]),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const chatFiles = mail.table("chat_files", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  threadId: uuid("thread_id").notNull(),
+  messageId: uuid("message_id").notNull(),
+  name: text("name").notNull(),
+  format: text("format").notNull(),
+  mime: text("mime").notNull(),
+  rows: integer("rows").notNull().default(0),
+  columns: jsonb("columns").$type<string[]>().notNull().default([]),
+  size: integer("size").notNull().default(0),
+  // The file itself, base64.
+  data: text("data").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const users = identity.table("users", {
   id: uuid("id").defaultRandom().primaryKey(),
   email: text("email").notNull().unique(),

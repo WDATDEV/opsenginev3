@@ -86,13 +86,24 @@ export function buildReply(input: {
   inReplyTo: string;
   references: string;
   attachment: { name: string; csv: string } | null;
+  /** A new message, not a reply: the subject is used as written. */
+  fresh?: boolean;
+  /** Display name for the From line. The address is always the connected account. */
+  from?: { name: string; email: string };
+  replyTo?: string;
 }) {
   const subject = oneLine(input.subject);
   const headers = [
     `To: ${oneLine(input.to)}`,
-    `Subject: ${encodeSubject(/^re:/i.test(subject) ? subject : `Re: ${subject}`)}`,
+    `Subject: ${encodeSubject(input.fresh || /^re:/i.test(subject) ? subject : `Re: ${subject}`)}`,
     "MIME-Version: 1.0",
   ];
+  if (input.from?.name && input.from.email) {
+    const name = oneLine(input.from.name).replace(/["\\<>]/g, "");
+    const shown = /^[\x20-\x7e]*$/.test(name) ? `"${name}"` : encodeSubject(name);
+    if (name) headers.push(`From: ${shown} <${oneLine(input.from.email)}>`);
+  }
+  if (input.replyTo) headers.push(`Reply-To: ${oneLine(input.replyTo)}`);
   if (input.inReplyTo) headers.push(`In-Reply-To: ${oneLine(input.inReplyTo)}`);
   if (input.references) headers.push(`References: ${oneLine(input.references)}`);
 
@@ -321,6 +332,52 @@ export class GmailService {
 
     this.log.log(`Reply sent to ${to}.`);
     return { sentTo: to };
+  }
+
+  /** The address Gmail is connected as, or null when Gmail is not connected. */
+  async account() {
+    const [row] = await this.db.db.select().from(connectors).where(eq(connectors.kind, "gmail")).limit(1);
+    return row?.secret ? (row.label ?? null) : null;
+  }
+
+  /**
+   * Sends one new message (not a reply) from the connected account. Used by bulk email, which asks for a
+   * token once per batch and passes it back in. Throws a plain Error with a readable reason on failure.
+   */
+  async sendMessage(
+    message: { to: string; subject: string; body: string; fromName?: string; replyTo?: string },
+    token?: string,
+  ) {
+    const access = token ?? (await this.accessToken());
+    const account = await this.account();
+    const raw = buildReply({
+      to: message.to,
+      subject: message.subject,
+      body: message.body,
+      inReplyTo: "",
+      references: "",
+      attachment: null,
+      fresh: true,
+      ...(message.fromName && account ? { from: { name: message.fromName, email: account } } : {}),
+      ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+    });
+    const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${access}`, "content-type": "application/json" },
+      body: JSON.stringify({ raw }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) {
+      const detail = ((await res.json().catch(() => ({}))) as { error?: { message?: string } }).error?.message;
+      if (res.status === 403) throw new Error("Google did not allow sending. Connect Gmail again in Settings and allow sending mail.");
+      if (res.status === 429) throw new Error("Gmail says too many messages were sent. Lower the limits in Bulk email settings.");
+      throw new Error(`Gmail could not send it (${res.status}${detail ? `: ${detail}` : ""}).`);
+    }
+  }
+
+  /** A fresh access token for a batch of sends. */
+  async batchToken() {
+    return this.accessToken();
   }
 
   private async accessToken() {

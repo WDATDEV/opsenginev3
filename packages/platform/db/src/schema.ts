@@ -102,6 +102,76 @@ export const runs = mail.table("runs", {
   sentTo: text("sent_to"),
 });
 
+// ---- Bulk email: contacts, campaigns, and how they are sent ----
+
+export const mailContacts = mail.table("contacts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  email: text("email").notNull().unique(),
+  name: text("name").notNull().default(""),
+  clientId: uuid("client_id"),
+  // Free labels such as "Customers" or "Staff". A campaign can pick whole groups.
+  groups: jsonb("groups").$type<string[]>().notNull().default([]),
+  doNotEmail: boolean("do_not_email").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export type BroadcastAudience = {
+  everyone: boolean;
+  groups: string[];
+  clientIds: string[];
+  contactIds: string[];
+};
+
+export const broadcasts = mail.table("broadcasts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  title: text("title").notNull(),
+  category: text("category").notNull().default("notice"),
+  subject: text("subject").notNull(),
+  body: text("body").notNull(),
+  audience: jsonb("audience").$type<BroadcastAudience>().notNull(),
+  // draft | scheduled | sending | sent | failed
+  status: text("status").notNull().default("draft"),
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  createdBy: uuid("created_by"),
+  note: text("note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// One row per person, written the moment a campaign starts. It is the record of who was emailed.
+export const broadcastRecipients = mail.table("broadcast_recipients", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  broadcastId: uuid("broadcast_id").notNull(),
+  email: text("email").notNull(),
+  name: text("name").notNull().default(""),
+  clientName: text("client_name").notNull().default(""),
+  // pending | sent | failed
+  status: text("status").notNull().default("pending"),
+  error: text("error"),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+});
+
+export const broadcastTemplates = mail.table("broadcast_templates", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(),
+  category: text("category").notNull().default("notice"),
+  subject: text("subject").notNull(),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const broadcastSettings = mail.table("broadcast_settings", {
+  id: integer("id").primaryKey().default(1),
+  senderName: text("sender_name").notNull().default(""),
+  replyTo: text("reply_to").notNull().default(""),
+  signature: text("signature").notNull().default(""),
+  dailyLimit: integer("daily_limit").notNull().default(400),
+  perMinute: integer("per_minute").notNull().default(30),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const users = identity.table("users", {
   id: uuid("id").defaultRandom().primaryKey(),
   email: text("email").notNull().unique(),

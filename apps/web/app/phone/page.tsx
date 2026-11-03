@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Field, Notice } from "@/components/ui";
-import { ApiError, billBasisLabel, post, when } from "@/lib/api";
+import { api, ApiError, billBasisLabel, post, when } from "@/lib/api";
 import { badgeFromScan } from "@/lib/qr";
 
 type Context = {
@@ -75,6 +75,26 @@ type Context = {
   loads: { id: string; reference: string; kind: string; dock: string; crew: string[] }[];
   gaylords: { id: string; code: string; carrier: string }[];
 };
+
+function readPosition() {
+  return new Promise<{ latitude: number; longitude: number; accuracy: number; capturedAt: number } | null>((resolve) => {
+    if (!navigator.geolocation) {
+      resolve(null);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) =>
+        resolve({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          capturedAt: position.timestamp,
+        }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+    );
+  });
+}
 
 function stamp(value: string) {
   return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(
@@ -164,7 +184,7 @@ export default function WarehousePage() {
           scanned.current = true;
           void stopCamera().then(() => {
             setBadge(code);
-            void load(code);
+            void load(code, true);
           });
         },
         () => undefined,
@@ -177,10 +197,26 @@ export default function WarehousePage() {
     }
   }
 
-  async function load(nextBadge = badge) {
+  // When someone opens the phone with their badge, location mode needs the device at the warehouse.
+  async function arrive(nextBadge: string) {
+    const gate = await api<{ mode: "location" | "qr_gate" }>("/tracking/gate");
+    if (gate.mode !== "location") return;
+    const fix = await readPosition();
+    if (!fix) throw new ApiError(400, "This device must share its location. A scan without it is not recorded.");
+    await post("/tracking/phone/arrive", {
+      badge: nextBadge,
+      latitude: fix.latitude,
+      longitude: fix.longitude,
+      accuracy: fix.accuracy,
+      capturedAt: fix.capturedAt,
+    });
+  }
+
+  async function load(nextBadge = badge, opening = false) {
     setPending(true);
     setError(null);
     try {
+      if (opening) await arrive(nextBadge);
       const result = await fetch(`/api/tracking/badge/${encodeURIComponent(nextBadge)}`).then(async (res) => {
         const body = (await res.json()) as Context & { message?: string };
         if (!res.ok) throw new ApiError(res.status, body.message ?? "That badge is not on the floor.");
@@ -282,7 +318,7 @@ export default function WarehousePage() {
           className="card space-y-4 p-4"
           onSubmit={(event) => {
             event.preventDefault();
-            void load();
+            void load(badge, true);
           }}
         >
           <div id="floor-qr-reader" className="overflow-hidden rounded-xl bg-black/5" />

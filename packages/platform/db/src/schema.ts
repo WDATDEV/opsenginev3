@@ -263,6 +263,20 @@ export const site = tracking.table("site", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+// How people prove they are on site: "location" (device must be at the warehouse) or "qr_gate" (checked in at the gate).
+export const gateConfig = tracking.table("gate_config", {
+  id: integer("id").primaryKey().default(1),
+  mode: text("mode").notNull().default("location"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// Named spots a QR gate can sit at, such as "Front gate" or "Dock".
+export const gatePlaces = tracking.table("gate_places", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const breaks = tracking.table("breaks", {
   id: uuid("id").defaultRandom().primaryKey(),
   shiftId: uuid("shift_id").notNull(),

@@ -247,6 +247,18 @@ CREATE TABLE IF NOT EXISTS tracking.site (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS tracking.gate_config (
+  id integer PRIMARY KEY DEFAULT 1,
+  mode text NOT NULL DEFAULT 'location',
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS tracking.gate_places (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS shifts_one_open
   ON tracking.shifts (employee_id) WHERE clock_out IS NULL;
 

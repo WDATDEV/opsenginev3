@@ -5,7 +5,7 @@ import { useState } from "react";
 import { BadgeQr } from "@/components/badge-qr";
 import { useSession } from "@/components/shell";
 import { Field, Notice, PageTitle, useResource } from "@/components/ui";
-import { ApiError, canManage, post, when } from "@/lib/api";
+import { api, ApiError, canManage, post, when } from "@/lib/api";
 
 type Employee = {
   id: string;
@@ -56,6 +56,11 @@ export function CheckInBoard({ client }: { client?: { id: string; name: string }
   const people = useResource<Employee[]>("/tracking/employees");
   const board = useResource<{ visits: Visit[]; refused: Refusal[] }>("/tracking/checkins");
   const fence = useResource<{ site: Site | null }>("/tracking/site");
+  const gate = useResource<{ mode: "location" | "qr_gate"; places: { id: string; name: string }[] }>("/tracking/gate");
+  const [modeSaving, setModeSaving] = useState(false);
+  const [modeError, setModeError] = useState<string | null>(null);
+  const [newPlace, setNewPlace] = useState("");
+  const [placeError, setPlaceError] = useState<string | null>(null);
   const [latitude, setLatitude] = useState("");
   const [longitude, setLongitude] = useState("");
   const [radiusMeters, setRadiusMeters] = useState("250");
@@ -76,6 +81,42 @@ export function CheckInBoard({ client }: { client?: { id: string; name: string }
       () => setSiteError("This device did not share its location."),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
     );
+  }
+
+  async function chooseMode(mode: "location" | "qr_gate") {
+    if (modeSaving || gate.data?.mode === mode) return;
+    setModeSaving(true);
+    setModeError(null);
+    try {
+      await post("/tracking/gate/mode", { mode });
+      gate.reload();
+    } catch (err) {
+      setModeError(err instanceof ApiError ? err.message : "Could not change the check-in method.");
+    } finally {
+      setModeSaving(false);
+    }
+  }
+
+  async function addPlace(event: React.FormEvent) {
+    event.preventDefault();
+    setPlaceError(null);
+    try {
+      await post("/tracking/gate/places", { name: newPlace });
+      setNewPlace("");
+      gate.reload();
+    } catch (err) {
+      setPlaceError(err instanceof ApiError ? err.message : "Could not add that gate location.");
+    }
+  }
+
+  async function removePlace(id: string) {
+    setPlaceError(null);
+    try {
+      await api(`/tracking/gate/places/${id}`, { method: "DELETE" });
+      gate.reload();
+    } catch (err) {
+      setPlaceError(err instanceof ApiError ? err.message : "Could not remove that gate location.");
+    }
   }
 
   async function saveSite(event: React.FormEvent) {
@@ -107,12 +148,101 @@ export function CheckInBoard({ client }: { client?: { id: string; name: string }
         }
       />
       {client ? null : (
+      <>
+      <section className="card mb-6 space-y-4 p-4">
+        <div>
+          <h2 className="font-semibold">How people check in</h2>
+          <p className="mt-1 text-sm text-muted">
+            Pick one. This decides what the QR gate and the floor phone check.
+          </p>
+        </div>
+        {modeError ? <Notice tone="bad">{modeError}</Notice> : null}
+        <div className="grid gap-3 sm:grid-cols-2">
+          {(
+            [
+              {
+                id: "location",
+                title: "Location",
+                text: "The device must be at the warehouse. The floor phone checks its location and checks the person in. The QR gate checks it too.",
+              },
+              {
+                id: "qr_gate",
+                title: "QR gate",
+                text: "People check in at the QR gate. The floor phone only checks that the person is checked in. No device location is needed.",
+              },
+            ] as const
+          ).map((option) => {
+            const active = (gate.data?.mode ?? "location") === option.id;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                aria-pressed={active}
+                disabled={!canManage(user?.role) || modeSaving}
+                onClick={() => void chooseMode(option.id)}
+                className={`card p-4 text-left transition disabled:opacity-70 ${
+                  active ? "border-moss ring-2 ring-moss/30" : "hover:bg-black/[0.02]"
+                }`}
+              >
+                <span className="flex items-center justify-between gap-2">
+                  <span className="font-semibold">{option.title}</span>
+                  {active ? <span className="badge">On</span> : null}
+                </span>
+                <span className="mt-1 block text-sm text-muted">{option.text}</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+      <section className="card mb-6 space-y-3 p-4">
+        <div>
+          <h2 className="font-semibold">Gate locations</h2>
+          <p className="mt-1 text-sm text-muted">
+            The spots a QR gate can sit at. The person scanning picks one, and it is saved with each check-in.
+          </p>
+        </div>
+        {placeError ? <Notice tone="bad">{placeError}</Notice> : null}
+        <ul className="flex flex-wrap gap-2">
+          {(gate.data?.places ?? []).map((place) => (
+            <li key={place.id} className="inline-flex items-center gap-1 rounded-full border border-black/10 bg-surface py-1 pl-3 pr-1 text-sm">
+              {place.name}
+              {canManage(user?.role) ? (
+                <button
+                  type="button"
+                  className="grid h-6 w-6 place-items-center rounded-full text-muted hover:bg-black/5 hover:text-rust"
+                  aria-label={`Remove ${place.name}`}
+                  onClick={() => void removePlace(place.id)}
+                >
+                  ×
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+        {canManage(user?.role) ? (
+          <form className="flex gap-2" onSubmit={addPlace}>
+            <input
+              className="field"
+              value={newPlace}
+              maxLength={40}
+              onChange={(event) => setNewPlace(event.target.value)}
+              placeholder="New gate location, for example Back door"
+              aria-label="New gate location"
+            />
+            <button className="btn btn-primary shrink-0" type="submit" disabled={newPlace.trim() === ""}>
+              Add
+            </button>
+          </form>
+        ) : null}
+      </section>
       <section className="card mb-6 space-y-3 p-4">
         <h2 className="font-semibold">Warehouse location check</h2>
         <p className="text-sm text-muted">
-          {fence.data?.site
-            ? `On. The warehouse is marked, and a device must be within ${fence.data.site.radiusMeters} m.`
-            : "Off until a supervisor marks where the warehouse is. The gate refuses scans until then."}
+          {gate.data?.mode === "qr_gate"
+            ? "Not used while the QR gate option is on. It applies again if you switch back to Location."
+            : fence.data?.site
+              ? `On. The warehouse is marked, and a device must be within ${fence.data.site.radiusMeters} m.`
+              : "Off until a supervisor marks where the warehouse is. The gate and the floor phone refuse people until then."}
         </p>
         {siteMessage ? <Notice tone="ok">{siteMessage}</Notice> : null}
         {siteError ? <Notice tone="bad">{siteError}</Notice> : null}
@@ -138,6 +268,7 @@ export function CheckInBoard({ client }: { client?: { id: string; name: string }
           </form>
         ) : null}
       </section>
+      </>
       )}
       <p className="mb-6">
         <Link className="btn btn-primary" href="/gate">

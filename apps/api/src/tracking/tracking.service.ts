@@ -611,17 +611,37 @@ export class TrackingService {
       .limit(1);
     if (!employee || !employee.active) throw new TrackingError("That badge is not on the floor.");
     const open = await this.openShift(orm, employee.id);
+    // A client with the Check-in service turned off has no gate and no location check.
+    let checkinOff = false;
+    if (employee.clientId) {
+      const [client] = await orm
+        .select({ enabledServices: clientRecords.enabledServices })
+        .from(clientRecords)
+        .where(eq(clientRecords.id, employee.clientId))
+        .limit(1);
+      checkinOff = Boolean(client) && !(client?.enabledServices ?? []).includes("checkin");
+    }
+    if (checkinOff) {
+      if (open) return { mode, checkedIn: true, needsLocation: false, message: `${employee.name} is on the clock.` };
+      const result = await this.clock(input.badge, "in", "kiosk", { place: "Floor phone" });
+      return { mode, checkedIn: true, needsLocation: false, message: result.message };
+    }
     if (mode === "qr_gate") {
       return {
         mode,
         checkedIn: Boolean(open),
+        needsLocation: false,
         message: open ? `${employee.name} is checked in.` : `${employee.name} is not checked in. Use the QR gate first.`,
       };
     }
+    // Location mode. With no position yet, tell the phone to read one and ask again.
+    if (input.latitude == null && input.longitude == null && input.accuracy == null && input.capturedAt == null) {
+      return { mode, checkedIn: Boolean(open), needsLocation: true, message: "This device must share its location." };
+    }
     await this.requireDeviceAtWarehouse(input.badge, "in", input, "floor phone");
-    if (open) return { mode, checkedIn: true, message: `${employee.name} is checked in.` };
+    if (open) return { mode, checkedIn: true, needsLocation: false, message: `${employee.name} is checked in.` };
     const result = await this.clock(input.badge, "in", "kiosk", { ...input, place: "Floor phone" });
-    return { mode, checkedIn: true, message: result.message };
+    return { mode, checkedIn: true, needsLocation: false, message: result.message };
   }
 
   async readSite() {

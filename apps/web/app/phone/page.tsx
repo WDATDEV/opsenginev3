@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Field, Notice } from "@/components/ui";
-import { api, ApiError, billBasisLabel, post, when } from "@/lib/api";
+import { ApiError, billBasisLabel, post, when } from "@/lib/api";
 import { badgeFromScan } from "@/lib/qr";
 
 type Context = {
@@ -199,8 +199,9 @@ export default function WarehousePage() {
 
   // When someone opens the phone with their badge, location mode needs the device at the warehouse.
   async function arrive(nextBadge: string) {
-    const gate = await api<{ mode: "location" | "qr_gate" }>("/tracking/gate");
-    if (gate.mode !== "location") return;
+    // The server decides whether a location is needed. Check-in off, or QR gate mode, needs none.
+    const first = await post<{ needsLocation: boolean }>("/tracking/phone/arrive", { badge: nextBadge });
+    if (!first.needsLocation) return;
     const fix = await readPosition();
     if (!fix) throw new ApiError(400, "This device must share its location. A scan without it is not recorded.");
     await post("/tracking/phone/arrive", {

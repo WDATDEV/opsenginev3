@@ -578,9 +578,14 @@ export class JobsService {
     const code = input.activityCode ?? task.activityCode;
     if (!code) throw new ConflictException("Choose the kind of work this time is for.");
     const rows = await orm.select().from(activityTypes).where(eq(activityTypes.code, code));
-    const kind = rows.find((row) => row.clientId == null || row.clientId === job.clientId);
-    if (!kind || !kind.active || kind.department === "indirect") {
-      throw new ConflictException("That kind of work cannot be added to a job.");
+    const kind =
+      rows.find((row) => row.clientId === job.clientId) ?? rows.find((row) => row.clientId == null);
+    if (!kind) {
+      throw new ConflictException(`The work type "${code}" is not set up. Restart the API so the standard work types are added.`);
+    }
+    if (!kind.active) throw new ConflictException(`The work type "${kind.name}" is turned off.`);
+    if (kind.department === "indirect") {
+      throw new ConflictException(`"${kind.name}" is internal work and cannot be added to a client job.`);
     }
     await assertClientService(orm, job.clientId, kind.department as ClientService);
 

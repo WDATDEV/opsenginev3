@@ -1,5 +1,5 @@
 import { Injectable, Logger, type OnModuleInit } from "@nestjs/common";
-import { createDb, ensureSchema, seal, type Database } from "@opsengine/db";
+import { activityTypes, createDb, ensureSchema, seal, type Database } from "@opsengine/db";
 import { sql } from "drizzle-orm";
 import { runSeed } from "./seed-on-boot.js";
 
@@ -50,6 +50,7 @@ export class DbService implements OnModuleInit {
     }
 
     await this.encryptLegacySecrets();
+    await this.ensureActivityTypes();
 
     const count = await this.userCount();
     if (process.env.SEED_ON_BOOT !== "1" && count > 0) return;
@@ -57,6 +58,32 @@ export class DbService implements OnModuleInit {
     this.log.log("Seeding the database.");
     await runSeed();
     this.log.log("Database seed finished.");
+  }
+
+  /** Jobs and the floor phone depend on these work types. Add any that are missing; never change ones that exist. */
+  private async ensureActivityTypes() {
+    const standard = [
+      ["pack_orders", "Pack orders", "packing", true],
+      ["pick_batch", "Pick batch", "picking", true],
+      ["receive_shipment", "Count and receive", "receiving", true],
+      ["inspect", "Inspect", "receiving", true],
+      ["putaway", "Putaway", "receiving", true],
+      ["unload_trailer", "Unload trailer", "unloading", true],
+      ["sort_gaylord", "Sort to carrier", "sorting", true],
+      ["kitting", "Kitting", "packing", true],
+      ["labeling", "Labeling", "packing", true],
+      ["returns", "Returns", "receiving", true],
+      ["indirect", "Internal work", "indirect", false],
+    ] as const;
+    const rows = await this.db.select({ code: activityTypes.code, clientId: activityTypes.clientId }).from(activityTypes);
+    const have = new Set(rows.filter((row) => row.clientId == null).map((row) => row.code));
+    const missing = standard.filter(([code]) => !have.has(code));
+    if (missing.length === 0) return;
+    await this.db
+      .insert(activityTypes)
+      .values(missing.map(([code, name, department, billable]) => ({ code, name, department, billable })))
+      .onConflictDoNothing();
+    this.log.log(`Added ${missing.length} missing standard work type(s).`);
   }
 
   /** Connector keys saved before encryption was added are plain text. Encrypt them once, on boot. */

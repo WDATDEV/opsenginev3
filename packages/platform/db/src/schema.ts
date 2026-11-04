@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   doublePrecision,
   date,
@@ -200,7 +201,7 @@ export const chatThreads = mail.table("chat_threads", {
   ownerId: uuid("owner_id").notNull(),
   title: text("title").notNull().default("New chat"),
   // A Warehance client ID locks every lookup to that client. Empty means all clients.
-  warehanceClientId: integer("warehance_client_id"),
+  warehanceClientId: bigint("warehance_client_id", { mode: "number" }),
   warehanceClientName: text("warehance_client_name"),
   model: text("model").notNull().default("haiku"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),

@@ -128,12 +128,14 @@ CREATE TABLE IF NOT EXISTS mail.chat_threads (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   owner_id uuid NOT NULL,
   title text NOT NULL DEFAULT 'New chat',
-  warehance_client_id integer,
+  warehance_client_id bigint,
   warehance_client_name text,
   model text NOT NULL DEFAULT 'haiku',
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+-- Warehance client IDs can be larger than a 32-bit integer. Fixes tables made with the first version.
+ALTER TABLE mail.chat_threads ALTER COLUMN warehance_client_id TYPE bigint;
 CREATE INDEX IF NOT EXISTS chat_threads_by_owner ON mail.chat_threads (owner_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS mail.chat_messages (

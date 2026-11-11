@@ -12,6 +12,7 @@ import { clientRecords, rateCards } from "@opsengine/db";
 import { eq } from "drizzle-orm";
 import { authorize, assertClientVisible, canSeeClient, type RequestContext } from "@opsengine/kernel";
 import { AuthGuard } from "../auth/auth.guard.js";
+import { RequireSection, SectionGuard } from "../auth/section.guard.js";
 import { CurrentUser } from "../auth/current-user.js";
 import { BillingService } from "../billing/billing.service.js";
 import { DbService } from "../db.service.js";
@@ -25,7 +26,8 @@ function isUnique(err: unknown): boolean {
 }
 
 @Controller("clients")
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, SectionGuard)
+@RequireSection("time")
 export class ClientsController {
   constructor(
     @Inject(DbService) private readonly db: DbService,

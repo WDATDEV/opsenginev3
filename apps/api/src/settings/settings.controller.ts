@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Delete, Get, Inject, Param, Post, UseGuards } from "@nestjs/common";
 import { z } from "zod";
-import { ForbiddenError, type RequestContext } from "@opsengine/kernel";
+import { authorizeSection, type RequestContext } from "@opsengine/kernel";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser } from "../auth/current-user.js";
 import { ZodPipe } from "../http.js";
@@ -28,8 +28,8 @@ function kindOf(value: string) {
   return parsed.data;
 }
 
-function ownerOnly(ctx: RequestContext) {
-  if (ctx.principal.role !== "owner") throw new ForbiddenError("Only the owner can change connectors.");
+function connectors(ctx: RequestContext) {
+  authorizeSection(ctx, "settings");
 }
 
 @Controller()
@@ -39,15 +39,13 @@ export class SettingsController {
 
   @Get("settings/connectors")
   list(@CurrentUser() ctx: RequestContext) {
-    ownerOnly(ctx);
+    connectors(ctx);
     return this.settings.list();
   }
 
   @Get("mail/status")
   status(@CurrentUser() ctx: RequestContext) {
-    if (ctx.principal.role !== "owner" && ctx.principal.role !== "warehouse_manager") {
-      throw new ForbiddenError("Mail is for the warehouse manager.");
-    }
+    authorizeSection(ctx, "mail");
     return this.settings.status();
   }
 
@@ -56,31 +54,31 @@ export class SettingsController {
     @CurrentUser() ctx: RequestContext,
     @Body(new ZodPipe(warehanceSchema)) body: z.infer<typeof warehanceSchema>,
   ) {
-    ownerOnly(ctx);
+    connectors(ctx);
     return this.settings.saveWarehance(body.url, body.key);
   }
 
   @Post("settings/connectors/slack")
   saveSlack(@CurrentUser() ctx: RequestContext, @Body(new ZodPipe(slackSchema)) body: z.infer<typeof slackSchema>) {
-    ownerOnly(ctx);
+    connectors(ctx);
     return this.settings.saveSlack(body.token, body.channel);
   }
 
   @Post("settings/connectors/anthropic")
   saveAnthropic(@CurrentUser() ctx: RequestContext, @Body(new ZodPipe(anthropicSchema)) body: z.infer<typeof anthropicSchema>) {
-    ownerOnly(ctx);
+    connectors(ctx);
     return this.settings.saveAnthropic(body.key);
   }
 
   @Post("settings/connectors/:kind/test")
   test(@CurrentUser() ctx: RequestContext, @Param("kind") kind: string) {
-    ownerOnly(ctx);
+    connectors(ctx);
     return this.settings.test(kindOf(kind));
   }
 
   @Delete("settings/connectors/:kind")
   remove(@CurrentUser() ctx: RequestContext, @Param("kind") kind: string) {
-    ownerOnly(ctx);
+    connectors(ctx);
     return this.settings.disconnect(kindOf(kind));
   }
 }

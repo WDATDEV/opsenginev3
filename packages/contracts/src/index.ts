@@ -11,6 +11,32 @@ export const roles = [
 
 export type Role = (typeof roles)[number];
 
+// Top-level product areas. An owner picks which of these a management user may open.
+export const appSections = ["time", "mail", "chat", "users", "settings"] as const;
+export type AppSection = (typeof appSections)[number];
+
+export const appSectionLabels: Record<AppSection, string> = {
+  time: "Time tracking",
+  mail: "Mail",
+  chat: "Chat",
+  users: "Users",
+  settings: "Settings",
+};
+
+export function defaultSections(role: Role): AppSection[] {
+  if (role === "owner") return [...appSections];
+  if (role === "warehouse_manager") return ["time", "mail"];
+  return ["time"];
+}
+
+export function resolveSections(role: Role, stored: string[] | null | undefined): AppSection[] {
+  if (role === "owner") return [...appSections];
+  const allowed = new Set<string>(appSections);
+  const picked = (stored ?? []).filter((item): item is AppSection => allowed.has(item));
+  if (picked.length > 0) return [...new Set(picked)];
+  return defaultSections(role);
+}
+
 export const permissions = [
   "tracking.read",
   "tracking.record",

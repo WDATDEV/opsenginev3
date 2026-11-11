@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ApiError, post } from "@/lib/api";
+import { ApiError, hasSection, post } from "@/lib/api";
 import { useSession } from "@/components/shell";
 import { Badge, EmptyState, initials, Notice, PageTitle, SkeletonList, Spinner, timeAgo, useResource } from "@/components/ui";
 
@@ -119,7 +119,7 @@ function Setup({ status, owner }: { status: Status; owner: boolean }) {
 
 export default function MailPage() {
   const user = useSession();
-  const allowed = user?.role === "owner" || user?.role === "warehouse_manager";
+  const allowed = hasSection(user, "mail");
   const { data, error, loading } = useResource<Status>(allowed ? "/mail/status" : null);
   const letters = useResource<Letter[]>(allowed && data?.gmail ? "/mail/letters" : null);
   const rules = useResource<Rule[]>(allowed ? "/mail/rules" : null);
@@ -178,7 +178,7 @@ export default function MailPage() {
           <Notice tone="bad">{problem}</Notice>
         </div>
       ) : null}
-      {data ? <Setup status={data} owner={user.role === "owner"} /> : null}
+      {data ? <Setup status={data} owner={hasSection(user, "settings")} /> : null}
 
       {data?.gmail ? (
         <div className="space-y-3">

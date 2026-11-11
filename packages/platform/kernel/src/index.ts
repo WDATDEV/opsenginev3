@@ -1,6 +1,8 @@
 import {
+  type AppSection,
   type Permission,
   type Role,
+  resolveSections,
   rolePermissions,
 } from "@opsengine/contracts";
 
@@ -10,6 +12,7 @@ export type Principal = {
   name: string;
   role: Role;
   clientIds: string[] | null;
+  sections: AppSection[];
 };
 
 export type RequestContext = {
@@ -30,6 +33,16 @@ export function can(principal: Principal, permission: Permission): boolean {
 export function authorize(ctx: RequestContext, permission: Permission): void {
   if (!can(ctx.principal, permission)) {
     throw new ForbiddenError();
+  }
+}
+
+export function canSection(principal: Principal, section: AppSection): boolean {
+  return resolveSections(principal.role, principal.sections).includes(section);
+}
+
+export function authorizeSection(ctx: RequestContext, section: AppSection): void {
+  if (!canSection(ctx.principal, section)) {
+    throw new ForbiddenError("You do not have access to that section.");
   }
 }
 

@@ -1,9 +1,10 @@
 import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Res, UseGuards } from "@nestjs/common";
-import { ForbiddenError, type RequestContext } from "@opsengine/kernel";
+import { authorizeSection, type RequestContext } from "@opsengine/kernel";
 import type { Response } from "express";
 import { z } from "zod";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser } from "../auth/current-user.js";
+import { RequireSection, SectionGuard } from "../auth/section.guard.js";
 import { ZodPipe } from "../http.js";
 import { ChatService } from "./chat.service.js";
 
@@ -47,14 +48,14 @@ const tableSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
 });
 
-// Chat can read every client's data and send mail, so it is for the owner only.
 function access(ctx: RequestContext) {
-  if (ctx.principal.role !== "owner") throw new ForbiddenError("Chat is for the warehouse owner.");
+  authorizeSection(ctx, "chat");
   return ctx.principal.id;
 }
 
 @Controller("mail/chat")
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, SectionGuard)
+@RequireSection("chat")
 export class ChatController {
   constructor(@Inject(ChatService) private readonly chat: ChatService) {}
 

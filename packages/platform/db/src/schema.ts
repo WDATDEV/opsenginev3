@@ -244,6 +244,8 @@ export const users = identity.table("users", {
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull(),
   clientIds: jsonb("client_ids").$type<string[] | null>(),
+  // Null means use the defaults for that role. An owner can set an explicit list.
+  sections: jsonb("sections").$type<string[] | null>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "@/components/shell";
 import { Badge, EmptyState, Field, Notice, PageTitle, SkeletonList, Spinner, timeAgo, useResource } from "@/components/ui";
-import { api, ApiError, post } from "@/lib/api";
+import { api, ApiError, hasSection, post } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api";
 
@@ -57,10 +57,10 @@ function reason(err: unknown, fallback: string) {
 
 export default function ChatPage() {
   const user = useSession();
-  const owner = user?.role === "owner";
-  const config = useResource<Config>(owner ? "/mail/chat/config" : null);
-  const clients = useResource<Clients>(owner ? "/mail/chat/clients" : null);
-  const threads = useResource<Thread[]>(owner ? "/mail/chat/threads" : null);
+  const allowed = hasSection(user, "chat");
+  const config = useResource<Config>(allowed ? "/mail/chat/config" : null);
+  const clients = useResource<Clients>(allowed ? "/mail/chat/clients" : null);
+  const threads = useResource<Thread[]>(allowed ? "/mail/chat/threads" : null);
 
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
@@ -180,7 +180,8 @@ export default function ChatPage() {
     [clients.data],
   );
 
-  if (!owner) return <Notice tone="bad">Chat is for the warehouse owner.</Notice>;
+  if (!user) return <SkeletonList rows={3} />;
+  if (!allowed) return <Notice tone="bad">Chat is not turned on for this account.</Notice>;
 
   const thread = detail?.thread ?? null;
   const activeScope = thread ? { id: thread.warehanceClientId, name: thread.warehanceClientName } : scope;

@@ -1,9 +1,10 @@
 import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Res, UseGuards } from "@nestjs/common";
-import { ForbiddenError, type RequestContext } from "@opsengine/kernel";
+import { authorizeSection, type RequestContext } from "@opsengine/kernel";
 import type { Response } from "express";
 import { z } from "zod";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser } from "../auth/current-user.js";
+import { RequireSection, SectionGuard } from "../auth/section.guard.js";
 import { ZodPipe } from "../http.js";
 import { AutomationService } from "./automation.service.js";
 import { GmailService } from "./gmail.service.js";
@@ -47,13 +48,12 @@ const sendSchema = z.object({
 const runSchema = z.object({ ruleId: z.string().uuid() });
 
 function access(ctx: RequestContext) {
-  if (ctx.principal.role !== "owner" && ctx.principal.role !== "warehouse_manager") {
-    throw new ForbiddenError("Email automation is for the warehouse manager.");
-  }
+  authorizeSection(ctx, "mail");
 }
 
 @Controller("mail")
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, SectionGuard)
+@RequireSection("mail")
 export class AutomationController {
   constructor(
     @Inject(AutomationService) private readonly automation: AutomationService,

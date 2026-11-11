@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useState } from "react";
-import { api, canOpenService, CLIENT_SERVICES, post, type User } from "@/lib/api";
+import { api, canOpenService, CLIENT_SERVICES, hasSection, post, type User } from "@/lib/api";
 import { initials } from "@/components/ui";
 
 const SessionContext = createContext<User | null>(null);
@@ -58,7 +58,7 @@ function linkActive(pathname: string, href: string) {
 
 // ---------------------------------------------------------------- icons
 
-type IconName = "clock" | "mail" | "chat" | "settings" | "menu" | "close" | "logout" | "grid";
+type IconName = "clock" | "mail" | "chat" | "users" | "settings" | "menu" | "close" | "logout" | "grid";
 
 const ICON_PATHS: Record<IconName, React.ReactNode> = {
   clock: (
@@ -74,6 +74,14 @@ const ICON_PATHS: Record<IconName, React.ReactNode> = {
     </>
   ),
   chat: <path d="M4.5 4h11A1.5 1.5 0 0 1 17 5.5v7a1.5 1.5 0 0 1-1.5 1.5H9l-3.5 3v-3h-1A1.5 1.5 0 0 1 3 12.5v-7A1.5 1.5 0 0 1 4.5 4z" />,
+  users: (
+    <>
+      <circle cx="7.5" cy="7.5" r="2.25" />
+      <path d="M3.5 15c.5-2.4 2-3.8 4-3.8s3.5 1.4 4 3.8" />
+      <circle cx="13.5" cy="8" r="2" />
+      <path d="M12.2 11.4c1.5.3 2.7 1.5 3.3 3.6" />
+    </>
+  ),
   settings: (
     <>
       <circle cx="10" cy="10" r="2.5" />
@@ -197,11 +205,17 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
   const clientServices = insideClient
     ? CLIENT_SERVICES.filter(([service]) => insideClient.enabledServices.includes(service) && canOpenService(user?.role, service))
     : [];
-  const timeActive = !pathname.startsWith("/mail") && !pathname.startsWith("/settings") && !pathname.startsWith("/chat");
+  const timeActive =
+    !pathname.startsWith("/mail") && !pathname.startsWith("/settings") && !pathname.startsWith("/chat") && !pathname.startsWith("/users");
   const mailActive = pathname.startsWith("/mail");
   const chatActive = pathname.startsWith("/chat");
+  const usersActive = pathname.startsWith("/users");
   const settingsActive = pathname.startsWith("/settings");
-  const showMail = user?.role === "owner" || user?.role === "warehouse_manager";
+  const showTime = hasSection(user, "time");
+  const showMail = hasSection(user, "mail");
+  const showChat = hasSection(user, "chat");
+  const showUsers = hasSection(user, "users");
+  const showSettings = hasSection(user, "settings");
 
   return (
     <SessionContext.Provider value={user}>
@@ -230,6 +244,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
             </div>
 
             <nav className="flex-1 overflow-y-auto px-3 pb-3 pt-3" aria-label="Main">
+              {showTime ? (
               <div>
                 <MainTab href="/" label="Time tracking" icon="clock" active={timeActive} />
                 {timeActive ? (
@@ -282,6 +297,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
                   </SubTabs>
                 ) : null}
               </div>
+              ) : null}
 
               {showMail ? (
                 <div>
@@ -295,13 +311,19 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
                 </div>
               ) : null}
 
-              {user?.role === "owner" ? (
+              {showChat ? (
                 <div>
                   <MainTab href="/chat" label="Chat" icon="chat" active={chatActive} />
                 </div>
               ) : null}
 
-              {user?.role === "owner" ? (
+              {showUsers ? (
+                <div>
+                  <MainTab href="/users" label="Users" icon="users" active={usersActive} />
+                </div>
+              ) : null}
+
+              {showSettings ? (
                 <div>
                   <MainTab href="/settings" label="Settings" icon="settings" active={settingsActive} />
                   {settingsActive ? (

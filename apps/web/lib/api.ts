@@ -60,7 +60,22 @@ export type User = {
   name: string;
   role: string;
   clientIds: string[] | null;
+  sections: string[];
 };
+
+export const APP_SECTIONS = [
+  ["time", "Time tracking"],
+  ["mail", "Mail"],
+  ["chat", "Chat"],
+  ["users", "Users"],
+  ["settings", "Settings"],
+] as const;
+
+export function hasSection(user: User | null | undefined, section: string) {
+  if (!user) return false;
+  if (user.role === "owner") return true;
+  return Array.isArray(user.sections) && user.sections.includes(section);
+}
 
 export function canManage(role?: string) {
   return role === "owner" || role === "warehouse_manager";

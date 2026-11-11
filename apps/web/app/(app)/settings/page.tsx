@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, ApiError, post } from "@/lib/api";
+import { api, ApiError, hasSection, post } from "@/lib/api";
 import { useSession } from "@/components/shell";
 import { Badge, Field, Notice, PageTitle, SkeletonList, useResource } from "@/components/ui";
 
@@ -10,7 +10,8 @@ type Connectors = { gmail: Connector; warehance: Connector; slack: Connector; an
 
 export default function SettingsPage() {
   const user = useSession();
-  const { data, error, loading, reload } = useResource<Connectors>(user?.role === "owner" ? "/settings/connectors" : null);
+  const allowed = hasSection(user, "settings");
+  const { data, error, loading, reload } = useResource<Connectors>(allowed ? "/settings/connectors" : null);
   const [notice, setNotice] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -73,7 +74,7 @@ export default function SettingsPage() {
   }
 
   if (!user) return <SkeletonList rows={2} />;
-  if (user.role !== "owner") return <Notice tone="bad">Only the owner can change connectors.</Notice>;
+  if (!allowed) return <Notice tone="bad">Settings is not turned on for this account.</Notice>;
 
   return (
     <div>

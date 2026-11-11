@@ -9,15 +9,17 @@ import {
   setTaskStartSchema,
 } from "@opsengine/contracts";
 import type { z } from "zod";
-import { authorize, can, ForbiddenError, type Principal, type RequestContext } from "@opsengine/kernel";
+import { authorize, authorizeSection, can, ForbiddenError, type Principal, type RequestContext } from "@opsengine/kernel";
 import { AuthGuard } from "../auth/auth.guard.js";
+import { RequireSection, SectionGuard } from "../auth/section.guard.js";
 import { CurrentUser } from "../auth/current-user.js";
 import { BillingService } from "../billing/billing.service.js";
 import { ZodPipe } from "../http.js";
 import { JobsService } from "./jobs.service.js";
 
 @Controller("jobs")
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, SectionGuard)
+@RequireSection("time")
 export class JobsController {
   constructor(
     @Inject(JobsService) private readonly jobs: JobsService,

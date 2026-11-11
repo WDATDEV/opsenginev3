@@ -174,8 +174,10 @@ CREATE TABLE IF NOT EXISTS identity.users (
   password_hash text NOT NULL,
   role text NOT NULL,
   client_ids jsonb,
+  sections jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE identity.users ADD COLUMN IF NOT EXISTS sections jsonb;
 
 CREATE TABLE IF NOT EXISTS clients.clients (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

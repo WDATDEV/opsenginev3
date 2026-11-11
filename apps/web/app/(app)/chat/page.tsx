@@ -18,6 +18,7 @@ type Thread = {
 };
 type Proposal = { kind: "email" | "slack"; to: string; subject: string; body: string; fileId: string | null; fileName: string | null };
 type Send = { kind: "email" | "slack"; to: string; at: string; ok: boolean; note: string; file: string | null };
+type BotLog = { tool: string; ok: boolean; records: number; error: string | null };
 type Message = {
   id: string;
   role: "user" | "assistant";
@@ -25,6 +26,7 @@ type Message = {
   status: "working" | "done" | "failed";
   error: string | null;
   lookups: { tool: string; summary: string }[];
+  botLogs: BotLog[];
   proposal: Proposal | null;
   sends: Send[];
   createdAt: string;
@@ -338,6 +340,7 @@ export default function ChatPage() {
               {detail?.messages.map((message) => (
                 <Bubble
                   key={message.id}
+                  threadId={detail.thread.id}
                   message={message}
                   files={detail.files.filter((file) => file.messageId === message.id)}
                   onSend={(kind, prefill) => setPanel({ messageId: message.id, kind, prefill })}
@@ -401,17 +404,22 @@ export default function ChatPage() {
 // ---------------------------------------------------------------- one message
 
 function Bubble({
+  threadId,
   message,
   files,
   onSend,
   onFilesChanged,
 }: {
+  threadId: string;
   message: Message;
   files: FileInfo[];
   onSend: (kind: "email" | "slack", prefill: Proposal | null) => void;
   onFilesChanged: () => void;
 }) {
   const [showLookups, setShowLookups] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [recoverNote, setRecoverNote] = useState<string | null>(null);
+  const kept = (message.botLogs ?? []).reduce((sum, log) => sum + (log.ok ? log.records : 0), 0);
 
   if (message.role === "user") {
     return (
@@ -434,9 +442,15 @@ function Bubble({
                 ))}
               </ul>
             ) : null}
+            {kept > 0 ? <p className="mt-2 text-xs text-muted">Keeping {kept} Warehance record(s) in case this fails.</p> : null}
           </div>
         ) : null}
-        {message.status === "failed" ? <Notice tone="bad">{message.error ?? "That did not work."}</Notice> : null}
+        {message.status === "failed" ? (
+          <Notice tone="bad">
+            {message.error ?? "That did not work."}
+            {kept > 0 ? ` The Warehance records from this turn were kept (${kept} row(s)), so you can recover them as a file.` : ""}
+          </Notice>
+        ) : null}
         {message.status === "done" ? (
           <p className="whitespace-pre-wrap rounded-2xl rounded-bl-md bg-black/[0.04] px-3.5 py-2.5 text-sm leading-6">{message.content}</p>
         ) : null}
@@ -467,6 +481,30 @@ function Bubble({
                 {showLookups ? "Hide" : "Show"} {message.lookups.length} lookup(s)
               </button>
             ) : null}
+          </div>
+        ) : null}
+
+        {kept > 0 && message.status !== "working" ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              className="btn btn-sm"
+              type="button"
+              disabled={recovering}
+              onClick={() => {
+                setRecovering(true);
+                setRecoverNote(null);
+                void post<{ files: FileInfo[]; rows: number }>(`/mail/chat/threads/${threadId}/messages/${message.id}/recover`, { format: "csv" })
+                  .then((saved) => {
+                    setRecoverNote(`Recovered ${saved.rows} row(s) into ${saved.files.map((file) => file.name).join(", ")}.`);
+                    onFilesChanged();
+                  })
+                  .catch((err) => setRecoverNote(reason(err, "Could not recover those records.")))
+                  .finally(() => setRecovering(false));
+              }}
+            >
+              {recovering ? <Spinner /> : `Recover ${kept} record(s) as CSV`}
+            </button>
+            {recoverNote ? <span className="text-xs text-muted">{recoverNote}</span> : null}
           </div>
         ) : null}
 
@@ -531,6 +569,8 @@ function ChatFile({ file, onSaved }: { file: FileInfo; onSaved: () => void }) {
   );
 }
 
+type Check = { ok: boolean; text: string };
+
 function FileEditor({ fileId, onClose, onSaved }: { fileId: string; onClose: () => void; onSaved: () => void }) {
   const [table, setTable] = useState<TableFile | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -538,6 +578,12 @@ function FileEditor({ fileId, onClose, onSaved }: { fileId: string; onClose: () 
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [action, setAction] = useState<"set" | "adjust">("set");
+  const [warehouse, setWarehouse] = useState("");
+  const [reason, setReason] = useState("");
+  const [zeroAll, setZeroAll] = useState(false);
+  const [checks, setChecks] = useState<Check[] | null>(null);
+  const [download, setDownload] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -590,9 +636,39 @@ function FileEditor({ fileId, onClose, onSaved }: { fileId: string; onClose: () 
         name: table.name,
       });
       setNotice(`Saved as ${saved.name}. Download that file and upload it in Warehance. Nothing was changed in Warehance from here.`);
+      setDownload({ id: saved.id, name: saved.name });
       onSaved();
     } catch (err) {
       setError(reason(err, "Could not save that file."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function warehance() {
+    if (!table) return;
+    setBusy(true);
+    setError(null);
+    setChecks(null);
+    try {
+      const saved = await post<FileInfo & { checks: Check[]; ready: boolean }>(`/mail/chat/files/${fileId}/warehance`, {
+        columns: table.columns,
+        cells: table.cells,
+        action,
+        warehouse,
+        reason,
+        zeroQuantity: zeroAll,
+      });
+      setChecks(saved.checks);
+      setDownload({ id: saved.id, name: saved.name });
+      setNotice(
+        saved.ready
+          ? `Saved ${saved.name}. Check the list below, then download and import it in Warehance (Inventory → Import). Nothing was changed in Warehance from here.`
+          : `Saved ${saved.name}, but it is not ready to upload. Fix the failed checks first so Warehance does not reject the file or change the wrong stock.`,
+      );
+      onSaved();
+    } catch (err) {
+      setError(reason(err, "Could not convert that file."));
     } finally {
       setBusy(false);
     }
@@ -672,12 +748,57 @@ function FileEditor({ fileId, onClose, onSaved }: { fileId: string; onClose: () 
           </tbody>
         </table>
       </div>
-      {notice ? <Notice tone="ok">{notice}</Notice> : null}
+      <div className="space-y-2 rounded-lg border border-black/10 p-3">
+        <p className="text-xs font-medium">Warehance inventory import</p>
+        <p className="text-xs text-muted">
+          Converts this table to the Warehance template: sku, action, quantity, location, adjustment_reason, warehouse. We map SKU, qty, and location from the chat file. Fill warehouse and reason if those columns are missing.
+        </p>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="text-xs">
+            Action
+            <select className="field mt-1 h-8 w-28" value={action} onChange={(event) => setAction(event.target.value as "set" | "adjust")}>
+              <option value="set">set</option>
+              <option value="adjust">adjust</option>
+            </select>
+          </label>
+          <label className="text-xs">
+            Warehouse name
+            <input className="field mt-1 h-8 w-48" value={warehouse} onChange={(event) => setWarehouse(event.target.value)} placeholder="Must already exist" />
+          </label>
+          <label className="text-xs">
+            Adjustment reason
+            <input className="field mt-1 h-8 w-56" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Cycle count" />
+          </label>
+          <label className="flex items-center gap-2 text-xs">
+            <input type="checkbox" checked={zeroAll} onChange={(event) => setZeroAll(event.target.checked)} />
+            Set every quantity to 0 in the upload file
+          </label>
+        </div>
+      </div>
+      {checks ? (
+        <ul className="space-y-1 text-xs">
+          {checks.map((check) => (
+            <li key={check.text} className={check.ok ? "text-muted" : "text-red-700"}>
+              {check.ok ? "OK — " : "Fix — "}
+              {check.text}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {notice ? <Notice tone={checks?.some((check) => !check.ok) ? "warn" : "ok"}>{notice}</Notice> : null}
       {error ? <Notice tone="bad">{error}</Notice> : null}
       <div className="flex flex-wrap gap-2">
-        <button className="btn btn-primary btn-sm" type="button" disabled={busy || table.cells.length === 0} onClick={() => void save()}>
-          {busy ? <Spinner /> : "Save a copy"}
+        <button className="btn btn-primary btn-sm" type="button" disabled={busy || table.cells.length === 0} onClick={() => void warehance()}>
+          {busy ? <Spinner /> : "Make Warehance CSV"}
         </button>
+        <button className="btn btn-sm" type="button" disabled={busy || table.cells.length === 0} onClick={() => void save()}>
+          Save a copy
+        </button>
+        {download ? (
+          <a className="btn btn-sm" href={`${API_URL}/mail/chat/files/${download.id}/download`}>
+            Download {download.name}
+          </a>
+        ) : null}
         <button className="btn btn-sm btn-ghost" type="button" onClick={onClose}>
           Close
         </button>

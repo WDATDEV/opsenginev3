@@ -222,6 +222,20 @@ export const chatMessages = mail.table("chat_messages", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+// One Warehance bot page, kept so a failed Chat turn can still be rebuilt into a file.
+export const chatLookupLogs = mail.table("chat_lookup_logs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  threadId: uuid("thread_id").notNull(),
+  messageId: uuid("message_id").notNull(),
+  tool: text("tool").notNull(),
+  args: jsonb("args").$type<Record<string, unknown>>().notNull().default({}),
+  ok: boolean("ok").notNull().default(true),
+  error: text("error"),
+  recordCount: integer("record_count").notNull().default(0),
+  records: jsonb("records").$type<Record<string, unknown>[]>().notNull().default([]),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const chatFiles = mail.table("chat_files", {
   id: uuid("id").defaultRandom().primaryKey(),
   threadId: uuid("thread_id").notNull(),

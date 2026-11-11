@@ -580,7 +580,7 @@ function FileEditor({ fileId, onClose, onSaved }: { fileId: string; onClose: () 
   const [notice, setNotice] = useState<string | null>(null);
   const [action, setAction] = useState<"set" | "adjust">("set");
   const [warehouse, setWarehouse] = useState("");
-  const [reason, setReason] = useState("");
+  const [adjustmentReason, setAdjustmentReason] = useState("");
   const [zeroAll, setZeroAll] = useState(false);
   const [checks, setChecks] = useState<Check[] | null>(null);
   const [download, setDownload] = useState<{ id: string; name: string } | null>(null);
@@ -656,7 +656,7 @@ function FileEditor({ fileId, onClose, onSaved }: { fileId: string; onClose: () 
         cells: table.cells,
         action,
         warehouse,
-        reason,
+        reason: adjustmentReason,
         zeroQuantity: zeroAll,
       });
       setChecks(saved.checks);
@@ -767,7 +767,7 @@ function FileEditor({ fileId, onClose, onSaved }: { fileId: string; onClose: () 
           </label>
           <label className="text-xs">
             Adjustment reason
-            <input className="field mt-1 h-8 w-56" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Cycle count" />
+            <input className="field mt-1 h-8 w-56" value={adjustmentReason} onChange={(event) => setAdjustmentReason(event.target.value)} placeholder="Cycle count" />
           </label>
           <label className="flex items-center gap-2 text-xs">
             <input type="checkbox" checked={zeroAll} onChange={(event) => setZeroAll(event.target.checked)} />

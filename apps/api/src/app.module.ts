@@ -17,8 +17,6 @@ import { TrackingController } from "./tracking/tracking.controller.js";
 import { TrackingService } from "./tracking/tracking.service.js";
 import { ChatController } from "./mail/chat.controller.js";
 import { ChatService } from "./mail/chat.service.js";
-import { BroadcastController } from "./mail/broadcast.controller.js";
-import { BroadcastService } from "./mail/broadcast.service.js";
 import { AutomationController } from "./mail/automation.controller.js";
 import { AutomationService } from "./mail/automation.service.js";
 import { GmailService } from "./mail/gmail.service.js";
@@ -46,7 +44,6 @@ import { WorkService } from "./work/work.service.js";
     SettingsController,
     MailController,
     AutomationController,
-    BroadcastController,
     ChatController,
     InternalController,
   ],
@@ -63,7 +60,6 @@ import { WorkService } from "./work/work.service.js";
     SettingsService,
     GmailService,
     AutomationService,
-    BroadcastService,
     ChatService,
   ],
 })

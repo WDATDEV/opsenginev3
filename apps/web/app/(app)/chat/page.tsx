@@ -40,6 +40,7 @@ const EXAMPLES = [
   "List all orders that are on hold",
   "Make an Excel file of this month's shipments",
   "Which products are low on stock?",
+  "List SKUs with quantity greater than 0 as a CSV",
 ];
 
 function size(bytes: number) {
@@ -339,6 +340,7 @@ export default function ChatPage() {
                   message={message}
                   files={detail.files.filter((file) => file.messageId === message.id)}
                   onSend={(kind, prefill) => setPanel({ messageId: message.id, kind, prefill })}
+                  onFilesChanged={() => void load(detail.thread.id)}
                 />
               ))}
               {panel && detail ? (
@@ -401,10 +403,12 @@ function Bubble({
   message,
   files,
   onSend,
+  onFilesChanged,
 }: {
   message: Message;
   files: FileInfo[];
   onSend: (kind: "email" | "slack", prefill: Proposal | null) => void;
+  onFilesChanged: () => void;
 }) {
   const [showLookups, setShowLookups] = useState(false);
 
@@ -437,17 +441,7 @@ function Bubble({
         ) : null}
 
         {files.map((file) => (
-          <div key={file.id} className="card flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
-            <span className="min-w-0 flex-1">
-              <span className="block truncate font-medium">{file.name}</span>
-              <span className="block text-xs text-muted">
-                {file.rows} row(s) · {file.columns.length} column(s) · {size(file.size)}
-              </span>
-            </span>
-            <a className="btn btn-sm" href={`${API_URL}/mail/chat/files/${file.id}/download`}>
-              Download
-            </a>
-          </div>
+          <ChatFile key={file.id} file={file} onSaved={onFilesChanged} />
         ))}
 
         {message.status === "done" ? (
@@ -493,6 +487,199 @@ function Bubble({
             {send.note && send.note !== "Sent" ? ` · ${send.note}` : ""}
           </p>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- spreadsheet on a chat file
+
+type TableFile = { id: string; name: string; format: string; columns: string[]; cells: string[][] };
+
+const QTY_NAMES = ["qty", "quantity", "on_hand", "onhand", "qty_on_hand", "quantity_on_hand", "available", "stock", "units", "qoh", "inventory"];
+
+function qtyColumn(columns: string[]) {
+  const names = columns.map((column) => column.toLowerCase().replace(/[^a-z0-9]+/g, "_"));
+  for (const wanted of QTY_NAMES) {
+    const index = names.findIndex((name) => name === wanted || name.endsWith(`_${wanted}`) || name.startsWith(`${wanted}_`));
+    if (index >= 0) return index;
+  }
+  return names.findIndex((name) => name.includes("qty") || name.includes("quantity"));
+}
+
+function ChatFile({ file, onSaved }: { file: FileInfo; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="card space-y-2 px-3 py-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-medium">{file.name}</span>
+          <span className="block text-xs text-muted">
+            {file.rows} row(s) · {file.columns.length} column(s) · {size(file.size)}
+          </span>
+        </span>
+        <button className="btn btn-sm" type="button" onClick={() => setOpen((value) => !value)}>
+          {open ? "Close" : "Edit"}
+        </button>
+        <a className="btn btn-sm" href={`${API_URL}/mail/chat/files/${file.id}/download`}>
+          Download
+        </a>
+      </div>
+      {open ? <FileEditor fileId={file.id} onClose={() => setOpen(false)} onSaved={onSaved} /> : null}
+    </div>
+  );
+}
+
+function FileEditor({ fileId, onClose, onSaved }: { fileId: string; onClose: () => void; onSaved: () => void }) {
+  const [table, setTable] = useState<TableFile | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [qty, setQty] = useState(0);
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    api<TableFile>(`/mail/chat/files/${fileId}/table`)
+      .then((next) => {
+        if (!live) return;
+        setTable(next);
+        const guessed = qtyColumn(next.columns);
+        setQty(guessed >= 0 ? guessed : 0);
+      })
+      .catch((err) => {
+        if (live) setError(reason(err, "Could not open that file."));
+      });
+    return () => {
+      live = false;
+    };
+  }, [fileId]);
+
+  function setCell(row: number, col: number, value: string) {
+    setTable((current) => {
+      if (!current) return current;
+      const cells = current.cells.map((line, index) => (index === row ? line.map((cell, i) => (i === col ? value : cell)) : line));
+      return { ...current, cells };
+    });
+  }
+
+  function zeroQty(all: boolean) {
+    if (!table) return;
+    setTable({
+      ...table,
+      cells: table.cells.map((line, index) => (all || picked.has(index) ? line.map((cell, i) => (i === qty ? "0" : cell)) : line)),
+    });
+    setNotice(all ? "All quantities set to 0. Save, then download and upload in Warehance." : "Selected quantities set to 0. Save, then download and upload in Warehance.");
+  }
+
+  function dropPicked() {
+    if (!table || picked.size === 0) return;
+    setTable({ ...table, cells: table.cells.filter((_, index) => !picked.has(index)) });
+    setPicked(new Set());
+  }
+
+  async function save() {
+    if (!table) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const saved = await post<FileInfo>(`/mail/chat/files/${fileId}/table`, {
+        columns: table.columns,
+        cells: table.cells,
+        name: table.name,
+      });
+      setNotice(`Saved as ${saved.name}. Download that file and upload it in Warehance. Nothing was changed in Warehance from here.`);
+      onSaved();
+    } catch (err) {
+      setError(reason(err, "Could not save that file."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (error && !table) return <Notice tone="bad">{error}</Notice>;
+  if (!table) return <Spinner label="Opening file…" />;
+
+  const allPicked = table.cells.length > 0 && picked.size === table.cells.length;
+
+  return (
+    <div className="space-y-2 border-t border-black/10 pt-2">
+      <p className="text-xs text-muted">Edits stay in Ops Engine until you download the file and upload it in Warehance. Warehance is not changed from Chat.</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-2 text-xs">
+          Quantity column
+          <select className="field h-8 w-40" value={qty} onChange={(event) => setQty(Number(event.target.value))}>
+            {table.columns.map((column, index) => (
+              <option key={`${column}-${index}`} value={index}>
+                {column}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="btn btn-sm" type="button" onClick={() => zeroQty(false)} disabled={picked.size === 0}>
+          Set selected to 0
+        </button>
+        <button className="btn btn-sm" type="button" onClick={() => zeroQty(true)}>
+          Set all quantities to 0
+        </button>
+        <button className="btn btn-sm btn-ghost" type="button" onClick={dropPicked} disabled={picked.size === 0}>
+          Remove selected rows
+        </button>
+      </div>
+      <div className="max-h-[24rem] overflow-auto rounded-lg border border-black/10">
+        <table className="min-w-full text-left text-xs">
+          <thead className="sticky top-0 bg-surface">
+            <tr>
+              <th className="px-2 py-1">
+                <input
+                  type="checkbox"
+                  checked={allPicked}
+                  onChange={() => setPicked(allPicked ? new Set() : new Set(table.cells.map((_, index) => index)))}
+                  aria-label="Select all rows"
+                />
+              </th>
+              {table.columns.map((column, index) => (
+                <th key={`${column}-${index}`} className="whitespace-nowrap px-2 py-1 font-medium">
+                  {column}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {table.cells.map((line, row) => (
+              <tr key={row} className="border-t border-black/5">
+                <td className="px-2 py-0.5">
+                  <input
+                    type="checkbox"
+                    checked={picked.has(row)}
+                    onChange={() => {
+                      const next = new Set(picked);
+                      if (next.has(row)) next.delete(row);
+                      else next.add(row);
+                      setPicked(next);
+                    }}
+                    aria-label={`Select row ${row + 1}`}
+                  />
+                </td>
+                {line.map((cell, col) => (
+                  <td key={col} className="px-1 py-0.5">
+                    <input className="field h-8 min-w-[5.5rem] text-xs" value={cell} onChange={(event) => setCell(row, col, event.target.value)} />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {notice ? <Notice tone="ok">{notice}</Notice> : null}
+      {error ? <Notice tone="bad">{error}</Notice> : null}
+      <div className="flex flex-wrap gap-2">
+        <button className="btn btn-primary btn-sm" type="button" disabled={busy || table.cells.length === 0} onClick={() => void save()}>
+          {busy ? <Spinner /> : "Save a copy"}
+        </button>
+        <button className="btn btn-sm btn-ghost" type="button" onClick={onClose}>
+          Close
+        </button>
       </div>
     </div>
   );

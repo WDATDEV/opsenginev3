@@ -1,6 +1,6 @@
 type Row = Record<string, string>;
 
-const MAX_ROWS = 5000;
+export const MAX_ROWS = 5000;
 
 function isScalar(value: unknown): value is string | number | boolean | null {
   return value === null || ["string", "number", "boolean"].includes(typeof value);

@@ -12,7 +12,7 @@ import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { DbService } from "../db.service.js";
 import { ask, modelFor, type Block, type ClaudeTool, type Message } from "./anthropic.js";
 import { AutomationService } from "./automation.service.js";
-import { buildFile, MAX_FILE_BYTES, type FileFormat } from "./chat-files.js";
+import { buildFile, buildTableFile, MAX_FILE_BYTES, readTable, type FileFormat } from "./chat-files.js";
 import { GmailService } from "./gmail.service.js";
 import { conversationFor, findPerson, plain, post, uploadFile } from "./slack.js";
 import { WarehanceClient } from "./warehance-client.js";
@@ -210,6 +210,77 @@ export class ChatService {
     if (!row) throw new NotFoundException("That file was not found.");
     await this.mine(ownerId, row.threadId);
     return { name: row.name, mime: row.mime, data: Buffer.from(row.data, "base64") };
+  }
+
+  private async ownFile(ownerId: string, fileId: string) {
+    const [row] = await this.db.db.select().from(chatFiles).where(eq(chatFiles.id, fileId)).limit(1);
+    if (!row) throw new NotFoundException("That file was not found.");
+    await this.mine(ownerId, row.threadId);
+    return row;
+  }
+
+  // Spreadsheet the owner can change in the chat. Nothing is sent to Warehance.
+  async table(ownerId: string, fileId: string) {
+    const row = await this.ownFile(ownerId, fileId);
+    const format = row.format as FileFormat;
+    if (format !== "csv" && format !== "xlsx" && format !== "json") {
+      throw new BadRequestException("That file cannot be edited here.");
+    }
+    try {
+      const table = await readTable(format, Buffer.from(row.data, "base64"));
+      return { id: row.id, threadId: row.threadId, messageId: row.messageId, name: row.name, format, columns: table.columns, cells: table.cells };
+    } catch (err) {
+      throw new BadRequestException(err instanceof Error ? err.message : "Could not open that file.");
+    }
+  }
+
+  async saveTable(
+    ownerId: string,
+    fileId: string,
+    input: { columns: string[]; cells: string[][]; name?: string },
+  ) {
+    const row = await this.ownFile(ownerId, fileId);
+    const format = row.format as FileFormat;
+    if (format !== "csv" && format !== "xlsx" && format !== "json") {
+      throw new BadRequestException("That file cannot be edited here.");
+    }
+    const columns = input.columns.map((column) => column.trim()).filter(Boolean);
+    if (columns.length === 0) throw new BadRequestException("The table has no columns.");
+    if (columns.length > 80) throw new BadRequestException("Keep the file to 80 columns or fewer.");
+    if (input.cells.length === 0) throw new BadRequestException("There are no rows to save.");
+    const cells = input.cells.map((line) => columns.map((_, index) => String(line[index] ?? "").slice(0, 2000)));
+    const base = (input.name?.trim() || row.name).replace(/\.(csv|xlsx|json)$/i, "").replace(/-edited(-\d+)?$/i, "");
+    let built;
+    try {
+      built = await buildTableFile({ columns, cells, format, name: `${base}-edited` });
+    } catch (err) {
+      throw new BadRequestException(err instanceof Error ? err.message : "Could not save that file.");
+    }
+    const [saved] = await this.db.db
+      .insert(chatFiles)
+      .values({
+        threadId: row.threadId,
+        messageId: row.messageId,
+        name: built.name,
+        format: built.format,
+        mime: built.mime,
+        rows: built.rows,
+        columns: built.columns,
+        size: built.data.length,
+        data: built.data.toString("base64"),
+      })
+      .returning();
+    await this.db.db.update(chatThreads).set({ updatedAt: new Date() }).where(eq(chatThreads.id, row.threadId));
+    return {
+      id: saved!.id,
+      threadId: row.threadId,
+      messageId: row.messageId,
+      name: saved!.name,
+      format: saved!.format,
+      rows: saved!.rows,
+      columns: saved!.columns,
+      size: saved!.size,
+    };
   }
 
   // ---------------------------------------------------------------- asking

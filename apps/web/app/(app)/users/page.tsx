@@ -17,7 +17,16 @@ const ROLES: { id: User["role"]; label: string }[] = [
 ];
 
 function roleLabel(role: string) {
+  if (role === "owner") return "Owner";
   return ROLES.find((item) => item.id === role)?.label ?? role;
+}
+
+function listed(accounts: Account[]) {
+  return [...accounts].sort((a, b) => {
+    if (a.role === "owner" && b.role !== "owner") return -1;
+    if (b.role === "owner" && a.role !== "owner") return 1;
+    return a.name.localeCompare(b.name);
+  });
 }
 
 export default function UsersPage() {
@@ -37,7 +46,7 @@ export default function UsersPage() {
       <PageTitle
         kicker="Management"
         title="Users"
-        detail="Add people who sign in on the management side. Choose which sections they may open. The API checks the same list on every request."
+        detail="The owner account is already here and cannot be edited on this page. Add other people and choose which sections they may open."
         actions={
           <button className="btn btn-primary" type="button" onClick={() => setEditing("new")}>
             Add user
@@ -65,10 +74,13 @@ export default function UsersPage() {
       {list.error ? <Notice tone="bad">{list.error}</Notice> : null}
       {list.data && list.data.length === 0 ? <EmptyState title="No users yet">Add someone and turn on the sections they need.</EmptyState> : null}
       <ul className="max-w-3xl space-y-2">
-        {(list.data ?? []).map((account) => (
+        {listed(list.data ?? []).map((account) => (
           <li key={account.id} className="card flex flex-wrap items-start gap-3 p-4">
             <div className="min-w-0 flex-1">
-              <p className="font-semibold">{account.name}</p>
+              <p className="font-semibold">
+                {account.name}
+                {account.id === user.id ? <span className="ml-2 text-xs font-normal text-muted">You</span> : null}
+              </p>
               <p className="text-sm text-muted">{account.email}</p>
               <p className="mt-1 text-sm text-muted">{roleLabel(account.role)}</p>
               <div className="mt-2 flex flex-wrap gap-1">

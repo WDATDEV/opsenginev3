@@ -63,12 +63,29 @@ export function pickApplyTool(tools: McpTool[]) {
   return ranked[0] ?? null;
 }
 
+function textOf(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string" || typeof value === "number") return String(value).trim();
+  if (Array.isArray(value)) return textOf(value[0]);
+  if (typeof value === "object") {
+    const row = value as Record<string, unknown>;
+    return textOf(row.name ?? row.code ?? row.location_name ?? row.bin ?? row.label ?? row.barcode ?? row.warehouse_name);
+  }
+  return "";
+}
+
 function field(record: Record<string, unknown>, names: string[]) {
   for (const name of names) {
-    const direct = record[name];
-    if (direct != null && String(direct).trim()) return String(direct).trim();
-    const key = Object.keys(record).find((item) => item.toLowerCase() === name.toLowerCase() || item.toLowerCase().endsWith(`_${name}`));
-    if (key && record[key] != null && String(record[key]).trim()) return String(record[key]).trim();
+    const direct = textOf(record[name]);
+    if (direct) return direct;
+    const key = Object.keys(record).find((item) => {
+      const lower = item.toLowerCase();
+      return lower === name.toLowerCase() || lower.endsWith(`_${name}`) || lower === name.replace("_", "");
+    });
+    if (key) {
+      const nested = textOf(record[key]);
+      if (nested) return nested;
+    }
   }
   return "";
 }
@@ -85,7 +102,7 @@ export function rowsFromInput(input: unknown): StockRow[] {
   for (const item of list) {
     const record = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
     const sku = field(record, ["sku", "product_sku"]);
-    const location = field(record, ["location", "location_name", "bin"]);
+    const location = field(record, ["location", "location_name", "bin", "location_code", "shelf"]);
     const warehouse = field(record, ["warehouse", "warehouse_name"]) || STOCK_JOB.warehouse;
     const lotCode = field(record, ["lot_code", "lot"]);
     if (!sku || !location) continue;

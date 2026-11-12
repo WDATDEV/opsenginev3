@@ -153,7 +153,7 @@ function flattenRecords(input: unknown): Record<string, unknown>[] {
     const nested = record.inventory_locations ?? record.locations ?? record.bins ?? record.inventory;
     if (Array.isArray(nested) && nested.length > 0) {
       for (const loc of nested) {
-        const piece = loc && typeof loc === "object" ? (loc as Record<string, unknown>) : { location: loc };
+        const piece: Record<string, unknown> = loc && typeof loc === "object" ? (loc as Record<string, unknown>) : { location: loc };
         out.push({ ...record, ...piece, sku: record.sku ?? record.product_sku ?? piece.sku, location: piece.location ?? piece });
       }
     } else {

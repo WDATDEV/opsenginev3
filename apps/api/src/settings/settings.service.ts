@@ -4,9 +4,10 @@ import { eq } from "drizzle-orm";
 import { DbService } from "../db.service.js";
 import { checkKey, modelFor } from "../mail/anthropic.js";
 import { GmailService } from "../mail/gmail.service.js";
+import { WarehanceApi } from "../mail/warehance-api.js";
 import { WarehanceClient } from "../mail/warehance-client.js";
 
-type Kind = "gmail" | "warehance" | "slack" | "anthropic";
+type Kind = "gmail" | "warehance" | "warehance_api" | "slack" | "anthropic";
 
 type ConnectorRow = typeof connectors.$inferSelect;
 
@@ -36,6 +37,7 @@ export class SettingsService {
     return {
       gmail: { ...view(rows.find((row) => row.kind === "gmail")), googleReady: googleReady() },
       warehance: view(rows.find((row) => row.kind === "warehance")),
+      warehanceApi: view(rows.find((row) => row.kind === "warehance_api")),
       slack: view(rows.find((row) => row.kind === "slack")),
       anthropic: view(rows.find((row) => row.kind === "anthropic")),
     };
@@ -76,6 +78,18 @@ export class SettingsService {
     return this.list();
   }
 
+  async saveWarehanceApi(key: string) {
+    const stored = key || (await this.secret("warehance_api")) || process.env.WAREHANCE_API_KEY || "";
+    if (!stored) throw new BadRequestException("Paste the Warehance API key.");
+    await this.upsert("warehance_api", {
+      label: "API key saved",
+      secret: stored,
+      extra: null,
+      detail: "Saved. Test it before Confirm uses it to change stock.",
+    });
+    return this.list();
+  }
+
   async saveSlack(token: string, channel: string) {
     const stored = token || (await this.secret("slack"));
     if (!stored) throw new BadRequestException("Paste the Slack bot token.");
@@ -110,6 +124,16 @@ export class SettingsService {
         throw new BadRequestException(err instanceof Error ? err.message : "Could not reach the Warehance connector.");
       }
       await this.upsert("warehance", { ...row, detail });
+      return this.list();
+    }
+    if (kind === "warehance_api") {
+      let detail: string;
+      try {
+        detail = await new WarehanceApi(row.secret || "").check();
+      } catch (err) {
+        throw new BadRequestException(err instanceof Error ? err.message : "Could not reach the Warehance API.");
+      }
+      await this.upsert("warehance_api", { ...row, detail });
       return this.list();
     }
     if (kind === "anthropic") {

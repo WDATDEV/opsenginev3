@@ -20,6 +20,7 @@ import { AutomationService } from "./automation.service.js";
 import { buildFile, buildTableFile, MAX_FILE_BYTES, readTable, type FileFormat } from "./chat-files.js";
 import { GmailService } from "./gmail.service.js";
 import { conversationFor, findPerson, plain, post, uploadFile } from "./slack.js";
+import { WarehanceApi } from "./warehance-api.js";
 import { WarehanceClient } from "./warehance-client.js";
 import {
   argsForApply,
@@ -140,6 +141,7 @@ export class ChatService {
     const row = (kind: string) => rows.find((item) => item.kind === kind);
     return {
       warehance: Boolean(row("warehance")?.secret && row("warehance")?.extra),
+      warehanceWrite: Boolean(row("warehance_api")?.secret || process.env.WAREHANCE_API_KEY),
       claude: Boolean(row("anthropic")?.secret || process.env.ANTHROPIC_API_KEY),
       gmail: row("gmail")?.secret ? (row("gmail")?.label ?? "Gmail") : null,
       slack: Boolean(row("slack")?.secret),
@@ -1004,30 +1006,54 @@ export class ChatService {
     if (kept.length === 0) throw new BadRequestException(dropped[0] ?? "No rows left to change.");
     if (kept.length > cap) throw new BadRequestException(`Confirm ${cap} row(s) at a time. Raise the cap after a good live test.`);
 
+    const results = await this.applyStock(kept, proposed.clientId);
+    const ok = results.every((row) => row.ok);
+    const note = ok
+      ? `Set ${results.length} row(s) to 0.`
+      : results.find((row) => row.error)?.error ?? "Some rows failed. Check the log. Warehance may be only partly updated.";
+    await this.finishStock(messageId, { ...proposed, rows: results, status: ok ? "applied" : "rejected", note }, actor, ok ? "applied" : "rejected", ok ? null : note);
+    if (!ok) throw new BadRequestException(note);
+    return { stockChange: { ...proposed, rows: results, status: "applied" as const, note } };
+  }
+
+  private async writeKey() {
+    const [row] = await this.db.db.select().from(connectors).where(eq(connectors.kind, "warehance_api")).limit(1);
+    return row?.secret || process.env.WAREHANCE_API_KEY || "";
+  }
+
+  private async applyStock(kept: StockRow[], clientId: number | null) {
+    const key = await this.writeKey();
+    if (key) {
+      const api = new WarehanceApi(key);
+      const results: StockRow[] = [];
+      for (const row of kept) {
+        const result = await api.setToZero(row, clientId);
+        results.push({ ...row, qtyBefore: result.qtyBefore, ok: result.ok, error: result.error });
+      }
+      return results;
+    }
+
     const bot = (await this.db.db.select().from(connectors).where(eq(connectors.kind, "warehance")).limit(1))[0];
-    if (!bot?.extra || !bot.secret) throw new BadRequestException("The Warehance bot is not connected. Add it in Settings.");
+    if (!bot?.extra || !bot.secret) {
+      const detail = "Add a Warehance API key in Settings. The lookup bot cannot change stock. Nothing was changed. The rows are in the log.";
+      return kept.map((row) => ({ ...row, ok: false, error: detail }));
+    }
     const client = new WarehanceClient(bot.extra, bot.secret);
     const listed = await client.listTools();
     const tool = pickApplyTool(listed);
     if (!tool) {
-      const names = listed.map((item) => item.name).slice(0, 40).join(", ") || "none";
-      const detail = `This Warehance key has no inventory write tool (tools: ${names}). Nothing was changed. The rows are in the log.`;
-      const failed = kept.map((row) => ({ ...row, ok: false, error: detail }));
-      await this.finishStock(messageId, { ...proposed, rows: failed, status: "rejected", note: "No write tool on this bot key." }, actor, "rejected", detail);
-      throw new BadRequestException(detail);
+      const detail =
+        "Add a Warehance API key in Settings (write_inventory). The lookup bot cannot change stock. Nothing was changed. The rows are in the log.";
+      return kept.map((row) => ({ ...row, ok: false, error: detail }));
     }
-
-    const results = [];
+    const results: StockRow[] = [];
     for (const row of kept) {
-      const args = argsForApply(tool, row, proposed.clientId);
+      const args = argsForApply(tool, row, clientId);
       const { data, failed } = await client.call(tool.name, args);
       const error = failed ? (typeof data === "string" ? data : JSON.stringify(data)) : null;
       results.push({ ...row, ok: !failed, error });
     }
-    const ok = results.every((row) => row.ok);
-    const note = ok ? `Set ${results.length} row(s) to 0 with ${tool.name}.` : "Some rows failed. Check the log. Warehance may be only partly updated.";
-    await this.finishStock(messageId, { ...proposed, rows: results, status: ok ? "applied" : "rejected", note }, actor, ok ? "applied" : "rejected", ok ? null : note);
-    return { stockChange: { ...proposed, rows: results, status: ok ? "applied" : "rejected", note } };
+    return results;
   }
 
   async stockLogs(ownerId: string, threadId: string) {

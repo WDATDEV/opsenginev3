@@ -47,7 +47,7 @@ type Message = {
 };
 type FileInfo = { id: string; messageId: string; name: string; format: string; rows: number; columns: string[]; size: number };
 type Detail = { thread: Thread; messages: Message[]; files: FileInfo[] };
-type Config = { warehance: boolean; claude: boolean; gmail: string | null; slack: boolean };
+type Config = { warehance: boolean; warehanceWrite: boolean; claude: boolean; gmail: string | null; slack: boolean };
 type Clients = { connected: boolean; clients: { id: number; name: string }[]; error?: string };
 type Panel = { messageId: string; kind: "email" | "slack"; prefill: Proposal | null };
 
@@ -359,6 +359,7 @@ export default function ChatPage() {
                   message={message}
                   files={detail.files.filter((file) => file.messageId === message.id)}
                   isOwner={user?.role === "owner"}
+                  canWrite={Boolean(config.data?.warehanceWrite)}
                   onSend={(kind, prefill) => setPanel({ messageId: message.id, kind, prefill })}
                   onFilesChanged={() => void load(detail.thread.id)}
                 />
@@ -424,6 +425,7 @@ function Bubble({
   message,
   files,
   isOwner,
+  canWrite,
   onSend,
   onFilesChanged,
 }: {
@@ -431,6 +433,7 @@ function Bubble({
   message: Message;
   files: FileInfo[];
   isOwner: boolean;
+  canWrite: boolean;
   onSend: (kind: "email" | "slack", prefill: Proposal | null) => void;
   onFilesChanged: () => void;
 }) {
@@ -474,7 +477,7 @@ function Bubble({
         ) : null}
 
         {message.stockChange ? (
-          <StockCard threadId={threadId} messageId={message.id} change={message.stockChange} isOwner={isOwner} onDone={onFilesChanged} />
+          <StockCard threadId={threadId} messageId={message.id} change={message.stockChange} isOwner={isOwner} canWrite={canWrite} onDone={onFilesChanged} />
         ) : null}
 
         {files.map((file) => (
@@ -558,12 +561,14 @@ function StockCard({
   messageId,
   change,
   isOwner,
+  canWrite,
   onDone,
 }: {
   threadId: string;
   messageId: string;
   change: StockChange;
   isOwner: boolean;
+  canWrite: boolean;
   onDone: () => void;
 }) {
   const [dropped, setDropped] = useState<Set<string>>(new Set());
@@ -618,6 +623,9 @@ function StockCard({
         })}
       </ul>
       {change.status === "proposed" && !isOwner ? <p className="text-xs text-muted">Only the owner can confirm this. Warehance is unchanged.</p> : null}
+      {change.status === "proposed" && isOwner && !canWrite ? (
+        <Notice tone="warn">Add a Warehance API key in Settings. The lookup bot cannot change stock.</Notice>
+      ) : null}
       {change.status === "proposed" && isOwner && expired ? <Notice tone="warn">This card expired. Ask again.</Notice> : null}
       {error ? <Notice tone="bad">{error}</Notice> : null}
       {change.status === "applied" ? <Notice tone="ok">{change.note ?? "Warehance was updated."}</Notice> : null}

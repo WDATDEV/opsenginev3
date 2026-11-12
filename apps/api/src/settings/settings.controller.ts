@@ -11,6 +11,10 @@ const warehanceSchema = z.object({
   key: z.string().trim().optional().default(""),
 });
 
+const warehanceApiSchema = z.object({
+  key: z.string().trim().optional().default(""),
+});
+
 const slackSchema = z.object({
   token: z.string().trim().optional().default(""),
   channel: z.string().trim().max(200).optional().default(""),
@@ -20,7 +24,7 @@ const anthropicSchema = z.object({
   key: z.string().trim().optional().default(""),
 });
 
-const kindSchema = z.enum(["gmail", "warehance", "slack", "anthropic"]);
+const kindSchema = z.enum(["gmail", "warehance", "warehance_api", "slack", "anthropic"]);
 
 function kindOf(value: string) {
   const parsed = kindSchema.safeParse(value);
@@ -56,6 +60,15 @@ export class SettingsController {
   ) {
     connectors(ctx);
     return this.settings.saveWarehance(body.url, body.key);
+  }
+
+  @Post("settings/connectors/warehance_api")
+  saveWarehanceApi(
+    @CurrentUser() ctx: RequestContext,
+    @Body(new ZodPipe(warehanceApiSchema)) body: z.infer<typeof warehanceApiSchema>,
+  ) {
+    connectors(ctx);
+    return this.settings.saveWarehanceApi(body.key);
   }
 
   @Post("settings/connectors/slack")

@@ -23,13 +23,17 @@ import { conversationFor, findPerson, plain, post, uploadFile } from "./slack.js
 import { WarehanceClient } from "./warehance-client.js";
 import {
   argsForApply,
+  argsForLocationLookup,
   filterJobRows,
   isWriteTool,
   pickApplyTool,
+  pickLocationLookupTool,
   rowsFromInput,
+  skusFromInput,
   STOCK_JOB,
   stockRowCap,
   type StockChange,
+  type StockRow,
 } from "./stock-change.js";
 import { checkInventoryLocations, toInventoryLocations } from "./warehance-templates.js";
 
@@ -877,6 +881,33 @@ export class ChatService {
     return ["Saved. The owner will review it and press Send. Tell them it is ready to review below your answer."];
   }
 
+  private async lookupStockLocations(work: Work, skus: string[]): Promise<StockRow[]> {
+    const tool = pickLocationLookupTool(await work.client.listTools());
+    if (!tool) return [];
+    const info = {
+      scoped: "client_id" in ((tool.inputSchema?.properties ?? {}) as Record<string, unknown>),
+      props: new Set(Object.keys((tool.inputSchema?.properties ?? {}) as Record<string, unknown>)),
+    };
+    const collected: StockRow[] = [];
+    for (const sku of skus.slice(0, Math.max(stockRowCap(), 5))) {
+      const args = this.argsFor(argsForLocationLookup(tool, sku, work.thread.warehanceClientId), info, work);
+      const { data, failed } = await work.client.call(tool.name, args);
+      const { records } = recordsOf(data);
+      await this.logBot(work, {
+        tool: tool.name,
+        args,
+        ok: !failed,
+        error: failed ? (typeof data === "string" ? data : JSON.stringify(data)) : null,
+        records: failed ? [] : records,
+      });
+      if (failed) continue;
+      collected.push(...rowsFromInput(records));
+      work.lookups.push({ tool: tool.name, summary: `${tool.name} ${sku}: ${records.length} location record(s)` });
+      if (collected.length >= stockRowCap()) break;
+    }
+    return collected;
+  }
+
   private async proposeInventory(use: ToolUse, work: Work): Promise<[string, boolean?]> {
     const input = use.input as { client_name?: string; warehouse?: string; rows?: unknown };
     const scopedName = (work.thread.warehanceClientName ?? "").trim().toLowerCase();
@@ -884,15 +915,22 @@ export class ChatService {
       return ["Scope this chat to Tempostorm before proposing that stock change.", true];
     }
     const clientName = String(input.client_name ?? work.thread.warehanceClientName ?? "").trim();
-    const parsed = rowsFromInput(input.rows).map((row) => ({
+    let parsed = rowsFromInput(input.rows).map((row) => ({
       ...row,
       warehouse: String(input.warehouse ?? row.warehouse ?? STOCK_JOB.warehouse).trim() || STOCK_JOB.warehouse,
     }));
+    if (parsed.length === 0) {
+      const skus = skusFromInput(input.rows);
+      parsed = await this.lookupStockLocations(work, skus.length > 0 ? skus : [STOCK_JOB.skuPrefix]);
+    }
     const { kept, dropped } = filterJobRows(parsed, clientName);
     const cap = stockRowCap();
     const rows = kept.slice(0, cap);
     if (rows.length === 0) {
-      return [`No rows passed the checks. First job is Tempostorm, UFO SKUs, warehouse Ops Engine.${dropped.length ? ` ${dropped.slice(0, 5).join(" ")}` : ""}`, true];
+      return [
+        `Could not get a bin/location from Warehance for those UFO SKUs at Ops Engine. Nothing was changed. Do not ask the owner for location codes; say the lookup did not return locations.${dropped.length ? ` ${dropped.slice(0, 5).join(" ")}` : ""}`,
+        true,
+      ];
     }
     const now = new Date();
     const change: StockChange = {

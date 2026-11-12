@@ -51,6 +51,55 @@ export function isWriteTool(name: string, description = "") {
   return WRITE_NAME.test(`${name} ${description}`);
 }
 
+export function pickLocationLookupTool(tools: McpTool[]) {
+  const reads = tools.filter((tool) => !isWriteTool(tool.name, tool.description));
+  const prefer = [
+    "search_inventory_locations",
+    "list_inventory_locations",
+    "get_inventory_locations",
+    "search_inventory",
+    "list_inventory",
+    "get_product_inventory",
+    "search_products",
+  ];
+  for (const name of prefer) {
+    const hit = reads.find((tool) => tool.name === name);
+    if (hit) return hit;
+  }
+  return (
+    reads.find((tool) => /inventory/i.test(tool.name) && /location/i.test(`${tool.name} ${tool.description ?? ""}`)) ??
+    reads.find((tool) => /inventory/i.test(tool.name)) ??
+    null
+  );
+}
+
+export function argsForLocationLookup(tool: McpTool, sku: string, clientId: number | null) {
+  const props = Object.keys((tool.inputSchema?.properties ?? {}) as Record<string, unknown>);
+  const want: Record<string, string | number> = {
+    sku,
+    product_sku: sku,
+    query: sku,
+    search: sku,
+    sku_prefix: STOCK_JOB.skuPrefix,
+    warehouse: STOCK_JOB.warehouse,
+    warehouse_name: STOCK_JOB.warehouse,
+    limit: 100,
+  };
+  if (clientId) want.client_id = clientId;
+  const args: Record<string, unknown> = {};
+  for (const prop of props) {
+    const key = prop.toLowerCase();
+    if (key in want) args[prop] = want[key];
+  }
+  if (props.length === 0) {
+    args.sku = sku;
+    args.warehouse = STOCK_JOB.warehouse;
+    args.limit = 100;
+    if (clientId) args.client_id = clientId;
+  }
+  return args;
+}
+
 export function pickApplyTool(tools: McpTool[]) {
   const ranked = tools
     .filter((tool) => isWriteTool(tool.name, tool.description))
@@ -96,16 +145,49 @@ function qtyOf(record: Record<string, unknown>) {
   return Number.isFinite(n) ? n : 0;
 }
 
-export function rowsFromInput(input: unknown): StockRow[] {
+function flattenRecords(input: unknown): Record<string, unknown>[] {
   const list = Array.isArray(input) ? input : [];
-  const rows: StockRow[] = [];
+  const out: Record<string, unknown>[] = [];
   for (const item of list) {
     const record = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+    const nested = record.inventory_locations ?? record.locations ?? record.bins ?? record.inventory;
+    if (Array.isArray(nested) && nested.length > 0) {
+      for (const loc of nested) {
+        const piece = loc && typeof loc === "object" ? (loc as Record<string, unknown>) : { location: loc };
+        out.push({ ...record, ...piece, sku: record.sku ?? record.product_sku ?? piece.sku, location: piece.location ?? piece });
+      }
+    } else {
+      out.push(record);
+    }
+  }
+  return out;
+}
+
+export function skusFromInput(input: unknown): string[] {
+  const seen = new Set<string>();
+  for (const record of flattenRecords(input)) {
+    const sku = field(record, ["sku", "product_sku"]);
+    if (sku && sku.toLowerCase().startsWith(STOCK_JOB.skuPrefix.toLowerCase())) seen.add(sku);
+  }
+  return [...seen];
+}
+
+function warehouseName(value: string) {
+  const v = value.trim();
+  if (!v || /^\d+$/.test(v)) return STOCK_JOB.warehouse;
+  if (v.toLowerCase() === STOCK_JOB.warehouse.toLowerCase()) return STOCK_JOB.warehouse;
+  return v;
+}
+
+export function rowsFromInput(input: unknown): StockRow[] {
+  const rows: StockRow[] = [];
+  for (const record of flattenRecords(input)) {
     const sku = field(record, ["sku", "product_sku"]);
     const location = field(record, ["location", "location_name", "bin", "location_code", "shelf"]);
-    const warehouse = field(record, ["warehouse", "warehouse_name"]) || STOCK_JOB.warehouse;
+    const warehouse = warehouseName(field(record, ["warehouse", "warehouse_name"]) || STOCK_JOB.warehouse);
     const lotCode = field(record, ["lot_code", "lot"]);
     if (!sku || !location) continue;
+    if (/^\d+$/.test(location) && location === field(record, ["warehouse"])) continue;
     rows.push({
       sku,
       location,
@@ -133,7 +215,8 @@ export function filterJobRows(rows: StockRow[], clientName: string) {
       dropped.push(`${row.sku} is not a UFO SKU.`);
       continue;
     }
-    if (row.warehouse.trim().toLowerCase() !== warehouse) {
+    const wh = warehouseName(row.warehouse).toLowerCase();
+    if (wh !== warehouse) {
       dropped.push(`${row.sku} is not in warehouse Ops Engine.`);
       continue;
     }

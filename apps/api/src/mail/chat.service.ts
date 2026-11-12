@@ -968,11 +968,14 @@ export class ChatService {
     const bot = (await this.db.db.select().from(connectors).where(eq(connectors.kind, "warehance")).limit(1))[0];
     if (!bot?.extra || !bot.secret) throw new BadRequestException("The Warehance bot is not connected. Add it in Settings.");
     const client = new WarehanceClient(bot.extra, bot.secret);
-    const tool = pickApplyTool(await client.listTools());
+    const listed = await client.listTools();
+    const tool = pickApplyTool(listed);
     if (!tool) {
-      const failed = kept.map((row) => ({ ...row, ok: false, error: "This Warehance key has no inventory write tool." }));
-      await this.finishStock(messageId, { ...proposed, rows: failed, status: "rejected", note: "No write tool on this bot key." }, actor, "rejected", "This Warehance key has no inventory write tool.");
-      throw new BadRequestException("This Warehance key has no inventory write tool, so nothing was changed. The rows are in the log.");
+      const names = listed.map((item) => item.name).slice(0, 40).join(", ") || "none";
+      const detail = `This Warehance key has no inventory write tool (tools: ${names}). Nothing was changed. The rows are in the log.`;
+      const failed = kept.map((row) => ({ ...row, ok: false, error: detail }));
+      await this.finishStock(messageId, { ...proposed, rows: failed, status: "rejected", note: "No write tool on this bot key." }, actor, "rejected", detail);
+      throw new BadRequestException(detail);
     }
 
     const results = [];

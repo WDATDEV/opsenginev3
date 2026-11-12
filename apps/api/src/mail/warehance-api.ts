@@ -28,6 +28,14 @@ function qtyOf(value: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function norm(value: string) {
+  return value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+}
+
+function sameName(left: string, right: string) {
+  return norm(left) === norm(right);
+}
+
 function listOf(payload: unknown, keys: string[]) {
   const root = asObj(payload) ?? {};
   const data = asObj(root.data) ?? root;
@@ -69,9 +77,7 @@ export class WarehanceApi {
 
       const warehouse = await this.warehouse(row.warehouse);
       const warehouseId = idOf(warehouse);
-      if (!warehouseId) return { ok: false, error: `Warehouse ${row.warehouse} was not found.`, qtyBefore: row.qtyBefore };
-
-      const hits = await this.inventoryAt(productId, warehouseId, row.location);
+      const hits = await this.inventoryAt(productId, warehouseId, row.location, row.warehouse);
       const live = hits.reduce((sum, item) => sum + qtyOf(item.quantity), 0);
       if (hits.length === 0) {
         return { ok: false, error: `${row.sku} was not found at ${row.location} in ${row.warehouse}.`, qtyBefore: row.qtyBefore };
@@ -115,32 +121,87 @@ export class WarehanceApi {
   private async warehouse(name: string) {
     const payload = await this.get("/warehouses", { search_value: name, limit: "25" });
     const rows = listOf(payload, ["warehouses"]);
-    const want = name.trim().toLowerCase();
-    return rows.find((item) => textOf(item.name).toLowerCase() === want) ?? null;
+    return rows.find((item) => sameName(textOf(item.name), name)) ?? rows.find((item) => norm(textOf(item.name)).includes(norm(name))) ?? null;
   }
 
-  private async inventoryAt(productId: number, warehouseId: number, location: string) {
-    const want = location.trim().toLowerCase();
-    const named = listOf(
-      await this.get("/inventory-locations", {
+  private locationName(item: Item) {
+    const loc = asObj(item.location);
+    return textOf(loc?.name) || textOf(loc?.code) || textOf(item.location_name);
+  }
+
+  private warehouseNameOf(item: Item) {
+    const loc = asObj(item.location);
+    const warehouse = asObj(loc?.warehouse) ?? asObj(item.warehouse);
+    return textOf(warehouse?.name);
+  }
+
+  private matchBin(item: Item, location: string, warehouse: string) {
+    if (!sameName(this.locationName(item), location)) return false;
+    const got = this.warehouseNameOf(item);
+    if (!got || !warehouse) return true;
+    return sameName(got, warehouse) || norm(got).includes(norm(warehouse));
+  }
+
+  private async inventoryAt(productId: number, warehouseId: number | null, location: string, warehouse: string) {
+    const tries: Record<string, string>[] = [{ product_id: String(productId), location_name: location, limit: "100" }];
+    if (warehouseId) {
+      tries.unshift({
         product_id: String(productId),
         warehouse_id: String(warehouseId),
         location_name: location,
         limit: "100",
-      }),
-      ["inventory_locations"],
-    );
-    const namedHits = named.filter((item) => textOf(asObj(item.location)?.name).toLowerCase() === want);
-    if (namedHits.length > 0) return namedHits;
-    const all = listOf(
-      await this.get("/inventory-locations", {
-        product_id: String(productId),
-        warehouse_id: String(warehouseId),
-        limit: "100",
-      }),
-      ["inventory_locations"],
-    );
-    return all.filter((item) => textOf(asObj(item.location)?.name).toLowerCase() === want);
+      });
+      tries.push({ product_id: String(productId), warehouse_id: String(warehouseId), limit: "100" });
+    }
+    tries.push({ product_id: String(productId), limit: "100" });
+    tries.push({ location_name: location, limit: "100" });
+
+    const seen = new Set<string>();
+    const found: Item[] = [];
+    for (const query of tries) {
+      const rows = await this.listPages("/inventory-locations", query, "inventory_locations");
+      for (const item of rows) {
+        if (!this.matchBin(item, location, warehouse)) continue;
+        const key = `${idOf(asObj(item.location)) ?? this.locationName(item)}:${idOf(asObj(item.lpn)) ?? 0}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        found.push(item);
+      }
+      if (found.length > 0) return found;
+    }
+
+    const locId = await this.locationId(location, warehouseId);
+    if (!locId) return [];
+    const byId = await this.listPages("/inventory-locations", { product_id: String(productId), location_id: String(locId), limit: "100" }, "inventory_locations");
+    return byId.filter((item) => this.matchBin(item, location, warehouse) || idOf(asObj(item.location)) === locId);
+  }
+
+  private async locationId(name: string, warehouseId: number | null) {
+    try {
+      const query: Record<string, string> = { search_value: name, limit: "100" };
+      if (warehouseId) query.warehouse_id = String(warehouseId);
+      const rows = await this.listPages("/locations", query, "locations");
+      const hit = rows.find((item) => sameName(textOf(item.name), name) || sameName(textOf(item.code), name));
+      return idOf(hit);
+    } catch {
+      return null;
+    }
+  }
+
+  private async listPages(path: string, query: Record<string, string>, key: string) {
+    const out: Item[] = [];
+    let cursor = "";
+    for (let page = 0; page < 5; page += 1) {
+      const payload = await this.get(path, cursor ? { ...query, cursor } : query);
+      const rows = listOf(payload, [key]);
+      out.push(...rows);
+      const root = asObj(payload) ?? {};
+      const data = asObj(root.data) ?? root;
+      const next = textOf(data.next_cursor ?? root.next_cursor);
+      if (!next || rows.length === 0) break;
+      cursor = next;
+    }
+    return out;
   }
 
   private async get(path: string, query: Record<string, string>) {

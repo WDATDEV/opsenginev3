@@ -147,10 +147,33 @@ CREATE TABLE IF NOT EXISTS mail.chat_messages (
   error text,
   lookups jsonb NOT NULL DEFAULT '[]'::jsonb,
   proposal jsonb,
+  stock_change jsonb,
   sends jsonb NOT NULL DEFAULT '[]'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE mail.chat_messages ADD COLUMN IF NOT EXISTS stock_change jsonb;
 CREATE INDEX IF NOT EXISTS chat_messages_by_thread ON mail.chat_messages (thread_id, created_at);
+
+CREATE TABLE IF NOT EXISTS mail.chat_stock_logs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  thread_id uuid NOT NULL REFERENCES mail.chat_threads(id) ON DELETE CASCADE,
+  message_id uuid NOT NULL REFERENCES mail.chat_messages(id) ON DELETE CASCADE,
+  actor_id uuid NOT NULL,
+  actor_email text NOT NULL DEFAULT '',
+  actor_name text NOT NULL DEFAULT '',
+  status text NOT NULL,
+  client_name text NOT NULL DEFAULT '',
+  client_id bigint,
+  warehouse text NOT NULL DEFAULT '',
+  action text NOT NULL DEFAULT 'set',
+  quantity integer NOT NULL DEFAULT 0,
+  reason text NOT NULL DEFAULT '',
+  sku_prefix text NOT NULL DEFAULT '',
+  rows jsonb NOT NULL DEFAULT '[]'::jsonb,
+  error text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS chat_stock_logs_by_thread ON mail.chat_stock_logs (thread_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS mail.chat_lookup_logs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

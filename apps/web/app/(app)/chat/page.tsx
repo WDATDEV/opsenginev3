@@ -17,6 +17,19 @@ type Thread = {
   updatedAt: string;
 };
 type Proposal = { kind: "email" | "slack"; to: string; subject: string; body: string; fileId: string | null; fileName: string | null };
+type StockRow = { sku: string; location: string; warehouse: string; qtyBefore: number; qtyAfter: number; lotCode: string; ok: boolean | null; error: string | null };
+type StockChange = {
+  logId: string | null;
+  clientName: string;
+  warehouse: string;
+  action: "set";
+  quantity: number;
+  reason: string;
+  rows: StockRow[];
+  status: "proposed" | "applied" | "rejected";
+  expiresAt: string;
+  note: string | null;
+};
 type Send = { kind: "email" | "slack"; to: string; at: string; ok: boolean; note: string; file: string | null };
 type BotLog = { tool: string; ok: boolean; records: number; error: string | null };
 type Message = {
@@ -28,6 +41,7 @@ type Message = {
   lookups: { tool: string; summary: string }[];
   botLogs: BotLog[];
   proposal: Proposal | null;
+  stockChange: StockChange | null;
   sends: Send[];
   createdAt: string;
 };
@@ -43,6 +57,7 @@ const EXAMPLES = [
   "Make an Excel file of this month's shipments",
   "Which products are low on stock?",
   "List SKUs with quantity greater than 0 as a CSV",
+  "Zero UFO SKUs for Tempostorm to 0 at Ops Engine",
 ];
 
 function size(bytes: number) {
@@ -343,6 +358,7 @@ export default function ChatPage() {
                   threadId={detail.thread.id}
                   message={message}
                   files={detail.files.filter((file) => file.messageId === message.id)}
+                  isOwner={user?.role === "owner"}
                   onSend={(kind, prefill) => setPanel({ messageId: message.id, kind, prefill })}
                   onFilesChanged={() => void load(detail.thread.id)}
                 />
@@ -407,12 +423,14 @@ function Bubble({
   threadId,
   message,
   files,
+  isOwner,
   onSend,
   onFilesChanged,
 }: {
   threadId: string;
   message: Message;
   files: FileInfo[];
+  isOwner: boolean;
   onSend: (kind: "email" | "slack", prefill: Proposal | null) => void;
   onFilesChanged: () => void;
 }) {
@@ -453,6 +471,10 @@ function Bubble({
         ) : null}
         {message.status === "done" ? (
           <p className="whitespace-pre-wrap rounded-2xl rounded-bl-md bg-black/[0.04] px-3.5 py-2.5 text-sm leading-6">{message.content}</p>
+        ) : null}
+
+        {message.stockChange ? (
+          <StockCard threadId={threadId} messageId={message.id} change={message.stockChange} isOwner={isOwner} onDone={onFilesChanged} />
         ) : null}
 
         {files.map((file) => (
@@ -527,6 +549,84 @@ function Bubble({
           </p>
         ))}
       </div>
+    </div>
+  );
+}
+
+function StockCard({
+  threadId,
+  messageId,
+  change,
+  isOwner,
+  onDone,
+}: {
+  threadId: string;
+  messageId: string;
+  change: StockChange;
+  isOwner: boolean;
+  onDone: () => void;
+}) {
+  const [dropped, setDropped] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const expired = change.status === "proposed" && new Date(change.expiresAt).getTime() < Date.now();
+  const rows = change.rows.filter((row) => !dropped.has(`${row.sku}|${row.location}`));
+
+  async function confirm() {
+    setBusy(true);
+    setError(null);
+    try {
+      await post(`/mail/chat/threads/${threadId}/messages/${messageId}/stock`, {
+        keep: rows.map((row) => ({ sku: row.sku, location: row.location })),
+      });
+      onDone();
+    } catch (err) {
+      setError(reason(err, "Could not apply that stock change."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card space-y-2 border-moss/30 p-3 text-sm">
+      <p className="font-medium">Stock change · {change.clientName}</p>
+      <p className="text-xs text-muted">
+        {change.warehouse} · action {change.action} · qty {change.quantity} · {change.reason}
+      </p>
+      {change.note ? <p className="text-xs text-muted">{change.note}</p> : null}
+      <ul className="space-y-1 text-xs">
+        {change.rows.map((row) => {
+          const key = `${row.sku}|${row.location}`;
+          const out = dropped.has(key);
+          return (
+            <li key={key} className={out ? "text-muted line-through" : ""}>
+              {row.sku} @ {row.location}: {row.qtyBefore} → {row.qtyAfter}
+              {row.ok === true ? " · done" : null}
+              {row.ok === false ? ` · ${row.error ?? "failed"}` : null}
+              {change.status === "proposed" && isOwner ? (
+                <button className="ml-2 underline" type="button" onClick={() => setDropped((set) => {
+                  const next = new Set(set);
+                  if (next.has(key)) next.delete(key);
+                  else next.add(key);
+                  return next;
+                })}>
+                  {out ? "Keep" : "Drop"}
+                </button>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      {change.status === "proposed" && !isOwner ? <p className="text-xs text-muted">Only the owner can confirm this. Warehance is unchanged.</p> : null}
+      {change.status === "proposed" && isOwner && expired ? <Notice tone="warn">This card expired. Ask again.</Notice> : null}
+      {error ? <Notice tone="bad">{error}</Notice> : null}
+      {change.status === "applied" ? <Notice tone="ok">{change.note ?? "Warehance was updated."}</Notice> : null}
+      {change.status === "rejected" ? <Notice tone="bad">{change.note ?? "That change was not applied."}</Notice> : null}
+      {change.status === "proposed" && isOwner && !expired ? (
+        <button className="btn btn-primary btn-sm" type="button" disabled={busy || rows.length === 0} onClick={() => void confirm()}>
+          {busy ? <Spinner /> : `Confirm ${rows.length} row(s)`}
+        </button>
+      ) : null}
     </div>
   );
 }

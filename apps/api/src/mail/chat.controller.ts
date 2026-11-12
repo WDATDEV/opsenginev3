@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Res, UseGuards } from "@nestjs/common";
-import { authorizeSection, type RequestContext } from "@opsengine/kernel";
+import { authorizeSection, ForbiddenError, type RequestContext } from "@opsengine/kernel";
 import type { Response } from "express";
 import { z } from "zod";
 import { AuthGuard } from "../auth/auth.guard.js";
@@ -27,6 +27,9 @@ const updateSchema = z.object({
 
 const askSchema = z.object({ text: z.string().trim().min(1, "Type a question.").max(8000) });
 const recoverSchema = z.object({ format: z.enum(["csv", "xlsx", "json"]).default("csv") });
+const stockSchema = z.object({
+  keep: z.array(z.object({ sku: z.string().trim().min(1).max(80), location: z.string().trim().min(1).max(120) })).max(20).default([]),
+});
 
 const emailSchema = z.object({
   messageId: z.string().uuid(),
@@ -117,6 +120,22 @@ export class ChatController {
     @Body(new ZodPipe(recoverSchema)) body: z.infer<typeof recoverSchema>,
   ) {
     return this.chat.recover(access(ctx), id, messageId, body.format);
+  }
+
+  @Get("threads/:id/stock-logs")
+  stockLogs(@CurrentUser() ctx: RequestContext, @Param("id") id: string) {
+    if (ctx.principal.role !== "owner") throw new ForbiddenError("Only the owner can open stock-change logs.");
+    return this.chat.stockLogs(access(ctx), id);
+  }
+
+  @Post("threads/:id/messages/:messageId/stock")
+  confirmStock(
+    @CurrentUser() ctx: RequestContext,
+    @Param("id") id: string,
+    @Param("messageId") messageId: string,
+    @Body(new ZodPipe(stockSchema)) body: z.infer<typeof stockSchema>,
+  ) {
+    return this.chat.confirmStock(ctx.principal, id, messageId, body.keep);
   }
 
   @Post("threads/:id/email")

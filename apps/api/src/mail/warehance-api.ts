@@ -36,6 +36,16 @@ function sameName(left: string, right: string) {
   return norm(left) === norm(right);
 }
 
+function freeQty(item: Item) {
+  const onHand = qtyOf(item.quantity);
+  if (item.available != null && item.available !== "") {
+    const available = qtyOf(item.available);
+    if (Number.isFinite(available)) return Math.max(0, Math.min(onHand, available));
+  }
+  const locked = qtyOf(item.action_locked);
+  return Math.max(0, onHand - locked);
+}
+
 function listOf(payload: unknown, keys: string[]) {
   const root = asObj(payload) ?? {};
   const data = asObj(root.data) ?? root;
@@ -79,22 +89,32 @@ export class WarehanceApi {
       const warehouseId = idOf(warehouse);
       const hits = await this.inventoryAt(productId, warehouseId, row.location, row.warehouse);
       const live = hits.reduce((sum, item) => sum + qtyOf(item.quantity), 0);
+      const free = hits.reduce((sum, item) => sum + freeQty(item), 0);
       if (hits.length === 0) {
         return { ok: false, error: `${row.sku} was not found at ${row.location} in ${row.warehouse}.`, qtyBefore: row.qtyBefore };
       }
-      if (live === STOCK_JOB.quantity) return { ok: true, error: null, qtyBefore: live };
+      if (live === STOCK_JOB.quantity || free === 0) {
+        if (live > STOCK_JOB.quantity && free === 0) {
+          return {
+            ok: false,
+            error: `${row.sku} @ ${row.location} has ${live} on hand but none available (allocated or locked). Warehance will not go negative. Nothing was changed.`,
+            qtyBefore: live,
+          };
+        }
+        return { ok: true, error: null, qtyBefore: live };
+      }
 
       for (const item of hits) {
-        const onHand = qtyOf(item.quantity);
-        const delta = STOCK_JOB.quantity - onHand;
-        if (delta === 0) continue;
+        const take = freeQty(item);
+        if (take <= 0) continue;
         const location = asObj(item.location);
         const locationId = idOf(location);
         if (!locationId) return { ok: false, error: `${row.sku} @ ${row.location} has no location id.`, qtyBefore: live };
         const body: Item = {
           product_id: productId,
           location_id: locationId,
-          quantity: delta,
+          quantity: STOCK_JOB.quantity - take,
+          damaged: false,
           inventory_adjustment_reason: STOCK_JOB.reason,
           note: STOCK_JOB.reason,
         };
@@ -106,7 +126,15 @@ export class WarehanceApi {
       }
       return { ok: true, error: null, qtyBefore: live };
     } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : "Warehance did not accept that stock change.", qtyBefore: row.qtyBefore };
+      const message = err instanceof Error ? err.message : "Warehance did not accept that stock change.";
+      if (/negative quantity/i.test(message)) {
+        return {
+          ok: false,
+          error: `${row.sku} @ ${row.location} could not go to 0. Some units are allocated or already moved. Ask again so the card shows live quantity, then Confirm. Nothing extra was taken.`,
+          qtyBefore: row.qtyBefore,
+        };
+      }
+      return { ok: false, error: message, qtyBefore: row.qtyBefore };
     }
   }
 

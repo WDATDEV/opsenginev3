@@ -110,6 +110,7 @@ export class JobsService {
                 assigneeName: task.assigneeId ? names.get(task.assigneeId) ?? null : null,
                 startAt: task.startAt,
                 activityCode: task.activityCode,
+                hourlyRateCents: task.hourlyRateCents,
                 activityName: task.activityCode
                   ? activities.find((item) => item.code === task.activityCode)?.name ?? task.activityCode
                   : null,
@@ -272,6 +273,7 @@ export class JobsService {
       dependsOnId?: string;
       startAt?: string;
       activityCode?: string;
+      hourlyRateCents?: number;
       related?: { type: string; id: string };
     },
   ) {
@@ -307,6 +309,7 @@ export class JobsService {
         dependsOnId: input.dependsOnId ?? null,
         startAt: input.startAt ? new Date(input.startAt) : null,
         activityCode: input.activityCode ?? null,
+        hourlyRateCents: input.hourlyRateCents ?? null,
         relatedType: input.related?.type ?? null,
         relatedId: input.related?.id ?? null,
       })

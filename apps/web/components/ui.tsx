@@ -22,6 +22,45 @@ export function Field({
   );
 }
 
+/** Text input for counts and prices so typing is not blocked by browser number controls. */
+export function CountInput({
+  value,
+  onChange,
+  decimal,
+  placeholder,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  decimal?: boolean;
+  placeholder?: string;
+}) {
+  return (
+    <input
+      className="field min-w-0 flex-1"
+      type="text"
+      inputMode={decimal ? "decimal" : "numeric"}
+      autoComplete="off"
+      placeholder={placeholder}
+      value={value}
+      onChange={(event) => {
+        const next = event.target.value.replace(decimal ? /[^\d.]/g : /\D/g, "");
+        if (!decimal) {
+          onChange(next);
+          return;
+        }
+        const [whole = "", ...rest] = next.split(".");
+        onChange(rest.length > 0 ? `${whole}.${rest.join("").slice(0, 2)}` : whole);
+      }}
+    />
+  );
+}
+
+export function asCount(value: string, fallback = 0) {
+  if (value.trim() === "") return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 const NOTICE_ICONS = {
   ok: <path d="m5 10.5 3.2 3.2L15 6.8" />,
   bad: <path d="M10 6v5M10 14h.01" />,

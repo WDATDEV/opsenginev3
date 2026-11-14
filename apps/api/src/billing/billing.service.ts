@@ -130,7 +130,7 @@ export class BillingService {
       description: string;
       quantity: number;
       unit: string;
-      rate: Rate;
+      rate: { id?: string | null; rateCents: number };
       sourceType: string;
       sourceId: string;
     }) => {
@@ -141,7 +141,7 @@ export class BillingService {
         .values({
           clientId: job.clientId,
           jobId: job.id,
-          rateCardId: row.rate.id,
+          rateCardId: row.rate.id ?? null,
           description: row.description,
           quantity: row.quantity,
           unit: row.unit,
@@ -165,8 +165,10 @@ export class BillingService {
       const linked = segment.note ? taskById.get(segment.note) : null;
       const activityCode = linked?.activityCode ?? segment.taskCode;
       const department = departmentByCode.get(activityCode) ?? segment.department;
-      // A price set for this exact activity wins. Otherwise the hourly price of the whole service applies.
-      const rate = latest(rates, activityCode, "hour") ?? serviceRate(rates, department);
+      const rate =
+        linked?.hourlyRateCents != null
+          ? { id: null, rateCents: linked.hourlyRateCents }
+          : latest(rates, activityCode, "hour") ?? serviceRate(rates, department);
       if (!rate) continue;
       const label = linked?.title ?? names.get(activityCode) ?? names.get(segment.taskCode) ?? segment.taskCode;
       await draft({

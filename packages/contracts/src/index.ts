@@ -349,6 +349,7 @@ export const createJobTaskSchema = z.object({
   dependsOnId: z.string().uuid().optional(),
   startAt: taskStartAt.optional(),
   activityCode: z.string().trim().min(1).max(40).optional(),
+  hourlyRateCents: z.number().int().min(0).max(10_000_000).optional(),
 });
 
 export const setTaskStartSchema = z.object({

@@ -82,6 +82,7 @@ export class JobsController {
       dependsOnId?: string;
       startAt?: string;
       activityCode?: string;
+      hourlyRateCents?: number;
     },
   ) {
     authorize(ctx, "job.manage");

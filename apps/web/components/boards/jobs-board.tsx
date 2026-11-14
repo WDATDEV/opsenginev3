@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useSession } from "@/components/shell";
-import { Field, Notice, PageTitle, useResource } from "@/components/ui";
+import { asCount, CountInput, Field, Notice, PageTitle, useResource } from "@/components/ui";
 import { ApiError, BILL_BASES, billBasisLabel, canApproveCharges, canManageJobs, money, post } from "@/lib/api";
 
 type JobTask = {
@@ -18,6 +18,7 @@ type JobTask = {
   blocked: boolean;
   startAt: string | null;
   activityCode: string | null;
+  hourlyRateCents: number | null;
   activityName: string | null;
   started: boolean;
 };
@@ -301,6 +302,7 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                           {task.dueOn ? ` · due ${task.dueOn}` : ""}
                           {task.dependsOnTitle ? ` · after ${task.dependsOnTitle}` : ""}
                           {task.blocked ? " · waiting" : ""}
+                          {task.hourlyRateCents != null ? ` · ${money(task.hourlyRateCents)} / hour` : ""}
                         </span>
                         {task.status !== "done" && task.assigneeId ? (
                           <span className="block text-xs text-muted">{taskStartNote(task)}</span>
@@ -686,6 +688,7 @@ function TaskForm({
     dependsOnId?: string;
     startAt?: string;
     activityCode?: string;
+    hourlyRateCents?: number;
   }) => Promise<boolean>;
   onAddWork: (body: Record<string, unknown>) => Promise<boolean>;
 }) {
@@ -697,32 +700,34 @@ function TaskForm({
   const [dependsOnId, setDependsOnId] = useState("");
   const [reference, setReference] = useState("");
   const [carrier, setCarrier] = useState<(typeof CARRIERS)[number]>("ups");
-  const [expectedCartons, setExpectedCartons] = useState(0);
+  const [expectedCartons, setExpectedCartons] = useState("0");
   const [loadKind, setLoadKind] = useState<"truck" | "container">("truck");
   const [dock, setDock] = useState("Dock 1");
-  const [pallets, setPallets] = useState(0);
-  const [cartons, setCartons] = useState(0);
-  const [orders, setOrders] = useState(1);
+  const [pallets, setPallets] = useState("0");
+  const [cartons, setCartons] = useState("0");
+  const [orders, setOrders] = useState("1");
   const [note, setNote] = useState("");
-  const [units, setUnits] = useState(1);
+  const [units, setUnits] = useState("1");
   const [startAt, setStartAt] = useState("");
-  const [activityCode, setActivityCode] = useState(activities[0]?.code ?? "");
-  const needsActivity = kind === "";
-  const chosenActivity = activities.find((item) => item.code === activityCode) ?? activities[0] ?? null;
-  const chosenRate = rateFor(rates, kind === "" ? chosenActivity : null, kind || undefined);
+  const [hourlyDollars, setHourlyDollars] = useState("");
+  const chosenRate = kind ? rateFor(rates, null, kind) : null;
+  const hourlyCents = Math.round(Number(hourlyDollars) * 100);
+  const hourlyReady = hourlyDollars.trim() !== "" && Number.isFinite(hourlyCents) && hourlyCents >= 0;
   const common = {
     ...(assigneeId ? { assigneeId } : {}),
     ...(assigneeId && startAt ? { startAt: toIso(startAt) } : {}),
-    ...(kind === "" && activityCode ? { activityCode } : {}),
+    ...(kind === "" && hourlyReady ? { hourlyRateCents: hourlyCents } : {}),
     ...(dueOn ? { dueOn } : {}),
     ...(dependsOnId ? { dependsOnId } : {}),
   };
 
   function body(): Record<string, unknown> {
-    if (kind === "receiving") return { kind, reference, carrier, expectedCartons, ...common };
-    if (kind === "unloading") return { kind, reference, loadKind, dock, pallets, cartons, ...common };
-    if (kind === "packing") return { kind, orders, note, ...common };
-    if (kind === "picking") return { kind, reference, units, ...common };
+    if (kind === "receiving") return { kind, reference, carrier, expectedCartons: asCount(expectedCartons), ...common };
+    if (kind === "unloading") {
+      return { kind, reference, loadKind, dock, pallets: asCount(pallets), cartons: asCount(cartons), ...common };
+    }
+    if (kind === "packing") return { kind, orders: Math.max(1, asCount(orders, 1)), note, ...common };
+    if (kind === "picking") return { kind, reference, units: Math.max(1, asCount(units, 1)), ...common };
     return { kind, reference, carrier, ...common };
   }
 
@@ -731,13 +736,14 @@ function TaskForm({
     setDueOn("");
     setDependsOnId("");
     setReference("");
-    setExpectedCartons(0);
-    setPallets(0);
-    setCartons(0);
-    setOrders(1);
+    setExpectedCartons("0");
+    setPallets("0");
+    setCartons("0");
+    setOrders("1");
     setNote("");
-    setUnits(1);
+    setUnits("1");
     setStartAt("");
+    setHourlyDollars("");
   }
 
   return (
@@ -745,7 +751,7 @@ function TaskForm({
       className="mt-3 grid gap-3 md:grid-cols-4"
       onSubmit={(event) => {
         event.preventDefault();
-        if (needsActivity && !activityCode) return;
+        if (kind === "" && (!title.trim() || !hourlyReady)) return;
         const send = kind ? onAddWork(body()) : onAdd({ title, ...common });
         void send.then((ok) => {
           if (ok) reset();
@@ -775,15 +781,14 @@ function TaskForm({
               placeholder="Count the pallets"
             />
           </Field>
-          <Field label="Kind of work" hint={rateHint(chosenRate)}>
-            <select className="field" value={activityCode} onChange={(event) => setActivityCode(event.target.value)}>
-              <option value="">Choose the kind of work</option>
-              {activities.map((item) => (
-                <option key={item.code} value={item.code}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
+          <Field label="Price per hour" hint="Draft charges for this task use this hourly price.">
+            <div className="flex items-center gap-2">
+              <span className="text-muted" aria-hidden="true">
+                $
+              </span>
+              <CountInput decimal placeholder="0.00" value={hourlyDollars} onChange={setHourlyDollars} />
+              <span className="shrink-0 text-sm text-muted">/ hour</span>
+            </div>
           </Field>
         </>
       ) : (
@@ -804,7 +809,7 @@ function TaskForm({
             </select>
           </Field>
           <Field label="Cartons expected">
-            <input className="field" type="number" min={0} value={expectedCartons} onChange={(event) => setExpectedCartons(Number(event.target.value))} />
+            <CountInput value={expectedCartons} onChange={setExpectedCartons} />
           </Field>
         </>
       ) : null}
@@ -823,17 +828,17 @@ function TaskForm({
             <input className="field" value={dock} onChange={(event) => setDock(event.target.value)} />
           </Field>
           <Field label="Pallets">
-            <input className="field" type="number" min={0} value={pallets} onChange={(event) => setPallets(Number(event.target.value))} />
+            <CountInput value={pallets} onChange={setPallets} />
           </Field>
           <Field label="Cartons">
-            <input className="field" type="number" min={0} value={cartons} onChange={(event) => setCartons(Number(event.target.value))} />
+            <CountInput value={cartons} onChange={setCartons} />
           </Field>
         </>
       ) : null}
       {kind === "packing" ? (
         <>
           <Field label="Orders to pack">
-            <input className="field" type="number" min={1} value={orders} onChange={(event) => setOrders(Number(event.target.value))} />
+            <CountInput value={orders} onChange={setOrders} />
           </Field>
           <Field label="Note">
             <input className="field" value={note} onChange={(event) => setNote(event.target.value)} />
@@ -846,7 +851,7 @@ function TaskForm({
             <input className="field font-mono" value={reference} onChange={(event) => setReference(event.target.value)} />
           </Field>
           <Field label="Units to pick">
-            <input className="field" type="number" min={1} value={units} onChange={(event) => setUnits(Number(event.target.value))} />
+            <CountInput value={units} onChange={setUnits} />
           </Field>
         </>
       ) : null}
@@ -903,7 +908,7 @@ function TaskForm({
         </select>
       </Field>
       <div className="md:col-span-4">
-        <button className="btn btn-ghost" type="submit" disabled={needsActivity && !activityCode}>
+        <button className="btn btn-ghost" type="submit" disabled={kind === "" && (!title.trim() || !hourlyReady)}>
           {kind ? `Add ${WORK_KINDS.find(([code]) => code === kind)?.[1].toLowerCase()}` : "Add task"}
         </button>
         {kind ? (

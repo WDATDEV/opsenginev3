@@ -286,7 +286,10 @@ export default function WarehousePage() {
       (job) => job.enabledServices.includes(service) && !(job.completedCodes ?? []).includes(activity.code),
     );
   });
-  const chosen = startable.find((item) => item.code === taskCode) ?? (startable.length === 1 ? startable[0] : null);
+  const openTasks = (context?.tasks ?? []).filter((item) => !item.blocked);
+  const chosen =
+    startable.find((item) => item.code === taskCode) ??
+    (startable.length === 1 && openTasks.length === 0 ? startable[0] : null);
   const projects = chosen?.billable
     ? jobs.filter((job) => {
         const service = serviceForDepartment[chosen.department];
@@ -295,18 +298,18 @@ export default function WarehousePage() {
       })
     : [];
   const picked = projects.find((job) => job.id === jobId) ?? (projects.length === 1 ? projects[0] : null);
-  const openTasks = (context?.tasks ?? []).filter((item) => !item.blocked);
   const assignedTask =
-    openTasks.find((item) => item.id === assignedTaskId) ?? (openTasks.length === 1 && startable.length === 0 ? openTasks[0] : null);
+    openTasks.find((item) => item.id === assignedTaskId) ??
+    (!taskCode && openTasks.length === 1 ? openTasks[0] : null);
   const ready = Boolean(assignedTask || (chosen && (!chosen.billable || picked)));
   const working = context?.task ?? null;
   const paused = !working ? context?.paused ?? null : null;
   const checkedIn = Boolean(context?.employee.clockedIn);
   const onMeal = Boolean(context?.employee.onMeal);
-  const currentJobId = working?.jobId ?? paused?.jobId ?? picked?.id ?? null;
-  const activeDepartment = working?.department ?? paused?.department ?? chosen?.department ?? null;
+  const currentJobId = working?.jobId ?? paused?.jobId ?? assignedTask?.jobId ?? picked?.id ?? null;
+  const activeDepartment = working?.department ?? paused?.department ?? null;
   const panel =
-    activeDepartment && (AREAS as readonly string[]).includes(activeDepartment)
+    (working || paused) && activeDepartment && (AREAS as readonly string[]).includes(activeDepartment)
       ? (activeDepartment as (typeof AREAS)[number])
       : null;
   const hint = !checkedIn

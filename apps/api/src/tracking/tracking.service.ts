@@ -386,7 +386,10 @@ export class TrackingService {
         if (row.status === "done") markDone(row.jobId, row.activityCode);
       }
       for (const row of employeeSegments) {
-        if (row.endReason === "complete") markDone(row.jobId, row.taskCode);
+        // Clocking a named job task reuses a backing activity. That is not "this kind of work is finished."
+        if (row.endReason === "complete" && !(row.note && taskTitleById.has(row.note))) {
+          markDone(row.jobId, row.taskCode);
+        }
       }
       const assignments = await tx.select().from(jobAssignees).where(eq(jobAssignees.employeeId, employee.id));
       const assigned = new Set(assignments.map((row) => row.jobId));
@@ -2008,7 +2011,7 @@ export class TrackingService {
         )[0];
         const doneSegment = (
           await tx
-            .select({ id: segments.id })
+            .select({ id: segments.id, note: segments.note })
             .from(segments)
             .where(
               and(
@@ -2018,8 +2021,7 @@ export class TrackingService {
                 eq(segments.endReason, "complete"),
               ),
             )
-            .limit(1)
-        )[0];
+        ).find((row) => !row.note);
         if (doneTask || doneSegment) {
           await tx.update(jobAssignees).set({ autoStartedAt: new Date() }).where(eq(jobAssignees.id, claim.id));
           return false;

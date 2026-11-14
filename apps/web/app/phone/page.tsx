@@ -29,6 +29,7 @@ type Context = {
     department: string;
     taskCode: string;
     activityName: string;
+    jobId: string | null;
     jobReference: string | null;
     clientName: string | null;
   } | null;
@@ -71,8 +72,8 @@ type Context = {
     assignedTo: string | null;
     checkedOutTo: string | null;
   }[];
-  shipments: { id: string; reference: string; status: string; coworkers: string[] }[];
-  loads: { id: string; reference: string; kind: string; dock: string; crew: string[] }[];
+  shipments: { id: string; jobId: string | null; reference: string; status: string; coworkers: string[] }[];
+  loads: { id: string; jobId: string | null; reference: string; kind: string; dock: string; crew: string[] }[];
   gaylords: { id: string; code: string; carrier: string }[];
 };
 
@@ -288,6 +289,7 @@ export default function WarehousePage() {
   const paused = !working ? context?.paused ?? null : null;
   const checkedIn = Boolean(context?.employee.clockedIn);
   const onMeal = Boolean(context?.employee.onMeal);
+  const currentJobId = working?.jobId ?? paused?.jobId ?? picked?.id ?? null;
   const activeDepartment = working?.department ?? paused?.department ?? chosen?.department ?? null;
   const panel =
     activeDepartment && (AREAS as readonly string[]).includes(activeDepartment)
@@ -578,8 +580,12 @@ export default function WarehousePage() {
               <p className="mb-2 text-sm font-semibold text-muted">Record your work</p>
               {panel === "packing" ? <PackPanel context={context} badge={badge} run={run} /> : null}
               {panel === "picking" ? <PickPanel context={context} badge={badge} run={run} /> : null}
-              {panel === "receiving" ? <ReceivePanel context={context} badge={badge} run={run} /> : null}
-              {panel === "unloading" ? <UnloadPanel context={context} badge={badge} run={run} /> : null}
+              {panel === "receiving" ? (
+                <ReceivePanel context={context} badge={badge} run={run} jobId={currentJobId} />
+              ) : null}
+              {panel === "unloading" ? (
+                <UnloadPanel context={context} badge={badge} run={run} jobId={currentJobId} />
+              ) : null}
               {panel === "sorting" ? <SortPanel context={context} badge={badge} run={run} /> : null}
             </section>
           ) : null}
@@ -769,29 +775,43 @@ function ReceivePanel({
   context,
   badge,
   run,
+  jobId,
 }: {
   context: Context;
   badge: string;
   run: (path: string, body: unknown) => Promise<boolean>;
+  jobId: string | null;
 }) {
-  const [shipmentId, setShipmentId] = useState(context.shipments[0]?.id ?? "");
+  const shipments = jobId ? context.shipments.filter((item) => item.jobId === jobId) : [];
+  const [shipmentId, setShipmentId] = useState(shipments[0]?.id ?? "");
   const [sku, setSku] = useState("");
   const [expectedQty, setExpectedQty] = useState(1);
   const [receivedQty, setReceivedQty] = useState(1);
-  const shipment = context.shipments.find((item) => item.id === shipmentId);
-  if (context.shipments.length === 0) {
-    return <p className="card p-4 text-sm text-muted">No open shipment for this project.</p>;
+  useEffect(() => {
+    const next = jobId ? context.shipments.filter((item) => item.jobId === jobId).map((item) => item.id) : [];
+    setShipmentId((current) => (next.includes(current) ? current : next[0] ?? ""));
+  }, [jobId, context.shipments]);
+  const shipment = shipments.find((item) => item.id === shipmentId);
+  if (!jobId) {
+    return <p className="card p-4 text-sm text-muted">Choose the project first. Only that job’s shipment will show.</p>;
+  }
+  if (shipments.length === 0) {
+    return <p className="card p-4 text-sm text-muted">No open shipment on this job.</p>;
   }
   return (
     <div className="card space-y-3 p-4">
       <Field label="Shipment">
-        <select className="field" value={shipmentId} onChange={(event) => setShipmentId(event.target.value)}>
-          {context.shipments.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.reference}
-            </option>
-          ))}
-        </select>
+        {shipments.length === 1 ? (
+          <p className="field flex items-center">{shipment?.reference}</p>
+        ) : (
+          <select className="field" value={shipmentId} onChange={(event) => setShipmentId(event.target.value)}>
+            {shipments.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.reference}
+              </option>
+            ))}
+          </select>
+        )}
       </Field>
       <p className="text-sm text-muted">
         {shipment && shipment.coworkers.length > 0
@@ -833,26 +853,42 @@ function UnloadPanel({
   context,
   badge,
   run,
+  jobId,
 }: {
   context: Context;
   badge: string;
   run: (path: string, body: unknown) => Promise<boolean>;
+  jobId: string | null;
 }) {
-  const [loadId, setLoadId] = useState(context.loads[0]?.id ?? "");
-  const load = context.loads.find((item) => item.id === loadId);
-  if (context.loads.length === 0) {
-    return <p className="card p-4 text-sm text-muted">No open truck or container.</p>;
+  const loads = jobId ? context.loads.filter((item) => item.jobId === jobId) : [];
+  const [loadId, setLoadId] = useState(loads[0]?.id ?? "");
+  useEffect(() => {
+    const next = jobId ? context.loads.filter((item) => item.jobId === jobId).map((item) => item.id) : [];
+    setLoadId((current) => (next.includes(current) ? current : next[0] ?? ""));
+  }, [jobId, context.loads]);
+  const load = loads.find((item) => item.id === loadId);
+  if (!jobId) {
+    return <p className="card p-4 text-sm text-muted">Choose the project first. Only that job’s truck will show.</p>;
+  }
+  if (loads.length === 0) {
+    return <p className="card p-4 text-sm text-muted">No open truck or container on this job.</p>;
   }
   return (
     <div className="card space-y-3 p-4">
       <Field label="Truck or container">
-        <select className="field" value={loadId} onChange={(event) => setLoadId(event.target.value)}>
-          {context.loads.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.reference} · {item.dock}
-            </option>
-          ))}
-        </select>
+        {loads.length === 1 ? (
+          <p className="field flex items-center">
+            {load?.reference} · {load?.dock}
+          </p>
+        ) : (
+          <select className="field" value={loadId} onChange={(event) => setLoadId(event.target.value)}>
+            {loads.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.reference} · {item.dock}
+              </option>
+            ))}
+          </select>
+        )}
       </Field>
       <p className="text-sm text-muted">
         {load && load.crew.length > 0 ? `On it now: ${load.crew.join(", ")}.` : "No crew yet."}

@@ -458,6 +458,7 @@ export class TrackingService {
           .filter((row) => row.status !== "closed" && mine(row.jobId))
           .map((row) => ({
             id: row.id,
+            jobId: row.jobId,
             reference: row.reference,
             status: row.status,
             coworkers: workers
@@ -468,6 +469,7 @@ export class TrackingService {
           .filter((row) => row.status !== "done" && mine(row.jobId))
           .map((row) => ({
             id: row.id,
+            jobId: row.jobId,
             reference: row.reference,
             kind: row.kind,
             dock: row.dock,

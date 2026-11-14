@@ -102,6 +102,7 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
   const [reference, setReference] = useState("");
   const [title, setTitle] = useState("");
   const [billBasis, setBillBasis] = useState("mixed");
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   async function act(path: string, body: unknown) {
     setError(null);
@@ -120,6 +121,16 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
   const clients = (board.data?.clients ?? []).filter((item) => !client || item.id === client.id);
   const people = board.data?.people ?? [];
   const jobs = (board.data?.jobs ?? []).filter((job) => !client || job.clientId === client.id);
+  const topOpenId = jobs.find((job) => job.status !== "done")?.id ?? null;
+
+  function jobOpen(job: JobBoard["jobs"][number]) {
+    if (job.id in expanded) return expanded[job.id];
+    return job.status !== "done" && job.id === topOpenId;
+  }
+
+  function toggleJob(id: string, next: boolean) {
+    setExpanded((current) => ({ ...current, [id]: next }));
+  }
 
   return (
     <div>
@@ -194,9 +205,15 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
       <div className="space-y-4">
         {jobs.map((job) => {
           const drafted = job.charges.reduce((sum, charge) => sum + charge.amountCents, 0);
+          const open = jobOpen(job);
           return (
             <article key={job.id} className="card p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
+              <button
+                type="button"
+                className="flex w-full flex-wrap items-start justify-between gap-3 text-left"
+                aria-expanded={open}
+                onClick={() => toggleJob(job.id, !open)}
+              >
                 <div>
                   <p className="text-xs uppercase tracking-[0.14em] text-muted">
                     {job.clientName} · {job.clientCode}
@@ -216,8 +233,11 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                         ? `${job.openWorkerCount} working now`
                         : job.openWorkers.join(", ")}
                   </p>
+                  <p className="mt-2 text-xs font-semibold text-moss">{open ? "Hide" : "Show"}</p>
                 </div>
-              </div>
+              </button>
+              {open ? (
+              <>
               <div className="mt-3 flex flex-wrap gap-2 text-sm">
                 {job.shipments.map((shipment) => (
                   <span key={shipment.id} className="rounded-full bg-black/5 px-3 py-1">
@@ -364,6 +384,8 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                   ))}
                 </ul>
               </div>
+              </>
+              ) : null}
             </article>
           );
         })}

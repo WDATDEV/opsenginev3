@@ -26,7 +26,7 @@ type StockChange = {
   quantity: number;
   reason: string;
   rows: StockRow[];
-  status: "proposed" | "applied" | "rejected";
+  status: "proposed" | "applying" | "applied" | "rejected";
   expiresAt: string;
   note: string | null;
 };
@@ -624,8 +624,9 @@ function StockCard({
       </ul>
       {change.status === "proposed" && !isOwner ? <p className="text-xs text-muted">Only the owner can confirm this. Warehance is unchanged.</p> : null}
       {change.status === "proposed" && isOwner && !canWrite ? (
-        <Notice tone="warn">Add a Warehance API key in Settings. The lookup bot cannot change stock.</Notice>
+        <Notice tone="warn">Add a Warehance write key in Settings. Confirm cannot change stock without it.</Notice>
       ) : null}
+      {change.status === "applying" ? <Notice tone="warn">Applying… do not confirm again. Check the bin if this stays here.</Notice> : null}
       {change.status === "proposed" && isOwner && expired ? <Notice tone="warn">This card expired. Ask again.</Notice> : null}
       {error ? <Notice tone="bad">{error}</Notice> : null}
       {change.status === "applied" ? <Notice tone="ok">{change.note ?? "Warehance was updated."}</Notice> : null}

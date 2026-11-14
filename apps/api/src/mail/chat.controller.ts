@@ -6,6 +6,7 @@ import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser } from "../auth/current-user.js";
 import { RequireSection, SectionGuard } from "../auth/section.guard.js";
 import { ZodPipe } from "../http.js";
+import { BrowserConfirmGuard } from "./browser-confirm.guard.js";
 import { ChatService } from "./chat.service.js";
 
 const model = z.enum(["haiku", "sonnet"]);
@@ -129,6 +130,7 @@ export class ChatController {
   }
 
   @Post("threads/:id/messages/:messageId/stock")
+  @UseGuards(BrowserConfirmGuard)
   confirmStock(
     @CurrentUser() ctx: RequestContext,
     @Param("id") id: string,

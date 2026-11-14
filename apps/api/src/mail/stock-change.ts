@@ -24,6 +24,9 @@ export type StockRow = {
   lotCode: string;
   ok: boolean | null;
   error: string | null;
+  appliedQuantity?: number | null;
+  capped?: boolean | null;
+  nonce?: string | null;
 };
 
 export type StockChange = {
@@ -36,41 +39,14 @@ export type StockChange = {
   reason: string;
   skuPrefix: string;
   rows: StockRow[];
-  status: "proposed" | "applied" | "rejected";
+  status: "proposed" | "applying" | "applied" | "rejected";
   proposedAt: string;
   expiresAt: string;
   note: string | null;
 };
 
-const WRITE_NAME = /\b(create|update|delete|adjust|import|upsert|patch|remove|insert|write|mutate|set_)\b/i;
-
-export function isWriteTool(name: string, description = "") {
-  const lower = name.toLowerCase();
-  if (/^(search|list|get|find|read|lookup|fetch|count|show)_/.test(lower)) return false;
-  if (lower.startsWith("list") || lower.startsWith("search") || lower.startsWith("get_")) return false;
-  return WRITE_NAME.test(`${name} ${description}`);
-}
-
 export function pickLocationLookupTool(tools: McpTool[]) {
-  const reads = tools.filter((tool) => !isWriteTool(tool.name, tool.description));
-  const prefer = [
-    "search_inventory_locations",
-    "list_inventory_locations",
-    "get_inventory_locations",
-    "search_inventory",
-    "list_inventory",
-    "get_product_inventory",
-    "search_products",
-  ];
-  for (const name of prefer) {
-    const hit = reads.find((tool) => tool.name === name);
-    if (hit) return hit;
-  }
-  return (
-    reads.find((tool) => /inventory/i.test(tool.name) && /location/i.test(`${tool.name} ${tool.description ?? ""}`)) ??
-    reads.find((tool) => /inventory/i.test(tool.name)) ??
-    null
-  );
+  return tools.find((tool) => tool.name === "search_inventory_locations") ?? null;
 }
 
 export function argsForLocationLookup(tool: McpTool, sku: string, clientId: number | null) {
@@ -98,18 +74,6 @@ export function argsForLocationLookup(tool: McpTool, sku: string, clientId: numb
     if (clientId) args.client_id = clientId;
   }
   return args;
-}
-
-export function pickApplyTool(tools: McpTool[]) {
-  const ranked = tools
-    .filter((tool) => isWriteTool(tool.name, tool.description))
-    .filter((tool) => /inventory|location|stock|on_hand|quantity/i.test(`${tool.name} ${tool.description ?? ""}`));
-  const prefer = ["import_inventory_locations", "update_inventory_location", "set_inventory", "adjust_inventory", "update_inventory"];
-  for (const name of prefer) {
-    const hit = ranked.find((tool) => tool.name === name);
-    if (hit) return hit;
-  }
-  return ranked[0] ?? null;
 }
 
 function textOf(value: unknown): string {
@@ -143,6 +107,41 @@ function qtyOf(record: Record<string, unknown>) {
   const raw = field(record, ["quantity_on_hand", "qty_on_hand", "on_hand", "quantity", "qty", "available"]);
   const n = Number(raw);
   return Number.isFinite(n) ? n : 0;
+}
+
+function numberField(record: Record<string, unknown>, names: string[]) {
+  for (const name of names) {
+    const key = Object.keys(record).find((item) => item.toLowerCase() === name.toLowerCase());
+    if (!key) continue;
+    const raw = record[key];
+    if (raw === undefined || raw === null || raw === "") continue;
+    const n = Number(raw);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+export function liveBinFromRecords(raw: unknown, row: StockRow): { available: number; onHand: number } | null {
+  const hits = flattenRecords(raw).filter((record) => {
+    const sku = field(record, ["sku", "product_sku"]);
+    const location = field(record, ["location", "location_name", "bin", "location_code"]);
+    const warehouse = field(record, ["warehouse", "warehouse_name"]);
+    if (sku.toLowerCase() !== row.sku.toLowerCase()) return false;
+    if (location.toLowerCase() !== row.location.toLowerCase()) return false;
+    if (warehouse && warehouse.toLowerCase() !== row.warehouse.toLowerCase()) return false;
+    return true;
+  });
+  if (hits.length === 0) return null;
+  let available = 0;
+  let onHand = 0;
+  for (const record of hits) {
+    const free = numberField(record, ["available", "quantity_available", "qty_available"]);
+    const hand = numberField(record, ["quantity_on_hand", "on_hand", "qty_on_hand", "quantity", "qty"]);
+    if (free == null || hand == null) return null;
+    available += free;
+    onHand += hand;
+  }
+  return { available, onHand };
 }
 
 function flattenRecords(input: unknown): Record<string, unknown>[] {
@@ -229,44 +228,4 @@ export function filterJobRows(rows: StockRow[], clientName: string) {
     kept.push({ ...row, warehouse: STOCK_JOB.warehouse, qtyAfter: STOCK_JOB.quantity });
   }
   return { kept, dropped };
-}
-
-export function argsForApply(tool: McpTool, row: StockRow, clientId: number | null) {
-  const props = Object.keys((tool.inputSchema?.properties ?? {}) as Record<string, unknown>);
-  const want: Record<string, string | number> = {
-    sku: row.sku,
-    product_sku: row.sku,
-    location: row.location,
-    location_name: row.location,
-    bin: row.location,
-    warehouse: row.warehouse,
-    warehouse_name: row.warehouse,
-    quantity: STOCK_JOB.quantity,
-    qty: STOCK_JOB.quantity,
-    on_hand: STOCK_JOB.quantity,
-    action: STOCK_JOB.action,
-    adjustment_reason: STOCK_JOB.reason,
-    reason: STOCK_JOB.reason,
-    lot_code: row.lotCode,
-    lot: row.lotCode,
-  };
-  if (clientId) {
-    want.client_id = clientId;
-  }
-  const args: Record<string, unknown> = {};
-  for (const prop of props) {
-    const key = prop.toLowerCase();
-    if (key in want && want[key] !== "") args[prop] = want[key];
-  }
-  if (!("sku" in args) && props.length === 0) {
-    args.sku = row.sku;
-    args.location = row.location;
-    args.warehouse = row.warehouse;
-    args.quantity = STOCK_JOB.quantity;
-    args.action = STOCK_JOB.action;
-    args.adjustment_reason = STOCK_JOB.reason;
-    if (row.lotCode) args.lot_code = row.lotCode;
-    if (clientId) args.client_id = clientId;
-  }
-  return args;
 }

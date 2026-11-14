@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "tsx src/main.ts"
+    "start": "tsx src/main.ts",
+    "test": "node --import tsx --test src/mail/approval.test.ts src/mail/claude-tools.test.ts src/mail/stock-confirm.test.ts src/mail/chat-lockdown.test.ts src/mail/browser-confirm.test.ts src/mail/settings-keys.test.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.3",

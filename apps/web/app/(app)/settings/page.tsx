@@ -6,7 +6,7 @@ import { useSession } from "@/components/shell";
 import { Badge, Field, Notice, PageTitle, SkeletonList, useResource } from "@/components/ui";
 
 type Connector = { connected: boolean; label: string | null; detail: string | null; address: string | null; googleReady?: boolean };
-type Connectors = { gmail: Connector; warehance: Connector; warehanceApi: Connector; slack: Connector; anthropic: Connector };
+type Connectors = { gmail: Connector; warehance: Connector; warehanceWrite: Connector; slack: Connector; anthropic: Connector };
 
 export default function SettingsPage() {
   const user = useSession();
@@ -49,13 +49,13 @@ export default function SettingsPage() {
     }
   }
 
-  async function test(kind: "gmail" | "warehance" | "warehance_api" | "slack" | "anthropic") {
+  async function test(kind: "gmail" | "warehance" | "warehance_write" | "slack" | "anthropic") {
     setNotice(null);
     setProblem(null);
     try {
       const next = await post<Connectors>(`/settings/connectors/${kind}/test`, {});
       const detail =
-        kind === "warehance_api" ? next.warehanceApi?.detail : next[kind === "warehance" ? "warehance" : kind]?.detail;
+        kind === "warehance_write" ? next.warehanceWrite?.detail : next[kind === "warehance" ? "warehance" : kind]?.detail;
       setNotice(detail ?? "Connection checked.");
       reload();
     } catch (err) {
@@ -95,12 +95,12 @@ export default function SettingsPage() {
         <div className="grid max-w-3xl gap-4">
           <GmailCard connector={data.gmail} onConnect={connectGmail} onTest={() => test("gmail")} onDisconnect={() => disconnect("gmail")} />
           <WarehanceCard key={`${data.warehance.address ?? ""}-${data.warehance.detail ?? ""}`} connector={data.warehance} onSave={(url, key) => save("/settings/connectors/warehance", { url, key })} onTest={() => test("warehance")} onDisconnect={() => disconnect("warehance")} />
-          <WarehanceApiCard
-            key={`${data.warehanceApi?.label ?? ""}-${data.warehanceApi?.detail ?? ""}`}
-            connector={data.warehanceApi ?? { connected: false, label: null, detail: null, address: null }}
-            onSave={(key) => save("/settings/connectors/warehance_api", { key })}
-            onTest={() => test("warehance_api")}
-            onDisconnect={() => disconnect("warehance_api")}
+          <WarehanceWriteCard
+            key={`${data.warehanceWrite?.label ?? ""}-${data.warehanceWrite?.detail ?? ""}`}
+            connector={data.warehanceWrite ?? { connected: false, label: null, detail: null, address: null }}
+            onSave={(key) => save("/settings/connectors/warehance_write", { key })}
+            onTest={() => test("warehance_write")}
+            onDisconnect={() => disconnect("warehance_write")}
           />
           <SlackCard key={`${data.slack.label ?? ""}-${data.slack.detail ?? ""}`} connector={data.slack} onSave={(token) => save("/settings/connectors/slack", { token })} onTest={() => test("slack")} onDisconnect={() => disconnect("slack")} />
           <ClaudeCard connector={data.anthropic} onSave={(key) => save("/settings/connectors/anthropic", { key })} onTest={() => test("anthropic")} onDisconnect={() => disconnect("anthropic")} />
@@ -232,7 +232,7 @@ function WarehanceCard({
   );
 }
 
-function WarehanceApiCard({
+function WarehanceWriteCard({
   connector,
   onSave,
   onTest,
@@ -246,14 +246,14 @@ function WarehanceApiCard({
   const [key, setKey] = useState("");
   if (connector.connected) {
     return (
-      <Card title="Warehance API" connector={connector}>
-        <p className="text-sm text-muted">Owner Confirm uses this key to set stock. Claude never sees it.</p>
+      <Card title="Warehance write key (Confirm only)" connector={connector}>
+        <p className="text-sm text-muted">Owner Confirm uses this warehouse-write key. Claude never sees it.</p>
         <SavedActions onTest={onTest} onDisconnect={onDisconnect} />
       </Card>
     );
   }
   return (
-    <Card title="Warehance API" connector={connector}>
+    <Card title="Warehance write key (Confirm only)" connector={connector}>
       <form
         className="space-y-3"
         onSubmit={(event) => {
@@ -263,9 +263,9 @@ function WarehanceApiCard({
         }}
       >
         <p className="text-sm text-muted">
-          Paste an organization API key from Warehance Settings → API Keys. Enable read_products, read_warehouses, read_inventory, and write_inventory. The Chat bot key stays lookup-only.
+          Paste the warehouse-write connector key. It must offer adjust_inventory. It must not be the same as the staff/bot key.
         </p>
-        <Field label="API key">
+        <Field label="Write key">
           <input className="field" type="password" value={key} onChange={(event) => setKey(event.target.value)} />
         </Field>
         <SaveButton />

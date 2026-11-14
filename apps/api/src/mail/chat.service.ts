@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import {
   chatFiles,
@@ -13,21 +14,25 @@ import {
   type ChatStockChange,
 } from "@opsengine/db";
 import { ForbiddenError, type Principal } from "@opsengine/kernel";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { DbService } from "../db.service.js";
 import { ask, modelFor, type Block, type ClaudeTool, type Message } from "./anthropic.js";
 import { AutomationService } from "./automation.service.js";
 import { buildFile, buildTableFile, MAX_FILE_BYTES, readTable, type FileFormat } from "./chat-files.js";
 import { GmailService } from "./gmail.service.js";
 import { conversationFor, findPerson, plain, post, uploadFile } from "./slack.js";
-import { WarehanceApi } from "./warehance-api.js";
 import { WarehanceClient } from "./warehance-client.js";
+import { assertStaffToolsReadOnly, filterClaudeTools, isClaudeReadTool, refuseToolForClaude } from "./claude-tools.js";
 import {
-  argsForApply,
+  applyConfirmedRows,
+  lookupLiveBin,
+  SETUP_ERROR,
+  staffAndWrite,
+  writeKeyIsReady,
+} from "./stock-confirm.js";
+import {
   argsForLocationLookup,
   filterJobRows,
-  isWriteTool,
-  pickApplyTool,
   pickLocationLookupTool,
   rowsFromInput,
   skusFromInput,
@@ -141,7 +146,7 @@ export class ChatService {
     const row = (kind: string) => rows.find((item) => item.kind === kind);
     return {
       warehance: Boolean(row("warehance")?.secret && row("warehance")?.extra),
-      warehanceWrite: Boolean(row("warehance_api")?.secret || process.env.WAREHANCE_API_KEY),
+      warehanceWrite: writeKeyIsReady(rows),
       claude: Boolean(row("anthropic")?.secret || process.env.ANTHROPIC_API_KEY),
       gmail: row("gmail")?.secret ? (row("gmail")?.label ?? "Gmail") : null,
       slack: Boolean(row("slack")?.secret),
@@ -618,11 +623,9 @@ export class ChatService {
   private async tools(work: Work): Promise<ClaudeTool[]> {
     const scoped = work.thread.warehanceClientId !== null;
     const list: ClaudeTool[] = [];
-    for (const tool of await work.client.listTools()) {
-      // Claude may only look things up. Write tools stay on the API for owner Confirm.
-      if (isWriteTool(tool.name, tool.description)) continue;
-      // With one client chosen, the client list is hidden so nothing else can be reached.
-      if (scoped && tool.name === "list_clients") continue;
+    const listed = await work.client.listTools();
+    assertStaffToolsReadOnly(listed);
+    for (const tool of filterClaudeTools(listed, scoped)) {
       const properties = { ...((tool.inputSchema?.properties ?? {}) as Record<string, unknown>) };
       const hasClient = "client_id" in properties;
       if (scoped) delete properties.client_id;
@@ -693,7 +696,8 @@ export class ChatService {
       if (use.name === "export_data") return reply(...(await this.exportData(use, work)));
       if (use.name === "propose_send") return reply(...(await this.propose(use, work)));
       if (use.name === "propose_inventory") return reply(...(await this.proposeInventory(use, work)));
-      if (isWriteTool(use.name)) return reply("That tool would change Warehance. Only the owner can Confirm a stock change.", true);
+      const refused = refuseToolForClaude(use.name);
+      if (refused) return reply(refused, true);
 
       const info = work.allowed.get(use.name);
       if (!info) return reply(`There is no tool called ${use.name}.`, true);
@@ -744,7 +748,7 @@ export class ChatService {
     const input = use.input as { tool?: string; args?: Record<string, unknown>; format?: string; filename?: string; columns?: string[] };
     const info = work.allowed.get(String(input.tool ?? ""));
     if (!info || !input.tool) return [`There is no lookup tool called ${String(input.tool)}.`, true];
-    if (isWriteTool(input.tool)) return ["That tool would change Warehance. Use a lookup, then propose_inventory.", true];
+    if (!isClaudeReadTool(input.tool)) return ["That tool is not allowed. Look up stock, then wait for the owner to Confirm.", true];
     const format = (["csv", "xlsx", "json"] as const).find((item) => item === input.format);
     if (!format) return ["The format must be csv, xlsx or json.", true];
 
@@ -1006,54 +1010,37 @@ export class ChatService {
     if (kept.length === 0) throw new BadRequestException(dropped[0] ?? "No rows left to change.");
     if (kept.length > cap) throw new BadRequestException(`Confirm ${cap} row(s) at a time. Raise the cap after a good live test.`);
 
-    const results = await this.applyStock(kept, proposed.clientId);
-    const ok = results.every((row) => row.ok);
+    const setup = await staffAndWrite(this.db.db);
+    if (!setup.ok) throw new BadRequestException(SETUP_ERROR);
+
+    const applying: ChatStockChange = { ...proposed, rows: kept, status: "applying" };
+    const [claimed] = await this.db.db
+      .update(chatMessages)
+      .set({ stockChange: applying })
+      .where(and(eq(chatMessages.id, messageId), sql`(stock_change->>'status') = 'proposed'`))
+      .returning({ id: chatMessages.id });
+    if (!claimed) throw new BadRequestException("There is no stock change waiting on that message.");
+
+    const { rows: results } = await applyConfirmedRows(kept, {
+      clientId: proposed.clientId,
+      approvedBy: actor.id,
+      reason: proposed.reason,
+      note: proposed.reason,
+    }, {
+      secret: setup.secret,
+      writeReady: true,
+      nowSeconds: () => Math.floor(Date.now() / 1000),
+      uuid: () => randomUUID(),
+      lookup: (item) => lookupLiveBin(setup.staff, item, proposed.clientId),
+      adjust: (args) => setup.write.call("adjust_inventory", args),
+    });
+    const ok = results.every((item) => item.ok);
     const note = ok
       ? `Set ${results.length} row(s) to 0.`
-      : results.find((row) => row.error)?.error ?? "Some rows failed. Check the log. Warehance may be only partly updated.";
+      : results.find((item) => item.error)?.error ?? "Some rows failed. Check the log. Warehance may be only partly updated.";
     await this.finishStock(messageId, { ...proposed, rows: results, status: ok ? "applied" : "rejected", note }, actor, ok ? "applied" : "rejected", ok ? null : note);
     if (!ok) throw new BadRequestException(note);
     return { stockChange: { ...proposed, rows: results, status: "applied" as const, note } };
-  }
-
-  private async writeKey() {
-    const [row] = await this.db.db.select().from(connectors).where(eq(connectors.kind, "warehance_api")).limit(1);
-    return row?.secret || process.env.WAREHANCE_API_KEY || "";
-  }
-
-  private async applyStock(kept: StockRow[], clientId: number | null) {
-    const key = await this.writeKey();
-    if (key) {
-      const api = new WarehanceApi(key);
-      const results: StockRow[] = [];
-      for (const row of kept) {
-        const result = await api.setToZero(row, clientId);
-        results.push({ ...row, qtyBefore: result.qtyBefore, ok: result.ok, error: result.error });
-      }
-      return results;
-    }
-
-    const bot = (await this.db.db.select().from(connectors).where(eq(connectors.kind, "warehance")).limit(1))[0];
-    if (!bot?.extra || !bot.secret) {
-      const detail = "Add a Warehance API key in Settings. The lookup bot cannot change stock. Nothing was changed. The rows are in the log.";
-      return kept.map((row) => ({ ...row, ok: false, error: detail }));
-    }
-    const client = new WarehanceClient(bot.extra, bot.secret);
-    const listed = await client.listTools();
-    const tool = pickApplyTool(listed);
-    if (!tool) {
-      const detail =
-        "Add a Warehance API key in Settings (write_inventory). The lookup bot cannot change stock. Nothing was changed. The rows are in the log.";
-      return kept.map((row) => ({ ...row, ok: false, error: detail }));
-    }
-    const results: StockRow[] = [];
-    for (const row of kept) {
-      const args = argsForApply(tool, row, clientId);
-      const { data, failed } = await client.call(tool.name, args);
-      const error = failed ? (typeof data === "string" ? data : JSON.stringify(data)) : null;
-      results.push({ ...row, ok: !failed, error });
-    }
-    return results;
   }
 
   async stockLogs(ownerId: string, threadId: string) {

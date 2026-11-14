@@ -205,6 +205,9 @@ export type ChatStockRow = {
   lotCode: string;
   ok: boolean | null;
   error: string | null;
+  appliedQuantity?: number | null;
+  capped?: boolean | null;
+  nonce?: string | null;
 };
 
 // A Warehance stock change Claude prepared. Nothing is written until the owner confirms.
@@ -218,7 +221,7 @@ export type ChatStockChange = {
   reason: string;
   skuPrefix: string;
   rows: ChatStockRow[];
-  status: "proposed" | "applied" | "rejected";
+  status: "proposed" | "applying" | "applied" | "rejected";
   proposedAt: string;
   expiresAt: string;
   note: string | null;

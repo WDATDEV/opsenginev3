@@ -14,11 +14,11 @@ export function Field({
   children: React.ReactNode;
 }) {
   return (
-    <label className="block">
+    <div className="block">
       <span className="mb-1.5 block text-sm font-medium text-ink/80">{label}</span>
       {children}
       {hint ? <span className="mt-1.5 block text-xs leading-5 text-muted">{hint}</span> : null}
-    </label>
+    </div>
   );
 }
 

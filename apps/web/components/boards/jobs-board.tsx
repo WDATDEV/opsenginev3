@@ -48,6 +48,7 @@ type JobBoard = {
     shipments: { id: string; reference: string; status: string }[];
     loads: { id: string; reference: string; status: string; palletCount: number | null; cartonCount: number | null }[];
     charges: { id: string; description: string; quantity: number; unit: string; amountCents: number; status: string }[];
+    hourlyRates: { activityCode: string | null; department: string | null; rateCents: number; label: string }[];
   }[];
   clients: { id: string; name: string; code: string }[];
   activities: { code: string; name: string; department: string; billable: boolean }[];
@@ -320,6 +321,7 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                     tasks={job.tasks}
                     services={job.enabledServices}
                     activities={startChoices(board.data?.activities ?? [], job.enabledServices)}
+                    rates={job.hourlyRates ?? []}
                     closed={job.status === "done"}
                     onAdd={(body) => act(`/jobs/${job.id}/tasks`, body)}
                     onAddWork={(body) => act(`/jobs/${job.id}/work`, body)}
@@ -370,7 +372,8 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
   );
 }
 
-type StartChoice = { code: string; name: string };
+type StartChoice = { code: string; name: string; department: string };
+type HourlyRate = { activityCode: string | null; department: string | null; rateCents: number; label: string };
 
 function startChoices(
   activities: { code: string; name: string; department: string; billable: boolean }[],
@@ -378,7 +381,22 @@ function startChoices(
 ): StartChoice[] {
   return activities
     .filter((item) => item.billable && SERVICE_FOR_DEPARTMENT.includes(item.department) && services.includes(item.department))
-    .map((item) => ({ code: item.code, name: item.name }));
+    .map((item) => ({ code: item.code, name: item.name, department: item.department }));
+}
+
+function rateFor(rates: HourlyRate[], choice?: StartChoice | null, department?: string) {
+  if (!choice && !department) return null;
+  return (
+    rates.find((rate) => choice && rate.activityCode === choice.code) ??
+    rates.find((rate) => rate.department === (choice?.department ?? department) && !rate.activityCode) ??
+    rates.find((rate) => rate.department === (choice?.department ?? department)) ??
+    null
+  );
+}
+
+function rateHint(rate: HourlyRate | null) {
+  if (!rate) return "No hourly price is set for this kind of work yet. Add it on the client.";
+  return `${rate.label} · ${money(rate.rateCents)} / hour. Draft charges use this price.`;
 }
 
 function toIso(local: string) {
@@ -628,12 +646,14 @@ function TaskForm({
   tasks,
   services,
   activities,
+  rates,
   closed,
   onAdd,
   onAddWork,
 }: {
   people: { id: string; name: string }[];
   activities: StartChoice[];
+  rates: HourlyRate[];
   tasks: JobTask[];
   services: string[];
   closed: boolean;
@@ -665,11 +685,13 @@ function TaskForm({
   const [units, setUnits] = useState(1);
   const [startAt, setStartAt] = useState("");
   const [activityCode, setActivityCode] = useState(activities[0]?.code ?? "");
-  const needsActivity = kind === "" && Boolean(startAt);
+  const needsActivity = kind === "";
+  const chosenActivity = activities.find((item) => item.code === activityCode) ?? activities[0] ?? null;
+  const chosenRate = rateFor(rates, kind === "" ? chosenActivity : null, kind || undefined);
   const common = {
     ...(assigneeId ? { assigneeId } : {}),
     ...(assigneeId && startAt ? { startAt: toIso(startAt) } : {}),
-    ...(assigneeId && startAt && kind === "" ? { activityCode } : {}),
+    ...(kind === "" && activityCode ? { activityCode } : {}),
     ...(dueOn ? { dueOn } : {}),
     ...(dependsOnId ? { dependsOnId } : {}),
   };
@@ -701,7 +723,7 @@ function TaskForm({
       className="mt-3 grid gap-3 md:grid-cols-4"
       onSubmit={(event) => {
         event.preventDefault();
-        if (needsActivity && assigneeId && !activityCode) return;
+        if (needsActivity && !activityCode) return;
         const send = kind ? onAddWork(body()) : onAdd({ title, ...common });
         void send.then((ok) => {
           if (ok) reset();
@@ -721,10 +743,30 @@ function TaskForm({
         </Field>
       ) : null}
       {kind === "" ? (
-        <Field label="Task">
-          <input className="field" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Count the pallets" />
-        </Field>
-      ) : null}
+        <>
+          <Field label="Task">
+            <input
+              className="field"
+              autoComplete="off"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="Count the pallets"
+            />
+          </Field>
+          <Field label="Kind of work" hint={rateHint(chosenRate)}>
+            <select className="field" value={activityCode} onChange={(event) => setActivityCode(event.target.value)}>
+              <option value="">Choose the kind of work</option>
+              {activities.map((item) => (
+                <option key={item.code} value={item.code}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </>
+      ) : (
+        <p className="self-end text-xs text-muted md:col-span-2">{rateHint(chosenRate)}</p>
+      )}
       {kind === "receiving" ? (
         <>
           <Field label="Shipment number">
@@ -815,20 +857,14 @@ function TaskForm({
       {assigneeId ? (
         <>
           <Field label="Start time (optional)">
-            <input className="field" type="datetime-local" value={startAt} onChange={(event) => setStartAt(event.target.value)} />
+            <input
+              className="field"
+              type="datetime-local"
+              step={60}
+              value={startAt}
+              onChange={(event) => setStartAt(event.target.value)}
+            />
           </Field>
-          {needsActivity ? (
-            <Field label="Timer is for">
-              <select className="field" value={activityCode} onChange={(event) => setActivityCode(event.target.value)}>
-                <option value="">Choose the kind of work</option>
-                {activities.map((item) => (
-                  <option key={item.code} value={item.code}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          ) : null}
         </>
       ) : null}
       <Field label="Due">
@@ -845,7 +881,7 @@ function TaskForm({
         </select>
       </Field>
       <div className="md:col-span-4">
-        <button className="btn btn-ghost" type="submit" disabled={Boolean(assigneeId) && needsActivity && !activityCode}>
+        <button className="btn btn-ghost" type="submit" disabled={needsActivity && !activityCode}>
           {kind ? `Add ${WORK_KINDS.find(([code]) => code === kind)?.[1].toLowerCase()}` : "Add task"}
         </button>
         {kind ? (

@@ -11,6 +11,7 @@ import {
   jobAssignees,
   jobs,
   loads,
+  rateCards,
   segments,
   shifts,
   shipments,
@@ -42,7 +43,7 @@ export class JobsService {
 
   async list(principal: Principal) {
     const orm = this.db.db;
-    const [jobRows, clientRows, segmentRows, people, shipmentRows, loadRows, chargeRows, activities, assigneeRows, taskRows] =
+    const [jobRows, clientRows, segmentRows, people, shipmentRows, loadRows, chargeRows, activities, assigneeRows, taskRows, rateRows] =
       await Promise.all([
         orm.select().from(jobs).orderBy(desc(jobs.createdAt)),
         orm.select().from(clientRecords),
@@ -54,6 +55,7 @@ export class JobsService {
         orm.select().from(activityTypes),
         orm.select().from(jobAssignees),
         orm.select().from(tasks).orderBy(desc(tasks.createdAt)),
+        orm.select().from(rateCards),
       ]);
     const names = new Map(people.map((person) => [person.id, person.name]));
     const clientById = new Map(clientRows.map((client) => [client.id, client]));
@@ -142,6 +144,14 @@ export class JobsService {
                 unit: charge.unit,
                 amountCents: charge.amountCents,
                 status: charge.status,
+              })),
+            hourlyRates: rateRows
+              .filter((rate) => rate.clientId === job.clientId && rate.unit === "hour")
+              .map((rate) => ({
+                activityCode: rate.activityCode,
+                department: rate.department,
+                rateCents: rate.rateCents,
+                label: rate.label,
               })),
           };
         }),

@@ -13,6 +13,7 @@ import {
   receiptLines,
   segments,
   shipments,
+  tasks,
 } from "@opsengine/db";
 import type { HourlyService } from "@opsengine/contracts";
 import { assertClientVisible, type Principal } from "@opsengine/kernel";
@@ -105,16 +106,19 @@ export class BillingService {
     if (!job) throw new NotFoundException("That job is not on file.");
     assertClientVisible(principal, job.clientId);
     const orm = this.db.db;
-    const [rates, jobSegments, activities, jobLoads, jobShipments, packs] = await Promise.all([
+    const [rates, jobSegments, activities, jobLoads, jobShipments, packs, jobTasks] = await Promise.all([
       orm.select().from(rateCards).where(eq(rateCards.clientId, job.clientId)),
       orm.select().from(segments).where(eq(segments.jobId, job.id)),
       orm.select().from(activityTypes),
       orm.select().from(loads).where(eq(loads.jobId, job.id)),
       orm.select().from(shipments).where(eq(shipments.jobId, job.id)),
       orm.select().from(packEvents),
+      orm.select().from(tasks).where(eq(tasks.jobId, job.id)),
     ]);
     const basis = job.billBasis || "mixed";
     const names = new Map(activities.map((activity) => [activity.code, activity.name]));
+    const taskById = new Map(jobTasks.map((task) => [task.id, task]));
+    const departmentByCode = new Map(activities.map((activity) => [activity.code, activity.department]));
     const shipmentIds = new Set(jobShipments.map((shipment) => shipment.id));
     const lines = shipmentIds.size
       ? (await orm.select().from(receiptLines)).filter((line) => shipmentIds.has(line.shipmentId))
@@ -155,11 +159,16 @@ export class BillingService {
 
     for (const segment of jobSegments) {
       if (!billsUnit(basis, "hour") || !segment.endedAt) continue;
-      const minutes = Math.max(0, Math.round((segment.endedAt.getTime() - segment.startedAt.getTime()) / 60_000));
+      const elapsedMs = segment.endedAt.getTime() - segment.startedAt.getTime();
+      if (elapsedMs <= 0) continue;
+      const minutes = Math.max(1, Math.round(elapsedMs / 60_000));
+      const linked = segment.note ? taskById.get(segment.note) : null;
+      const activityCode = linked?.activityCode ?? segment.taskCode;
+      const department = departmentByCode.get(activityCode) ?? segment.department;
       // A price set for this exact activity wins. Otherwise the hourly price of the whole service applies.
-      const rate = latest(rates, segment.taskCode, "hour") ?? serviceRate(rates, segment.department);
-      if (!rate || minutes === 0) continue;
-      const label = names.get(segment.taskCode) ?? segment.taskCode;
+      const rate = latest(rates, activityCode, "hour") ?? serviceRate(rates, department);
+      if (!rate) continue;
+      const label = linked?.title ?? names.get(activityCode) ?? names.get(segment.taskCode) ?? segment.taskCode;
       await draft({
         description: `${label}, ${minutes} min`,
         quantity: minutes,

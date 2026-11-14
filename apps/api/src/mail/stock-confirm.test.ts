@@ -134,8 +134,32 @@ describe("applyConfirmedRows", () => {
     });
     const { rows } = await applyConfirmedRows([row], { clientId: null, approvedBy: "owner-1", reason: "r", note: "n" }, d);
     assert.equal(writes.length, 1);
-    assert.equal(rows[0]?.error, UNCLEAR_APPLY);
+    assert.ok(rows[0]?.error?.startsWith(UNCLEAR_APPLY));
+    assert.ok(rows[0]?.error?.includes("timeout"));
     assert.equal(rows[0]?.ok, false);
+  });
+
+  it("shows the connector's reason when it clearly refused (nothing changed)", async () => {
+    const cases: [{ data: unknown; failed: boolean } | Error, RegExp][] = [
+      [{ data: { error: "Approval is not valid." }, failed: true }, /^Not changed: Approval is not valid\.$/],
+      [{ data: { error: "Stock changes are not set up on the connector." }, failed: true }, /^Not changed: Stock changes are not set up/],
+      [{ data: { error: "Too many requests: the limit is 10 calls per 5 minutes." }, failed: true }, /^Not changed: Too many requests/],
+      [new Error("The Warehance connector rejected the staff key."), /^Not changed: The Warehance connector rejected/],
+      [new Error("The Warehance connector answered 503."), new RegExp(`^${UNCLEAR_APPLY}`)],
+      [{ data: { error: "Something went wrong talking to Warehance. The change may or may not have been applied: check the bin before retrying." }, failed: true }, new RegExp(`^${UNCLEAR_APPLY}`)],
+      [{ data: {}, failed: true }, new RegExp(`^${UNCLEAR_APPLY}$`)],
+    ];
+    for (const [reply, want] of cases) {
+      const { deps: d } = deps({
+        adjust: async () => {
+          if (reply instanceof Error) throw reply;
+          return reply;
+        },
+      });
+      const { rows } = await applyConfirmedRows([row], { clientId: null, approvedBy: "owner-1", reason: "r", note: "n" }, d);
+      assert.match(rows[0]?.error ?? "", want);
+      assert.equal(rows[0]?.ok, false);
+    }
   });
 
   it("never puts the secret, keys, or approval strings in logs or errors", async () => {

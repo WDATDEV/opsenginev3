@@ -144,11 +144,13 @@ export async function applyConfirmedRows(
       const { data, failed } = await deps.adjust(args);
       calls.push({ role: "write", name: "adjust_inventory", args });
       if (failed) {
+        // The connector answered with a tool error such as {"error":"Approval is not valid."}.
+        // Show its reason. Only its own "may or may not have been applied" text means unclear.
         out.push({
           ...row,
           qtyBefore: bin.onHand,
           ok: false,
-          error: redactSensitive(typeof data === "string" ? data : UNCLEAR_APPLY, [approval, secret]),
+          error: redactSensitive(connectorRefusal(data), [approval, secret]),
           nonce,
           appliedQuantity: null,
           capped: null,
@@ -171,7 +173,7 @@ export async function applyConfirmedRows(
         ...row,
         qtyBefore: bin.onHand,
         ok: false,
-        error: redactSensitive(err instanceof Error && /timeout|timed out|abort/i.test(err.message) ? UNCLEAR_APPLY : UNCLEAR_APPLY, [approval, secret]),
+        error: redactSensitive(callFailure(err), [approval, secret]),
         nonce,
         appliedQuantity: null,
         capped: null,
@@ -214,6 +216,26 @@ export async function lookupLiveBin(staff: WarehanceClient, row: StockRow, clien
     return [row];
   }
   return [];
+}
+
+// Reason text from a connector tool error. Anything the connector refuses with is a clear
+// "nothing was changed", except its own unclear-write message, which is kept as unclear.
+export function connectorRefusal(data: unknown): string {
+  const text = typeof data === "string" ? data : typeof asObj(data).error === "string" ? String(asObj(data).error) : "";
+  const reason = text.replace(/\s+/g, " ").trim().slice(0, 300);
+  if (!reason) return UNCLEAR_APPLY;
+  if (/may or may not have been applied/i.test(reason)) return `${UNCLEAR_APPLY}: ${reason}`;
+  return `Not changed: ${reason}`;
+}
+
+// The call itself threw. WarehanceClient throws for HTTP errors before the tool runs
+// (401 wrong write key, 403 host, 404 address) and for timeouts / network / 5xx.
+// Only the last group can mean the change went through.
+export function callFailure(err: unknown): string {
+  const message = err instanceof Error ? err.message.replace(/\s+/g, " ").trim().slice(0, 300) : "";
+  if (!message) return UNCLEAR_APPLY;
+  const unclear = /timeout|timed out|abort|could not reach|fetch failed|network|socket|ECONN|ETIMEDOUT|\b5\d\d\b/i.test(message);
+  return unclear ? `${UNCLEAR_APPLY}: ${message}` : `Not changed: ${message}`;
 }
 
 function asObj(value: unknown): Record<string, unknown> {

@@ -103,6 +103,29 @@ function field(record: Record<string, unknown>, names: string[]) {
   return "";
 }
 
+// The connector returns bins nested: product.sku, location.name, location.warehouse.name.
+// Read those first, then fall back to flat names (sku, location, warehouse) for rows Claude writes.
+function pathText(record: Record<string, unknown>, path: string) {
+  let cur: unknown = record;
+  for (const part of path.split(".")) {
+    if (!cur || typeof cur !== "object" || Array.isArray(cur)) return "";
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return typeof cur === "string" || typeof cur === "number" ? String(cur).trim() : "";
+}
+
+function skuOf(record: Record<string, unknown>) {
+  return pathText(record, "product.sku") || field(record, ["sku", "product_sku"]);
+}
+
+function locationOf(record: Record<string, unknown>, names = ["location", "location_name", "bin", "location_code"]) {
+  return pathText(record, "location.name") || field(record, names);
+}
+
+function warehouseOf(record: Record<string, unknown>) {
+  return pathText(record, "location.warehouse.name") || field(record, ["warehouse", "warehouse_name"]);
+}
+
 function qtyOf(record: Record<string, unknown>) {
   const raw = field(record, ["quantity_on_hand", "qty_on_hand", "on_hand", "quantity", "qty", "available"]);
   const n = Number(raw);
@@ -123,9 +146,11 @@ function numberField(record: Record<string, unknown>, names: string[]) {
 
 export function liveBinFromRecords(raw: unknown, row: StockRow): { available: number; onHand: number } | null {
   const hits = flattenRecords(raw).filter((record) => {
-    const sku = field(record, ["sku", "product_sku"]);
-    const location = field(record, ["location", "location_name", "bin", "location_code"]);
-    const warehouse = field(record, ["warehouse", "warehouse_name"]);
+    // Stock on an LPN (license plate) can't be adjusted by the connector, so it isn't counted.
+    if (record.lpn) return false;
+    const sku = skuOf(record);
+    const location = locationOf(record);
+    const warehouse = warehouseOf(record);
     if (sku.toLowerCase() !== row.sku.toLowerCase()) return false;
     if (location.toLowerCase() !== row.location.toLowerCase()) return false;
     if (warehouse && warehouse.toLowerCase() !== row.warehouse.toLowerCase()) return false;
@@ -165,7 +190,7 @@ function flattenRecords(input: unknown): Record<string, unknown>[] {
 export function skusFromInput(input: unknown): string[] {
   const seen = new Set<string>();
   for (const record of flattenRecords(input)) {
-    const sku = field(record, ["sku", "product_sku"]);
+    const sku = skuOf(record);
     if (sku && sku.toLowerCase().startsWith(STOCK_JOB.skuPrefix.toLowerCase())) seen.add(sku);
   }
   return [...seen];
@@ -181,9 +206,9 @@ function warehouseName(value: string) {
 export function rowsFromInput(input: unknown): StockRow[] {
   const rows: StockRow[] = [];
   for (const record of flattenRecords(input)) {
-    const sku = field(record, ["sku", "product_sku"]);
-    const location = field(record, ["location", "location_name", "bin", "location_code", "shelf"]);
-    const warehouse = warehouseName(field(record, ["warehouse", "warehouse_name"]) || STOCK_JOB.warehouse);
+    const sku = skuOf(record);
+    const location = locationOf(record, ["location", "location_name", "bin", "location_code", "shelf"]);
+    const warehouse = warehouseName(warehouseOf(record) || STOCK_JOB.warehouse);
     const lotCode = field(record, ["lot_code", "lot"]);
     if (!sku || !location) continue;
     if (/^\d+$/.test(location) && location === field(record, ["warehouse"])) continue;

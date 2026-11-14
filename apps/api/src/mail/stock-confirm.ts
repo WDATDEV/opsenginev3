@@ -44,7 +44,9 @@ export function redactSensitive(text: string, extra: string[] = []) {
 }
 
 export function parseAdjustResult(data: unknown): { appliedQuantity: number | null; capped: boolean | null } {
-  const row = asObj(data);
+  // The connector answers {record: {applied_quantity, capped, ...}}; a flat object is accepted too.
+  const top = asObj(data);
+  const row = top.record && typeof top.record === "object" ? asObj(top.record) : top;
   const applied = numberOf(row.applied_quantity ?? row.appliedQuantity);
   const capped = row.capped;
   return { appliedQuantity: applied, capped: typeof capped === "boolean" ? capped : null };

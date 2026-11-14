@@ -50,7 +50,7 @@ import {
   type Ownership,
 } from "@opsengine/tracking";
 import type { ClientService, GateMode } from "@opsengine/contracts";
-import { assertClientService } from "../clients/access.js";
+import { assertClientService, enabledServiceList } from "../clients/access.js";
 import { DbService } from "../db.service.js";
 
 type Conn = Database;
@@ -355,20 +355,26 @@ export class TrackingService {
       const lastSegment = segment ? null : employeeSegments[0] ?? null;
       const paused = lastSegment && (lastSegment.endReason === "pause" || lastSegment.endReason === "meal") ? lastSegment : null;
       const now = new Date();
-      const describe = (row: { taskCode: string; jobId: string | null; department: string; startedAt: Date }) => {
+      const taskRows = await tx.select().from(tasks).where(eq(tasks.assigneeId, employee.id));
+      const taskTitleById = new Map(taskRows.map((row) => [row.id, row.title]));
+      const describe = (row: {
+        taskCode: string;
+        jobId: string | null;
+        department: string;
+        startedAt: Date;
+        note?: string | null;
+      }) => {
         const job = row.jobId ? jobById.get(row.jobId) : null;
         return {
           department: row.department,
           taskCode: row.taskCode,
-          activityName: activityName.get(row.taskCode) ?? row.taskCode,
+          activityName: (row.note ? taskTitleById.get(row.note) : null) ?? activityName.get(row.taskCode) ?? row.taskCode,
           startedAt: stintDisplayStart(employeeSegments, row, now),
           jobId: row.jobId,
           jobReference: job?.reference ?? null,
           clientName: job ? clientNameById.get(job.clientId) ?? null : null,
         };
       };
-
-      const taskRows = await tx.select().from(tasks).where(eq(tasks.assigneeId, employee.id));
       const completedCodesByJob = new Map<string, Set<string>>();
       const markDone = (jobId: string | null, code: string | null) => {
         if (!jobId || !code) return;
@@ -415,6 +421,7 @@ export class TrackingService {
             activityName: row.activityCode ? activityName.get(row.activityCode) ?? row.activityCode : null,
             startAt: row.startAt,
             dueOn: row.dueOn,
+            blocked: Boolean(row.dependsOnId && taskRows.find((item) => item.id === row.dependsOnId)?.status !== "done"),
           })),
         jobs: jobRows
           .filter((row) => row.status !== "done" && mine(row.id))
@@ -863,28 +870,41 @@ export class TrackingService {
 
   async switchTask(
     badge: string,
-    input: { department?: Department; activityCode?: string; jobId?: string },
+    input: { department?: Department; activityCode?: string; jobId?: string; taskId?: string },
   ) {
     return this.inTx(async (tx) => {
       const employee = await this.employeeByBadge(tx, badge);
       const shift = await this.requireReady(tx, employee);
-      const activity = input.activityCode ? await this.activityByCode(tx, input.activityCode) : null;
+      const assigned = input.taskId ? await this.assignedOpenTask(tx, employee, input.taskId) : null;
+      const jobId = assigned?.jobId ?? input.jobId ?? null;
+      let activity = (assigned?.activityCode ?? input.activityCode)
+        ? await this.activityByCode(tx, assigned?.activityCode ?? input.activityCode ?? "")
+        : null;
+      if (!activity && assigned?.jobId) {
+        activity = await this.billableActivityForJob(tx, employee, assigned.jobId);
+      }
       const department = activity ? asDepartment(activity.department) : input.department;
       if (!department) throw new TrackingError("Choose an activity.");
       const taskCode = activity?.code ?? taskFor(department);
       const billable = activity ? activity.billable : taskCode !== "indirect";
-      if (employee.departments?.length && department !== "indirect" && !employee.departments.includes(department)) {
+      if (
+        !assigned &&
+        employee.departments?.length &&
+        department !== "indirect" &&
+        !employee.departments.includes(department)
+      ) {
         throw new TrackingError(`${employee.name} is not set up for ${department}. Ask a manager to add it.`);
       }
-      const jobCheck = assertBillableJob({ billable, jobId: input.jobId ?? null });
+      const jobCheck = assertBillableJob({ billable, jobId });
       if (!jobCheck.ok) throw new TrackingError(jobCheck.reason);
       const job = jobCheck.jobId ? await this.jobForEmployee(tx, employee, jobCheck.jobId, department) : null;
       const segmentId = await this.touchSegment(tx, employee, shift.id, department, null, {
         jobId: job?.id ?? null,
         activityId: activity?.id ?? null,
         taskCode,
+        note: assigned?.id,
       });
-      const label = activity?.name ?? department;
+      const label = assigned?.title ?? activity?.name ?? department;
       const where = job ? ` on ${job.reference}` : "";
       await this.audit(
         tx,
@@ -944,9 +964,19 @@ export class TrackingService {
         ? `${employee.name} finished. ${span} is on ${job.reference}.`
         : `${employee.name} finished. ${span} recorded.`;
       await this.audit(tx, employee.id, "tracking.task_stopped", "activity_segment", target.id, message);
-      if (target.jobId) await this.completeMatchingTask(tx, employee.id, target.jobId, target.taskCode);
+      if (target.note) await this.completeTaskById(tx, employee.id, target.note);
+      else if (target.jobId) await this.completeMatchingTask(tx, employee.id, target.jobId, target.taskCode);
       return { message };
     });
+  }
+
+  private async completeTaskById(tx: Conn, employeeId: string, taskId: string) {
+    const [row] = await tx
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.id, taskId), eq(tasks.assigneeId, employeeId), eq(tasks.status, "open")))
+      .limit(1);
+    if (row) await tx.update(tasks).set({ status: "done" }).where(eq(tasks.id, row.id));
   }
 
   private async completeMatchingTask(tx: Conn, employeeId: string, jobId: string, taskCode: string) {
@@ -987,6 +1017,7 @@ export class TrackingService {
         jobId: last.jobId,
         activityId: last.activityId,
         taskCode: last.taskCode,
+        note: last.note,
       });
       const named = await tx.select().from(activityTypes).where(eq(activityTypes.code, last.taskCode));
       const activity = named.find((row) => row.clientId == null) ?? named[0];
@@ -2218,7 +2249,7 @@ export class TrackingService {
     shiftId: string,
     department: Department,
     deviceId: string | null,
-    link?: { jobId?: string | null; activityId?: string | null; taskCode?: string; at?: Date },
+    link?: { jobId?: string | null; activityId?: string | null; taskCode?: string; at?: Date; note?: string | null },
   ) {
     const open = await this.openSegment(tx, employee.id);
     const taskCode = link?.taskCode ?? taskFor(department);
@@ -2261,6 +2292,7 @@ export class TrackingService {
         activityId,
         startedAt: now,
         deviceId,
+        note: link?.note ?? null,
       })
       .returning();
     if (!created) throw new TrackingError("Could not start that task.");
@@ -2315,6 +2347,42 @@ export class TrackingService {
     const [job] = await tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
     if (!job) throw new TrackingError("That job is not on file.");
     return job;
+  }
+
+  private async assignedOpenTask(tx: Conn, employee: Employee, taskId: string) {
+    const [row] = await tx.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
+    if (!row) throw new TrackingError("That task is not on file.");
+    if (row.assigneeId !== employee.id) throw new TrackingError(`${employee.name} is not assigned to that task.`);
+    if (row.status === "done") throw new TrackingError("That task is already done.");
+    if (!row.jobId) throw new TrackingError("That task is not on a job.");
+    if (row.dependsOnId) {
+      const [earlier] = await tx.select().from(tasks).where(eq(tasks.id, row.dependsOnId)).limit(1);
+      if (earlier && earlier.status !== "done") {
+        throw new TrackingError(`${row.title} is waiting on ${earlier.title}.`);
+      }
+    }
+    return row;
+  }
+
+  private async billableActivityForJob(tx: Conn, employee: Employee, jobId: string) {
+    const job = await this.jobById(tx, jobId);
+    const [client] = await tx.select().from(clientRecords).where(eq(clientRecords.id, job.clientId)).limit(1);
+    const services = enabledServiceList(client?.enabledServices);
+    const catalog = await tx.select().from(activityTypes);
+    const matches = catalog.filter(
+      (row) =>
+        row.active &&
+        row.billable &&
+        row.department !== "indirect" &&
+        services.includes(row.department) &&
+        (row.clientId == null || row.clientId === job.clientId),
+    );
+    const preferred = employee.departments?.length
+      ? matches.find((row) => employee.departments?.includes(row.department))
+      : null;
+    const pick = preferred ?? matches[0];
+    if (!pick) throw new TrackingError("This job has no task type to clock. Turn a service on for the client.");
+    return pick;
   }
 
   private async jobForEmployee(tx: Conn, employee: Employee, jobId: string, department: Department) {

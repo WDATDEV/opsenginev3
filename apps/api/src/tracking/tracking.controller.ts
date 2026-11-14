@@ -178,7 +178,7 @@ export class TrackingController {
   @Post("tasks/switch")
   switchTask(
     @Body(new ZodPipe(switchTaskSchema))
-    body: { badge: string; department?: "packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect"; activityCode?: string; jobId?: string },
+    body: { badge: string; department?: "packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect"; activityCode?: string; jobId?: string; taskId?: string },
   ) {
     return this.tracking.switchTask(body.badge, body);
   }

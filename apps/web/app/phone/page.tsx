@@ -36,10 +36,13 @@ type Context = {
   tasks: {
     id: string;
     title: string;
+    jobId: string | null;
     jobReference: string | null;
+    activityCode: string | null;
     activityName: string | null;
     startAt: string | null;
     dueOn: string | null;
+    blocked: boolean;
   }[];
   jobs: {
     id: string;
@@ -133,6 +136,7 @@ export default function WarehousePage() {
   const [context, setContext] = useState<Context | null>(null);
   const [jobId, setJobId] = useState("");
   const [taskCode, setTaskCode] = useState("");
+  const [assignedTaskId, setAssignedTaskId] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -261,6 +265,7 @@ export default function WarehousePage() {
       if (ending) setFinished((list) => (list.includes(ending) ? list : [...list, ending]));
       setTaskCode("");
       setJobId("");
+      setAssignedTaskId("");
     }
   }
 
@@ -290,7 +295,10 @@ export default function WarehousePage() {
       })
     : [];
   const picked = projects.find((job) => job.id === jobId) ?? (projects.length === 1 ? projects[0] : null);
-  const ready = Boolean(chosen && (!chosen.billable || picked));
+  const openTasks = (context?.tasks ?? []).filter((item) => !item.blocked);
+  const assignedTask =
+    openTasks.find((item) => item.id === assignedTaskId) ?? (openTasks.length === 1 && startable.length === 0 ? openTasks[0] : null);
+  const ready = Boolean(assignedTask || (chosen && (!chosen.billable || picked)));
   const working = context?.task ?? null;
   const paused = !working ? context?.paused ?? null : null;
   const checkedIn = Boolean(context?.employee.clockedIn);
@@ -303,11 +311,15 @@ export default function WarehousePage() {
       : null;
   const hint = !checkedIn
     ? "Check in at the QR gate first."
-    : !chosen
-      ? "Choose the kind of work."
-      : chosen.billable && !picked
-        ? "Choose a project."
-        : null;
+    : assignedTask
+      ? null
+      : !chosen
+        ? openTasks.length > 0
+          ? "Start an assigned task, or choose the kind of work."
+          : "Choose the kind of work."
+        : chosen.billable && !picked
+          ? "Choose a project."
+          : null;
 
   return (
     <main className={`mx-auto min-h-screen max-w-lg px-4 py-6 ${context ? "pb-40" : ""}`}>
@@ -380,6 +392,7 @@ export default function WarehousePage() {
                 setFinished([]);
                 setTaskCode("");
                 setJobId("");
+                setAssignedTaskId("");
                 setConfirmEnd(false);
               }}
             >
@@ -457,29 +470,52 @@ export default function WarehousePage() {
             </section>
           ) : null}
 
-          {checkedIn && !onMeal && (context.tasks?.length ?? 0) > 0 ? (
-            <section className="card p-4">
-              <p className="mb-2 text-sm font-semibold">Your tasks</p>
-              <ul className="space-y-2 text-sm">
-                {context.tasks.map((item) => (
-                  <li key={item.id}>
-                    <span className="font-medium">{item.title}</span>
-                    <span className="block text-xs text-muted">
-                      {item.jobReference ?? "Project"}
-                      {item.startAt ? ` · starts ${when(item.startAt)}` : ""}
-                      {item.dueOn ? ` · due ${item.dueOn}` : ""}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+          {checkedIn && !onMeal && !working && !paused && openTasks.length > 0 ? (
+            <section>
+              <p className="mb-2 text-sm font-semibold">
+                <span className="mr-2 inline-grid h-6 w-6 place-items-center rounded-full bg-ink text-xs text-paper">1</span>
+                Your tasks
+              </p>
+              <div className="space-y-2">
+                {openTasks.map((item) => {
+                  const selected = assignedTask?.id === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      aria-pressed={selected}
+                      disabled={saving}
+                      className={`card w-full p-4 text-left transition ${
+                        selected ? "border-moss ring-2 ring-moss/30" : "active:bg-black/5"
+                      }`}
+                      onClick={() => {
+                        setAssignedTaskId(item.id);
+                        setTaskCode("");
+                        setJobId("");
+                        setError(null);
+                      }}
+                    >
+                      <span className="block font-semibold">{item.title}</span>
+                      <span className="mt-1 block text-xs text-muted">
+                        {item.jobReference ?? "Project"}
+                        {item.activityName ? ` · ${item.activityName}` : " · start this on the timer"}
+                        {item.startAt ? ` · starts ${when(item.startAt)}` : ""}
+                        {item.dueOn ? ` · due ${item.dueOn}` : ""}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </section>
           ) : null}
 
-          {!working && !paused && !onMeal ? (
+          {!working && !paused && !onMeal && (startable.length > 0 || openTasks.length === 0) ? (
             <section className="space-y-5">
               <div>
                 <p className="mb-2 text-sm font-semibold">
-                  <span className="mr-2 inline-grid h-6 w-6 place-items-center rounded-full bg-ink text-xs text-paper">1</span>
+                  <span className="mr-2 inline-grid h-6 w-6 place-items-center rounded-full bg-ink text-xs text-paper">
+                    {openTasks.length > 0 ? "2" : "1"}
+                  </span>
                   What kind of work?
                 </p>
                 {startable.length === 0 ? (
@@ -505,6 +541,7 @@ export default function WarehousePage() {
                           }`}
                           onClick={() => {
                             setTaskCode(activity.code);
+                            setAssignedTaskId("");
                             setJobId("");
                             setError(null);
                           }}
@@ -639,12 +676,20 @@ export default function WarehousePage() {
                   onClick={() =>
                     void run("/tracking/tasks/switch", {
                       badge,
-                      activityCode: chosen?.code,
-                      ...(picked ? { jobId: picked.id } : {}),
+                      ...(assignedTask
+                        ? { taskId: assignedTask.id }
+                        : {
+                            activityCode: chosen?.code,
+                            ...(picked ? { jobId: picked.id } : {}),
+                          }),
                     })
                   }
                 >
-                  {ready && chosen ? `Start ${chosen.name}${picked ? ` on ${picked.reference}` : ""}` : "Start timer"}
+                  {assignedTask
+                    ? `Start ${assignedTask.title}${assignedTask.jobReference ? ` on ${assignedTask.jobReference}` : ""}`
+                    : ready && chosen
+                      ? `Start ${chosen.name}${picked ? ` on ${picked.reference}` : ""}`
+                      : "Start timer"}
                 </button>
               </>
             ) : null}

@@ -294,8 +294,9 @@ export const switchTaskSchema = z
     department: z.enum(departments).optional(),
     activityCode: z.string().trim().min(1).max(40).optional(),
     jobId: z.string().uuid().optional(),
+    taskId: z.string().uuid().optional(),
   })
-  .refine((value) => Boolean(value.department || value.activityCode), {
+  .refine((value) => Boolean(value.department || value.activityCode || value.taskId), {
     message: "Choose an activity.",
   });
 

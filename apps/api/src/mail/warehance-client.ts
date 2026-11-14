@@ -2,6 +2,7 @@ export type McpTool = {
   name: string;
   description?: string;
   inputSchema?: { type?: string; properties?: Record<string, unknown>; required?: string[] };
+  annotations?: { readOnlyHint?: boolean };
 };
 
 type RpcReply = { result?: unknown; error?: { message?: string } };

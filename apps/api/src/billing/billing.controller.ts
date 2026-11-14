@@ -1,11 +1,13 @@
 import { Controller, Inject, Param, Post, UseGuards } from "@nestjs/common";
 import { authorize, type RequestContext } from "@opsengine/kernel";
 import { AuthGuard } from "../auth/auth.guard.js";
+import { RequireSection, SectionGuard } from "../auth/section.guard.js";
 import { CurrentUser } from "../auth/current-user.js";
 import { BillingService } from "./billing.service.js";
 
 @Controller("billing")
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, SectionGuard)
+@RequireSection("time")
 export class BillingController {
   constructor(@Inject(BillingService) private readonly billing: BillingService) {}
 

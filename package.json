@@ -11,7 +11,7 @@
     "db:push": "pnpm --filter @opsengine/db push",
     "db:seed": "pnpm --filter @opsengine/db seed",
     "db:clear": "pnpm --filter @opsengine/db clear",
-    "test": "pnpm --filter @opsengine/tracking test && pnpm --filter @opsengine/kernel test"
+    "test": "pnpm --filter @opsengine/tracking test && pnpm --filter @opsengine/kernel test && pnpm --filter @opsengine/api test"
   },
   "devDependencies": {
     "turbo": "^2.5.4"

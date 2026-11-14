@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, ApiError, post } from "@/lib/api";
+import { api, ApiError, hasSection, post } from "@/lib/api";
 import { useSession } from "@/components/shell";
 import { Badge, EmptyState, Field, initials, Notice, PageTitle, SkeletonList, Spinner, Switch, timeAgo, useResource } from "@/components/ui";
 
@@ -145,7 +145,7 @@ function describe(rule: Rule) {
 
 export default function AutomationPage() {
   const user = useSession();
-  const allowed = user?.role === "owner" || user?.role === "warehouse_manager";
+  const allowed = hasSection(user, "mail");
   const rules = useResource<Rule[]>(allowed ? "/mail/rules" : null);
   const runs = useResource<Run[]>(allowed ? "/mail/runs" : null);
   const [form, setForm] = useState<Form | null>(null);

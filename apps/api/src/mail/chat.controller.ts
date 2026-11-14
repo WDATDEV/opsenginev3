@@ -1,10 +1,12 @@
 import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Res, UseGuards } from "@nestjs/common";
-import { ForbiddenError, type RequestContext } from "@opsengine/kernel";
+import { authorizeSection, ForbiddenError, type RequestContext } from "@opsengine/kernel";
 import type { Response } from "express";
 import { z } from "zod";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser } from "../auth/current-user.js";
+import { RequireSection, SectionGuard } from "../auth/section.guard.js";
 import { ZodPipe } from "../http.js";
+import { BrowserConfirmGuard } from "./browser-confirm.guard.js";
 import { ChatService } from "./chat.service.js";
 
 const model = z.enum(["haiku", "sonnet"]);
@@ -25,6 +27,10 @@ const updateSchema = z.object({
 });
 
 const askSchema = z.object({ text: z.string().trim().min(1, "Type a question.").max(8000) });
+const recoverSchema = z.object({ format: z.enum(["csv", "xlsx", "json"]).default("csv") });
+const stockSchema = z.object({
+  keep: z.array(z.object({ sku: z.string().trim().min(1).max(80), location: z.string().trim().min(1).max(120) })).max(20).default([]),
+});
 
 const emailSchema = z.object({
   messageId: z.string().uuid(),
@@ -41,14 +47,27 @@ const slackSchema = z.object({
   fileIds: z.array(z.string().uuid()).max(5).default([]),
 });
 
-// Chat can read every client's data and send mail, so it is for the owner only.
+const tableSchema = z.object({
+  columns: z.array(z.string().trim().min(1).max(120)).min(1).max(80),
+  cells: z.array(z.array(z.string().max(2000)).max(80)).min(1).max(5000),
+  name: z.string().trim().min(1).max(120).optional(),
+});
+
+const warehanceSchema = tableSchema.extend({
+  action: z.enum(["set", "adjust"]).default("set"),
+  warehouse: z.string().trim().max(120).default(""),
+  reason: z.string().trim().max(200).default(""),
+  zeroQuantity: z.boolean().default(false),
+});
+
 function access(ctx: RequestContext) {
-  if (ctx.principal.role !== "owner") throw new ForbiddenError("Chat is for the warehouse owner.");
+  authorizeSection(ctx, "chat");
   return ctx.principal.id;
 }
 
 @Controller("mail/chat")
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, SectionGuard)
+@RequireSection("chat")
 export class ChatController {
   constructor(@Inject(ChatService) private readonly chat: ChatService) {}
 
@@ -94,6 +113,33 @@ export class ChatController {
     return this.chat.ask(access(ctx), id, body.text);
   }
 
+  @Post("threads/:id/messages/:messageId/recover")
+  recover(
+    @CurrentUser() ctx: RequestContext,
+    @Param("id") id: string,
+    @Param("messageId") messageId: string,
+    @Body(new ZodPipe(recoverSchema)) body: z.infer<typeof recoverSchema>,
+  ) {
+    return this.chat.recover(access(ctx), id, messageId, body.format);
+  }
+
+  @Get("threads/:id/stock-logs")
+  stockLogs(@CurrentUser() ctx: RequestContext, @Param("id") id: string) {
+    if (ctx.principal.role !== "owner") throw new ForbiddenError("Only the owner can open stock-change logs.");
+    return this.chat.stockLogs(access(ctx), id);
+  }
+
+  @Post("threads/:id/messages/:messageId/stock")
+  @UseGuards(BrowserConfirmGuard)
+  confirmStock(
+    @CurrentUser() ctx: RequestContext,
+    @Param("id") id: string,
+    @Param("messageId") messageId: string,
+    @Body(new ZodPipe(stockSchema)) body: z.infer<typeof stockSchema>,
+  ) {
+    return this.chat.confirmStock(ctx.principal, id, messageId, body.keep);
+  }
+
   @Post("threads/:id/email")
   email(@CurrentUser() ctx: RequestContext, @Param("id") id: string, @Body(new ZodPipe(emailSchema)) body: z.infer<typeof emailSchema>) {
     return this.chat.email(access(ctx), id, body);
@@ -110,5 +156,20 @@ export class ChatController {
     res.setHeader("Content-Type", file.mime);
     res.setHeader("Content-Disposition", `attachment; filename="${file.name.replace(/[^\w.\- ]+/g, "_")}"`);
     res.send(file.data);
+  }
+
+  @Get("files/:id/table")
+  table(@CurrentUser() ctx: RequestContext, @Param("id") id: string) {
+    return this.chat.table(access(ctx), id);
+  }
+
+  @Post("files/:id/table")
+  saveTable(@CurrentUser() ctx: RequestContext, @Param("id") id: string, @Body(new ZodPipe(tableSchema)) body: z.infer<typeof tableSchema>) {
+    return this.chat.saveTable(access(ctx), id, body);
+  }
+
+  @Post("files/:id/warehance")
+  warehanceCsv(@CurrentUser() ctx: RequestContext, @Param("id") id: string, @Body(new ZodPipe(warehanceSchema)) body: z.infer<typeof warehanceSchema>) {
+    return this.chat.warehanceCsv(access(ctx), id, body);
   }
 }

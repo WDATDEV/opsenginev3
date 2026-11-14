@@ -4,9 +4,10 @@ import { eq } from "drizzle-orm";
 import { DbService } from "../db.service.js";
 import { checkKey, modelFor } from "../mail/anthropic.js";
 import { GmailService } from "../mail/gmail.service.js";
+import { refuseSameKeys, refuseStaffKey, refuseWriteKey } from "../mail/settings-keys.js";
 import { WarehanceClient } from "../mail/warehance-client.js";
 
-type Kind = "gmail" | "warehance" | "slack" | "anthropic";
+type Kind = "gmail" | "warehance" | "warehance_write" | "slack" | "anthropic";
 
 type ConnectorRow = typeof connectors.$inferSelect;
 
@@ -36,6 +37,7 @@ export class SettingsService {
     return {
       gmail: { ...view(rows.find((row) => row.kind === "gmail")), googleReady: googleReady() },
       warehance: view(rows.find((row) => row.kind === "warehance")),
+      warehanceWrite: view(rows.find((row) => row.kind === "warehance_write")),
       slack: view(rows.find((row) => row.kind === "slack")),
       anthropic: view(rows.find((row) => row.kind === "anthropic")),
     };
@@ -67,11 +69,32 @@ export class SettingsService {
   async saveWarehance(url: string, key: string) {
     const stored = key || (await this.secret("warehance"));
     if (!stored) throw new BadRequestException("Paste the staff key.");
+    const tools = await listConnectorTools(url, stored);
+    const blocked = refuseStaffKey(tools) || refuseSameKeys(stored, await this.secret("warehance_write"));
+    if (blocked) throw new BadRequestException(blocked);
     await this.upsert("warehance", {
       label: hostOf(url),
       secret: stored,
       extra: url,
       detail: "Saved. Test the connection before Mail uses it.",
+    });
+    return this.list();
+  }
+
+  async saveWarehanceWrite(url: string, key: string) {
+    const staff = await this.row("warehance");
+    const mcp = url || staff?.extra || "";
+    const stored = key || (await this.secret("warehance_write"));
+    if (!stored) throw new BadRequestException("Paste the Warehance write key.");
+    if (!mcp) throw new BadRequestException("Save the Warehance bot address first, or paste the connector URL.");
+    const tools = await listConnectorTools(mcp, stored);
+    const blocked = refuseWriteKey(tools) || refuseSameKeys(await this.secret("warehance"), stored);
+    if (blocked) throw new BadRequestException(blocked);
+    await this.upsert("warehance_write", {
+      label: "Write key saved",
+      secret: stored,
+      extra: mcp,
+      detail: "Saved. Confirm uses this key only after the owner presses Confirm.",
     });
     return this.list();
   }
@@ -105,11 +128,29 @@ export class SettingsService {
     if (kind === "warehance") {
       let detail: string;
       try {
-        detail = await new WarehanceClient(row.extra || "", row.secret || "").check();
+        const client = new WarehanceClient(row.extra || "", row.secret || "");
+        const tools = await client.listTools();
+        const blocked = refuseStaffKey(tools);
+        if (blocked) throw new Error(blocked);
+        detail = await client.check();
       } catch (err) {
         throw new BadRequestException(err instanceof Error ? err.message : "Could not reach the Warehance connector.");
       }
       await this.upsert("warehance", { ...row, detail });
+      return this.list();
+    }
+    if (kind === "warehance_write") {
+      let detail: string;
+      try {
+        const client = new WarehanceClient(row.extra || "", row.secret || "");
+        const tools = await client.listTools();
+        const blocked = refuseWriteKey(tools);
+        if (blocked) throw new Error(blocked);
+        detail = `Connected. Write key has adjust_inventory. ${tools.length} tool(s) listed.`;
+      } catch (err) {
+        throw new BadRequestException(err instanceof Error ? err.message : "Could not reach the Warehance connector.");
+      }
+      await this.upsert("warehance_write", { ...row, detail });
       return this.list();
     }
     if (kind === "anthropic") {
@@ -161,6 +202,14 @@ export class SettingsService {
 
 function hostOf(url: string) {
   return new URL(url).host;
+}
+
+async function listConnectorTools(url: string, key: string) {
+  try {
+    return await new WarehanceClient(url, key).listTools();
+  } catch (err) {
+    throw new BadRequestException(err instanceof Error ? err.message : "Could not reach the Warehance connector.");
+  }
 }
 
 async function pingSlack(token: string, channel: string) {

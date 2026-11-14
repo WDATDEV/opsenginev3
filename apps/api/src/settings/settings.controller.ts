@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Delete, Get, Inject, Param, Post, UseGuards } from "@nestjs/common";
 import { z } from "zod";
-import { ForbiddenError, type RequestContext } from "@opsengine/kernel";
+import { authorizeSection, type RequestContext } from "@opsengine/kernel";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser } from "../auth/current-user.js";
 import { ZodPipe } from "../http.js";
@@ -8,6 +8,11 @@ import { SettingsService } from "./settings.service.js";
 
 const warehanceSchema = z.object({
   url: z.string().trim().url("Enter the connector address, including https://."),
+  key: z.string().trim().optional().default(""),
+});
+
+const warehanceWriteSchema = z.object({
+  url: z.string().trim().optional().default(""),
   key: z.string().trim().optional().default(""),
 });
 
@@ -20,7 +25,7 @@ const anthropicSchema = z.object({
   key: z.string().trim().optional().default(""),
 });
 
-const kindSchema = z.enum(["gmail", "warehance", "slack", "anthropic"]);
+const kindSchema = z.enum(["gmail", "warehance", "warehance_write", "slack", "anthropic"]);
 
 function kindOf(value: string) {
   const parsed = kindSchema.safeParse(value);
@@ -28,8 +33,8 @@ function kindOf(value: string) {
   return parsed.data;
 }
 
-function ownerOnly(ctx: RequestContext) {
-  if (ctx.principal.role !== "owner") throw new ForbiddenError("Only the owner can change connectors.");
+function connectors(ctx: RequestContext) {
+  authorizeSection(ctx, "settings");
 }
 
 @Controller()
@@ -39,15 +44,13 @@ export class SettingsController {
 
   @Get("settings/connectors")
   list(@CurrentUser() ctx: RequestContext) {
-    ownerOnly(ctx);
+    connectors(ctx);
     return this.settings.list();
   }
 
   @Get("mail/status")
   status(@CurrentUser() ctx: RequestContext) {
-    if (ctx.principal.role !== "owner" && ctx.principal.role !== "warehouse_manager") {
-      throw new ForbiddenError("Mail is for the warehouse manager.");
-    }
+    authorizeSection(ctx, "mail");
     return this.settings.status();
   }
 
@@ -56,31 +59,40 @@ export class SettingsController {
     @CurrentUser() ctx: RequestContext,
     @Body(new ZodPipe(warehanceSchema)) body: z.infer<typeof warehanceSchema>,
   ) {
-    ownerOnly(ctx);
+    connectors(ctx);
     return this.settings.saveWarehance(body.url, body.key);
+  }
+
+  @Post("settings/connectors/warehance_write")
+  saveWarehanceWrite(
+    @CurrentUser() ctx: RequestContext,
+    @Body(new ZodPipe(warehanceWriteSchema)) body: z.infer<typeof warehanceWriteSchema>,
+  ) {
+    connectors(ctx);
+    return this.settings.saveWarehanceWrite(body.url, body.key);
   }
 
   @Post("settings/connectors/slack")
   saveSlack(@CurrentUser() ctx: RequestContext, @Body(new ZodPipe(slackSchema)) body: z.infer<typeof slackSchema>) {
-    ownerOnly(ctx);
+    connectors(ctx);
     return this.settings.saveSlack(body.token, body.channel);
   }
 
   @Post("settings/connectors/anthropic")
   saveAnthropic(@CurrentUser() ctx: RequestContext, @Body(new ZodPipe(anthropicSchema)) body: z.infer<typeof anthropicSchema>) {
-    ownerOnly(ctx);
+    connectors(ctx);
     return this.settings.saveAnthropic(body.key);
   }
 
   @Post("settings/connectors/:kind/test")
   test(@CurrentUser() ctx: RequestContext, @Param("kind") kind: string) {
-    ownerOnly(ctx);
+    connectors(ctx);
     return this.settings.test(kindOf(kind));
   }
 
   @Delete("settings/connectors/:kind")
   remove(@CurrentUser() ctx: RequestContext, @Param("kind") kind: string) {
-    ownerOnly(ctx);
+    connectors(ctx);
     return this.settings.disconnect(kindOf(kind));
   }
 }

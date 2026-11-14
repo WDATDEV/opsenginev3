@@ -1,5 +1,5 @@
 import { BadRequestException, Controller, Get, Inject, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
-import { ForbiddenError, type RequestContext } from "@opsengine/kernel";
+import { authorizeSection, ForbiddenError, type RequestContext } from "@opsengine/kernel";
 import type { Request, Response } from "express";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser } from "../auth/current-user.js";
@@ -10,9 +10,7 @@ function web(path: string) {
 }
 
 function mailAccess(ctx: RequestContext) {
-  if (ctx.principal.role !== "owner" && ctx.principal.role !== "warehouse_manager") {
-    throw new ForbiddenError("Mail is for the warehouse manager.");
-  }
+  authorizeSection(ctx, "mail");
 }
 
 @Controller()
@@ -23,7 +21,7 @@ export class MailController {
   @Post("settings/connectors/gmail/connect")
   @UseGuards(AuthGuard)
   connect(@CurrentUser() ctx: RequestContext, @Req() req: Request) {
-    if (ctx.principal.role !== "owner") throw new ForbiddenError("Only the owner can change connectors.");
+    authorizeSection(ctx, "settings");
     return { url: this.gmail.connectUrl(ctx.principal.id, this.gmail.redirectUri(req)) };
   }
 

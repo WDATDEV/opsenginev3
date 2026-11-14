@@ -132,6 +132,24 @@ input[type="radio"] {
     resize: vertical;
   }
 
+  /* Number and date pickers must stay typeable; spinner buttons steal clicks on Windows. */
+  input.field[type="number"] {
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+
+  input.field[type="number"]::-webkit-inner-spin-button,
+  input.field[type="number"]::-webkit-outer-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+
+  input.field[type="date"],
+  input.field[type="datetime-local"] {
+    min-width: 0;
+    color-scheme: light;
+  }
+
   /* ---- Buttons ---- */
   .btn {
     display: inline-flex;

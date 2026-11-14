@@ -6,58 +6,58 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
-import type { Role } from "@opsengine/contracts";
-import type { Principal } from "@opsengine/kernel";
+import { users } from "@opsengine/db";
+import { eq } from "drizzle-orm";
+import { DbService } from "../db.service.js";
 import { SESSION_COOKIE, type AuthedRequest } from "./auth.types.js";
+import { principalFromUser } from "./principal.js";
 
 @Injectable()
 export class AuthGuard implements CanActivate {
-  constructor(@Inject(JwtService) private readonly jwt: JwtService) {}
+  constructor(
+    @Inject(JwtService) private readonly jwt: JwtService,
+    @Inject(DbService) private readonly db: DbService,
+  ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext) {
     const req = context.switchToHttp().getRequest<AuthedRequest>();
-    req.user = this.read(req, true);
+    req.user = await this.read(req, true);
     return true;
   }
 
-  private read(req: AuthedRequest, required: boolean): Principal | undefined {
+  private async read(req: AuthedRequest, required: boolean) {
     const token = readToken(req);
     if (!token) {
       if (required) throw new UnauthorizedException("Sign in to continue.");
       return undefined;
     }
+    let id: string;
     try {
-      const payload = this.jwt.verify<Principal>(token);
-      return {
-        id: payload.id,
-        email: payload.email,
-        name: payload.name,
-        role: payload.role as Role,
-        clientIds: payload.clientIds ?? null,
-      };
+      id = this.jwt.verify<{ id: string }>(token).id;
     } catch {
       throw new UnauthorizedException("Your session expired. Sign in again.");
     }
+    const [row] = await this.db.db.select().from(users).where(eq(users.id, id)).limit(1);
+    if (!row) throw new UnauthorizedException("Sign in to continue.");
+    return principalFromUser(row);
   }
 }
 
 @Injectable()
 export class OptionalAuthGuard implements CanActivate {
-  constructor(@Inject(JwtService) private readonly jwt: JwtService) {}
+  constructor(
+    @Inject(JwtService) private readonly jwt: JwtService,
+    @Inject(DbService) private readonly db: DbService,
+  ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext) {
     const req = context.switchToHttp().getRequest<AuthedRequest>();
     const token = readToken(req);
     if (!token) return true;
     try {
-      const payload = this.jwt.verify<Principal>(token);
-      req.user = {
-        id: payload.id,
-        email: payload.email,
-        name: payload.name,
-        role: payload.role as Role,
-        clientIds: payload.clientIds ?? null,
-      };
+      const id = this.jwt.verify<{ id: string }>(token).id;
+      const [row] = await this.db.db.select().from(users).where(eq(users.id, id)).limit(1);
+      if (row) req.user = principalFromUser(row);
       return true;
     } catch {
       throw new UnauthorizedException("Your session expired. Sign in again.");

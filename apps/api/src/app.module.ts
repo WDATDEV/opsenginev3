@@ -15,10 +15,11 @@ import { InternalController } from "./internal/internal.controller.js";
 import { SchedulerService } from "./tracking/scheduler.service.js";
 import { TrackingController } from "./tracking/tracking.controller.js";
 import { TrackingService } from "./tracking/tracking.service.js";
+import { SectionGuard } from "./auth/section.guard.js";
 import { ChatController } from "./mail/chat.controller.js";
 import { ChatService } from "./mail/chat.service.js";
-import { BroadcastController } from "./mail/broadcast.controller.js";
-import { BroadcastService } from "./mail/broadcast.service.js";
+import { UsersController } from "./users/users.controller.js";
+import { UsersService } from "./users/users.service.js";
 import { AutomationController } from "./mail/automation.controller.js";
 import { AutomationService } from "./mail/automation.service.js";
 import { GmailService } from "./mail/gmail.service.js";
@@ -38,6 +39,7 @@ import { WorkService } from "./work/work.service.js";
   controllers: [
     HealthController,
     AuthController,
+    UsersController,
     ClientsController,
     JobsController,
     BillingController,
@@ -46,7 +48,6 @@ import { WorkService } from "./work/work.service.js";
     SettingsController,
     MailController,
     AutomationController,
-    BroadcastController,
     ChatController,
     InternalController,
   ],
@@ -55,6 +56,7 @@ import { WorkService } from "./work/work.service.js";
     AuthService,
     AuthGuard,
     OptionalAuthGuard,
+    SectionGuard,
     TrackingService,
     SchedulerService,
     JobsService,
@@ -63,8 +65,8 @@ import { WorkService } from "./work/work.service.js";
     SettingsService,
     GmailService,
     AutomationService,
-    BroadcastService,
     ChatService,
+    UsersService,
   ],
 })
 export class AppModule {}

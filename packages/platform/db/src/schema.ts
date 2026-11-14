@@ -196,6 +196,37 @@ export type ChatProposal = {
   fileName: string | null;
 };
 
+export type ChatStockRow = {
+  sku: string;
+  location: string;
+  warehouse: string;
+  qtyBefore: number;
+  qtyAfter: number;
+  lotCode: string;
+  ok: boolean | null;
+  error: string | null;
+  appliedQuantity?: number | null;
+  capped?: boolean | null;
+  nonce?: string | null;
+};
+
+// A Warehance stock change Claude prepared. Nothing is written until the owner confirms.
+export type ChatStockChange = {
+  logId: string | null;
+  clientName: string;
+  clientId: number | null;
+  warehouse: string;
+  action: "set";
+  quantity: number;
+  reason: string;
+  skuPrefix: string;
+  rows: ChatStockRow[];
+  status: "proposed" | "applying" | "applied" | "rejected";
+  proposedAt: string;
+  expiresAt: string;
+  note: string | null;
+};
+
 export const chatThreads = mail.table("chat_threads", {
   id: uuid("id").defaultRandom().primaryKey(),
   ownerId: uuid("owner_id").notNull(),
@@ -218,7 +249,42 @@ export const chatMessages = mail.table("chat_messages", {
   error: text("error"),
   lookups: jsonb("lookups").$type<ChatLookup[]>().notNull().default([]),
   proposal: jsonb("proposal").$type<ChatProposal | null>(),
+  stockChange: jsonb("stock_change").$type<ChatStockChange | null>(),
   sends: jsonb("sends").$type<ChatSend[]>().notNull().default([]),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// One Warehance bot page, kept so a failed Chat turn can still be rebuilt into a file.
+export const chatStockLogs = mail.table("chat_stock_logs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  threadId: uuid("thread_id").notNull(),
+  messageId: uuid("message_id").notNull(),
+  actorId: uuid("actor_id").notNull(),
+  actorEmail: text("actor_email").notNull().default(""),
+  actorName: text("actor_name").notNull().default(""),
+  status: text("status").notNull(),
+  clientName: text("client_name").notNull().default(""),
+  clientId: bigint("client_id", { mode: "number" }),
+  warehouse: text("warehouse").notNull().default(""),
+  action: text("action").notNull().default("set"),
+  quantity: integer("quantity").notNull().default(0),
+  reason: text("reason").notNull().default(""),
+  skuPrefix: text("sku_prefix").notNull().default(""),
+  rows: jsonb("rows").$type<ChatStockRow[]>().notNull().default([]),
+  error: text("error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const chatLookupLogs = mail.table("chat_lookup_logs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  threadId: uuid("thread_id").notNull(),
+  messageId: uuid("message_id").notNull(),
+  tool: text("tool").notNull(),
+  args: jsonb("args").$type<Record<string, unknown>>().notNull().default({}),
+  ok: boolean("ok").notNull().default(true),
+  error: text("error"),
+  recordCount: integer("record_count").notNull().default(0),
+  records: jsonb("records").$type<Record<string, unknown>[]>().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -244,6 +310,8 @@ export const users = identity.table("users", {
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull(),
   clientIds: jsonb("client_ids").$type<string[] | null>(),
+  // Null means use the defaults for that role. An owner can set an explicit list.
+  sections: jsonb("sections").$type<string[] | null>(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -329,6 +397,7 @@ export const tasks = work.table("tasks", {
   dependsOnId: uuid("depends_on_id"),
   startAt: timestamp("start_at", { withTimezone: true }),
   activityCode: text("activity_code"),
+  hourlyRateCents: integer("hourly_rate_cents"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

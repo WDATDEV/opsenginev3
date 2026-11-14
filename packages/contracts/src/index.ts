@@ -11,6 +11,32 @@ export const roles = [
 
 export type Role = (typeof roles)[number];
 
+// Top-level product areas. An owner picks which of these a management user may open.
+export const appSections = ["time", "mail", "chat", "users", "settings"] as const;
+export type AppSection = (typeof appSections)[number];
+
+export const appSectionLabels: Record<AppSection, string> = {
+  time: "Time tracking",
+  mail: "Mail",
+  chat: "Chat",
+  users: "Users",
+  settings: "Settings",
+};
+
+export function defaultSections(role: Role): AppSection[] {
+  if (role === "owner") return [...appSections];
+  if (role === "warehouse_manager") return ["time", "mail"];
+  return ["time"];
+}
+
+export function resolveSections(role: Role, stored: string[] | null | undefined): AppSection[] {
+  if (role === "owner") return [...appSections];
+  const allowed = new Set<string>(appSections);
+  const picked = (stored ?? []).filter((item): item is AppSection => allowed.has(item));
+  if (picked.length > 0) return [...new Set(picked)];
+  return defaultSections(role);
+}
+
 export const permissions = [
   "tracking.read",
   "tracking.record",
@@ -268,8 +294,9 @@ export const switchTaskSchema = z
     department: z.enum(departments).optional(),
     activityCode: z.string().trim().min(1).max(40).optional(),
     jobId: z.string().uuid().optional(),
+    taskId: z.string().uuid().optional(),
   })
-  .refine((value) => Boolean(value.department || value.activityCode), {
+  .refine((value) => Boolean(value.department || value.activityCode || value.taskId), {
     message: "Choose an activity.",
   });
 
@@ -322,6 +349,7 @@ export const createJobTaskSchema = z.object({
   dependsOnId: z.string().uuid().optional(),
   startAt: taskStartAt.optional(),
   activityCode: z.string().trim().min(1).max(40).optional(),
+  hourlyRateCents: z.number().int().min(0).max(10_000_000).optional(),
 });
 
 export const setTaskStartSchema = z.object({

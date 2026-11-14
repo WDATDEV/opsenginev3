@@ -50,7 +50,7 @@ import {
   type Ownership,
 } from "@opsengine/tracking";
 import type { ClientService, GateMode } from "@opsengine/contracts";
-import { assertClientService } from "../clients/access.js";
+import { assertClientService, enabledServiceList } from "../clients/access.js";
 import { DbService } from "../db.service.js";
 
 type Conn = Database;
@@ -59,6 +59,21 @@ type Device = typeof devices.$inferSelect;
 
 const SCHEDULE_WINDOW_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_GATE_PLACES = ["Front gate", "Dock", "Packing", "Picking", "Receiving", "Unloading", "Sorting"];
+
+function stintDisplayStart(
+  rows: { jobId: string | null; taskCode: string; startedAt: Date; endedAt: Date | null; endReason: string | null }[],
+  current: { jobId: string | null; taskCode: string },
+  now: Date,
+) {
+  let ms = 0;
+  for (const row of rows) {
+    const same = (row.jobId ?? null) === (current.jobId ?? null) && row.taskCode === current.taskCode;
+    if (!same) break;
+    if (row.endedAt && row.endReason !== "pause" && row.endReason !== "meal") break;
+    ms += Math.max(0, (row.endedAt ?? now).getTime() - row.startedAt.getTime());
+  }
+  return new Date(now.getTime() - ms);
+}
 
 function isUnique(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
@@ -199,7 +214,11 @@ export class TrackingService {
     const clientNameById = new Map(clientRows.map((row) => [row.id, row.name]));
     const shiftByEmployee = new Map(openShifts.map((shift) => [shift.employeeId, shift]));
     const mealShiftIds = new Set(openBreaks.map((row) => row.shiftId));
-    const segmentByEmployee = new Map(openSegments.map((row) => [row.employeeId, row]));
+    const segmentByEmployee = new Map(
+      [...openSegments]
+        .sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime())
+        .map((row) => [row.employeeId, row]),
+    );
 
     const counts: Record<Department, number> = {
       packing: 0,
@@ -328,29 +347,50 @@ export class TrackingService {
       const clientNameById = new Map(clientRows.map((row) => [row.id, row.name]));
       const jobById = new Map(jobRows.map((row) => [row.id, row]));
       const activityName = new Map(activities.map((row) => [row.code, row.name]));
-      const [lastSegment] = segment
-        ? []
-        : await tx
-            .select()
-            .from(segments)
-            .where(eq(segments.employeeId, employee.id))
-            .orderBy(desc(segments.startedAt))
-            .limit(1);
+      const employeeSegments = await tx
+        .select()
+        .from(segments)
+        .where(eq(segments.employeeId, employee.id))
+        .orderBy(desc(segments.startedAt));
+      const lastSegment = segment ? null : employeeSegments[0] ?? null;
       const paused = lastSegment && (lastSegment.endReason === "pause" || lastSegment.endReason === "meal") ? lastSegment : null;
-      const describe = (row: { taskCode: string; jobId: string | null; department: string; startedAt: Date }) => {
+      const now = new Date();
+      const taskRows = await tx.select().from(tasks).where(eq(tasks.assigneeId, employee.id));
+      const taskTitleById = new Map(taskRows.map((row) => [row.id, row.title]));
+      const describe = (row: {
+        taskCode: string;
+        jobId: string | null;
+        department: string;
+        startedAt: Date;
+        note?: string | null;
+      }) => {
         const job = row.jobId ? jobById.get(row.jobId) : null;
         return {
           department: row.department,
           taskCode: row.taskCode,
-          activityName: activityName.get(row.taskCode) ?? row.taskCode,
-          startedAt: row.startedAt,
+          activityName: (row.note ? taskTitleById.get(row.note) : null) ?? activityName.get(row.taskCode) ?? row.taskCode,
+          startedAt: stintDisplayStart(employeeSegments, row, now),
           jobId: row.jobId,
           jobReference: job?.reference ?? null,
           clientName: job ? clientNameById.get(job.clientId) ?? null : null,
         };
       };
-
-      const taskRows = await tx.select().from(tasks).where(eq(tasks.assigneeId, employee.id));
+      const completedCodesByJob = new Map<string, Set<string>>();
+      const markDone = (jobId: string | null, code: string | null) => {
+        if (!jobId || !code) return;
+        const set = completedCodesByJob.get(jobId) ?? new Set<string>();
+        set.add(code);
+        completedCodesByJob.set(jobId, set);
+      };
+      for (const row of taskRows) {
+        if (row.status === "done") markDone(row.jobId, row.activityCode);
+      }
+      for (const row of employeeSegments) {
+        // Clocking a named job task reuses a backing activity. That is not "this kind of work is finished."
+        if (row.endReason === "complete" && !(row.note && taskTitleById.has(row.note))) {
+          markDone(row.jobId, row.taskCode);
+        }
+      }
       const assignments = await tx.select().from(jobAssignees).where(eq(jobAssignees.employeeId, employee.id));
       const assigned = new Set(assignments.map((row) => row.jobId));
       const assignmentByJob = new Map(assignments.map((row) => [row.jobId, row]));
@@ -384,6 +424,7 @@ export class TrackingService {
             activityName: row.activityCode ? activityName.get(row.activityCode) ?? row.activityCode : null,
             startAt: row.startAt,
             dueOn: row.dueOn,
+            blocked: Boolean(row.dependsOnId && taskRows.find((item) => item.id === row.dependsOnId)?.status !== "done"),
           })),
         jobs: jobRows
           .filter((row) => row.status !== "done" && mine(row.id))
@@ -405,6 +446,7 @@ export class TrackingService {
               clientName: client?.name ?? "Client",
               clientCode: client?.code ?? "",
               enabledServices: services,
+              completedCodes: [...(completedCodesByJob.get(row.id) ?? [])],
             };
           }),
         activities: activities
@@ -454,6 +496,7 @@ export class TrackingService {
           .filter((row) => row.status !== "closed" && mine(row.jobId))
           .map((row) => ({
             id: row.id,
+            jobId: row.jobId,
             reference: row.reference,
             status: row.status,
             coworkers: workers
@@ -464,6 +507,7 @@ export class TrackingService {
           .filter((row) => row.status !== "done" && mine(row.jobId))
           .map((row) => ({
             id: row.id,
+            jobId: row.jobId,
             reference: row.reference,
             kind: row.kind,
             dock: row.dock,
@@ -829,28 +873,41 @@ export class TrackingService {
 
   async switchTask(
     badge: string,
-    input: { department?: Department; activityCode?: string; jobId?: string },
+    input: { department?: Department; activityCode?: string; jobId?: string; taskId?: string },
   ) {
     return this.inTx(async (tx) => {
       const employee = await this.employeeByBadge(tx, badge);
       const shift = await this.requireReady(tx, employee);
-      const activity = input.activityCode ? await this.activityByCode(tx, input.activityCode) : null;
+      const assigned = input.taskId ? await this.assignedOpenTask(tx, employee, input.taskId) : null;
+      const jobId = assigned?.jobId ?? input.jobId ?? null;
+      let activity = (assigned?.activityCode ?? input.activityCode)
+        ? await this.activityByCode(tx, assigned?.activityCode ?? input.activityCode ?? "")
+        : null;
+      if (!activity && assigned?.jobId) {
+        activity = await this.billableActivityForJob(tx, employee, assigned.jobId);
+      }
       const department = activity ? asDepartment(activity.department) : input.department;
       if (!department) throw new TrackingError("Choose an activity.");
       const taskCode = activity?.code ?? taskFor(department);
       const billable = activity ? activity.billable : taskCode !== "indirect";
-      if (employee.departments?.length && department !== "indirect" && !employee.departments.includes(department)) {
+      if (
+        !assigned &&
+        employee.departments?.length &&
+        department !== "indirect" &&
+        !employee.departments.includes(department)
+      ) {
         throw new TrackingError(`${employee.name} is not set up for ${department}. Ask a manager to add it.`);
       }
-      const jobCheck = assertBillableJob({ billable, jobId: input.jobId ?? null });
+      const jobCheck = assertBillableJob({ billable, jobId });
       if (!jobCheck.ok) throw new TrackingError(jobCheck.reason);
       const job = jobCheck.jobId ? await this.jobForEmployee(tx, employee, jobCheck.jobId, department) : null;
       const segmentId = await this.touchSegment(tx, employee, shift.id, department, null, {
         jobId: job?.id ?? null,
         activityId: activity?.id ?? null,
         taskCode,
+        note: assigned?.id,
       });
-      const label = activity?.name ?? department;
+      const label = assigned?.title ?? activity?.name ?? department;
       const where = job ? ` on ${job.reference}` : "";
       await this.audit(
         tx,
@@ -890,19 +947,39 @@ export class TrackingService {
       const employee = await this.employeeByBadge(tx, badge);
       await this.requireReady(tx, employee);
       const open = await this.openSegment(tx, employee.id);
-      if (!open) throw new TrackingError(`${employee.name} has nothing running to finish.`);
+      const [last] = open
+        ? []
+        : await tx
+            .select()
+            .from(segments)
+            .where(eq(segments.employeeId, employee.id))
+            .orderBy(desc(segments.startedAt))
+            .limit(1);
+      const target =
+        open ?? (last && (last.endReason === "pause" || last.endReason === "meal") ? last : null);
+      if (!target) throw new TrackingError(`${employee.name} has nothing running to finish.`);
       const now = new Date();
-      await tx.update(segments).set({ endedAt: now, endReason: "complete" }).where(eq(segments.id, open.id));
-      const minutes = Math.max(0, Math.round((now.getTime() - open.startedAt.getTime()) / 60_000));
+      await tx.update(segments).set({ endedAt: target.endedAt ?? now, endReason: "complete" }).where(eq(segments.id, target.id));
+      const minutes = Math.max(0, Math.round(((target.endedAt ?? now).getTime() - target.startedAt.getTime()) / 60_000));
       const span = minutes === 0 ? "less than a minute" : `${minutes} min`;
-      const job = open.jobId ? await this.jobById(tx, open.jobId) : null;
+      const job = target.jobId ? await this.jobById(tx, target.jobId) : null;
       const message = job
         ? `${employee.name} finished. ${span} is on ${job.reference}.`
         : `${employee.name} finished. ${span} recorded.`;
-      await this.audit(tx, employee.id, "tracking.task_stopped", "activity_segment", open.id, message);
-      if (open.jobId) await this.completeMatchingTask(tx, employee.id, open.jobId, open.taskCode);
+      await this.audit(tx, employee.id, "tracking.task_stopped", "activity_segment", target.id, message);
+      if (target.note) await this.completeTaskById(tx, employee.id, target.note);
+      else if (target.jobId) await this.completeMatchingTask(tx, employee.id, target.jobId, target.taskCode);
       return { message };
     });
+  }
+
+  private async completeTaskById(tx: Conn, employeeId: string, taskId: string) {
+    const [row] = await tx
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.id, taskId), eq(tasks.assigneeId, employeeId), eq(tasks.status, "open")))
+      .limit(1);
+    if (row) await tx.update(tasks).set({ status: "done" }).where(eq(tasks.id, row.id));
   }
 
   private async completeMatchingTask(tx: Conn, employeeId: string, jobId: string, taskCode: string) {
@@ -943,6 +1020,7 @@ export class TrackingService {
         jobId: last.jobId,
         activityId: last.activityId,
         taskCode: last.taskCode,
+        note: last.note,
       });
       const named = await tx.select().from(activityTypes).where(eq(activityTypes.code, last.taskCode));
       const activity = named.find((row) => row.clientId == null) ?? named[0];
@@ -1906,6 +1984,48 @@ export class TrackingService {
         const department = asDepartment(activity.department);
         const open = await this.openSegment(tx, employee.id);
         const alreadyOn = open && open.jobId === job.id && open.taskCode === activity.code;
+        // Never steal a timer the worker already started on another job or task.
+        if (open && !alreadyOn) return false;
+        if (!open) {
+          const [last] = await tx
+            .select()
+            .from(segments)
+            .where(eq(segments.employeeId, employee.id))
+            .orderBy(desc(segments.startedAt))
+            .limit(1);
+          if (last && (last.endReason === "pause" || last.endReason === "meal")) return false;
+        }
+        const doneTask = (
+          await tx
+            .select({ id: tasks.id })
+            .from(tasks)
+            .where(
+              and(
+                eq(tasks.jobId, job.id),
+                eq(tasks.assigneeId, employee.id),
+                eq(tasks.activityCode, activity.code),
+                eq(tasks.status, "done"),
+              ),
+            )
+            .limit(1)
+        )[0];
+        const doneSegment = (
+          await tx
+            .select({ id: segments.id, note: segments.note })
+            .from(segments)
+            .where(
+              and(
+                eq(segments.employeeId, employee.id),
+                eq(segments.jobId, job.id),
+                eq(segments.taskCode, activity.code),
+                eq(segments.endReason, "complete"),
+              ),
+            )
+        ).find((row) => !row.note);
+        if (doneTask || doneSegment) {
+          await tx.update(jobAssignees).set({ autoStartedAt: new Date() }).where(eq(jobAssignees.id, claim.id));
+          return false;
+        }
         if (!alreadyOn) {
           await assertClientService(this.db.db, job.clientId, department as ClientService);
           await this.claimJob(tx, job.id);
@@ -1914,7 +2034,7 @@ export class TrackingService {
             jobId: job.id,
             activityId: activity.id,
             taskCode: activity.code,
-            at: open ? undefined : begin,
+            at: begin,
           });
           await this.audit(
             tx,
@@ -2065,8 +2185,20 @@ export class TrackingService {
       .select()
       .from(segments)
       .where(and(eq(segments.employeeId, employeeId), isNull(segments.endedAt)))
+      .orderBy(desc(segments.startedAt))
       .limit(1);
     return row ?? null;
+  }
+
+  private async closeOpenSegments(tx: Conn, employeeId: string, now: Date, reason: string, exceptId?: string) {
+    const open = await tx
+      .select()
+      .from(segments)
+      .where(and(eq(segments.employeeId, employeeId), isNull(segments.endedAt)));
+    for (const row of open) {
+      if (exceptId && row.id === exceptId) continue;
+      await tx.update(segments).set({ endedAt: now, endReason: reason }).where(eq(segments.id, row.id));
+    }
   }
 
   private async requireReady(tx: Conn, employee: Employee) {
@@ -2119,12 +2251,17 @@ export class TrackingService {
     shiftId: string,
     department: Department,
     deviceId: string | null,
-    link?: { jobId?: string | null; activityId?: string | null; taskCode?: string; at?: Date },
+    link?: { jobId?: string | null; activityId?: string | null; taskCode?: string; at?: Date; note?: string | null },
   ) {
     const open = await this.openSegment(tx, employee.id);
     const taskCode = link?.taskCode ?? taskFor(department);
     const jobProvided = Boolean(link && Object.prototype.hasOwnProperty.call(link, "jobId"));
-    const jobId = jobProvided ? (link?.jobId ?? null) : (open?.jobId ?? null);
+    // A packing scan must not keep a picking job on the new timer.
+    const jobId = jobProvided
+      ? (link?.jobId ?? null)
+      : open && open.department === department && open.taskCode === taskCode
+        ? open.jobId
+        : null;
     const activityProvided = Boolean(link && Object.prototype.hasOwnProperty.call(link, "activityId"));
     const activityId = activityProvided
       ? (link?.activityId ?? null)
@@ -2142,11 +2279,10 @@ export class TrackingService {
       if (deviceId && open.deviceId !== deviceId) {
         await tx.update(segments).set({ deviceId }).where(eq(segments.id, open.id));
       }
+      await this.closeOpenSegments(tx, employee.id, now, "switch", open.id);
       return open.id;
     }
-    if (plan.closeId) {
-      await tx.update(segments).set({ endedAt: now, endReason: "switch" }).where(eq(segments.id, plan.closeId));
-    }
+    await this.closeOpenSegments(tx, employee.id, now, "switch");
     const [created] = await tx
       .insert(segments)
       .values({
@@ -2158,6 +2294,7 @@ export class TrackingService {
         activityId,
         startedAt: now,
         deviceId,
+        note: link?.note ?? null,
       })
       .returning();
     if (!created) throw new TrackingError("Could not start that task.");
@@ -2189,10 +2326,7 @@ export class TrackingService {
   }
 
   private async closeOpenWork(tx: Conn, employeeId: string, now: Date) {
-    const segment = await this.openSegment(tx, employeeId);
-    if (segment) {
-      await tx.update(segments).set({ endedAt: now, endReason: "clock_out" }).where(eq(segments.id, segment.id));
-    }
+    await this.closeOpenSegments(tx, employeeId, now, "clock_out");
     const session = await this.openSessionForEmployee(tx, employeeId);
     if (session) {
       await tx.update(stationSessions).set({ endedAt: now }).where(eq(stationSessions.id, session.id));
@@ -2215,6 +2349,42 @@ export class TrackingService {
     const [job] = await tx.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
     if (!job) throw new TrackingError("That job is not on file.");
     return job;
+  }
+
+  private async assignedOpenTask(tx: Conn, employee: Employee, taskId: string) {
+    const [row] = await tx.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
+    if (!row) throw new TrackingError("That task is not on file.");
+    if (row.assigneeId !== employee.id) throw new TrackingError(`${employee.name} is not assigned to that task.`);
+    if (row.status === "done") throw new TrackingError("That task is already done.");
+    if (!row.jobId) throw new TrackingError("That task is not on a job.");
+    if (row.dependsOnId) {
+      const [earlier] = await tx.select().from(tasks).where(eq(tasks.id, row.dependsOnId)).limit(1);
+      if (earlier && earlier.status !== "done") {
+        throw new TrackingError(`${row.title} is waiting on ${earlier.title}.`);
+      }
+    }
+    return row;
+  }
+
+  private async billableActivityForJob(tx: Conn, employee: Employee, jobId: string) {
+    const job = await this.jobById(tx, jobId);
+    const [client] = await tx.select().from(clientRecords).where(eq(clientRecords.id, job.clientId)).limit(1);
+    const services = enabledServiceList(client?.enabledServices);
+    const catalog = await tx.select().from(activityTypes);
+    const matches = catalog.filter(
+      (row) =>
+        row.active &&
+        row.billable &&
+        row.department !== "indirect" &&
+        services.includes(row.department) &&
+        (row.clientId == null || row.clientId === job.clientId),
+    );
+    const preferred = employee.departments?.length
+      ? matches.find((row) => employee.departments?.includes(row.department))
+      : null;
+    const pick = preferred ?? matches[0];
+    if (!pick) throw new TrackingError("This job has no task type to clock. Turn a service on for the client.");
+    return pick;
   }
 
   private async jobForEmployee(tx: Conn, employee: Employee, jobId: string, department: Department) {

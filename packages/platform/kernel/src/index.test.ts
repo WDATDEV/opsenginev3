@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertClientVisible, authorize, can, ForbiddenError, type Principal } from "./index.js";
+import { assertClientVisible, authorize, authorizeSection, can, canSection, ForbiddenError, type Principal } from "./index.js";
 
 const manager: Principal = {
   id: "1",
@@ -7,6 +7,7 @@ const manager: Principal = {
   name: "Nora Ellis",
   role: "warehouse_manager",
   clientIds: null,
+  sections: ["time", "mail"],
 };
 
 describe("kernel authorize", () => {
@@ -34,5 +35,14 @@ describe("kernel authorize", () => {
 
   it("lets the warehouse see every client", () => {
     expect(() => assertClientVisible(manager, "jacob")).not.toThrow();
+  });
+
+  it("opens mail for a manager and chat only when that section is granted", () => {
+    expect(canSection(manager, "mail")).toBe(true);
+    expect(canSection(manager, "chat")).toBe(false);
+    expect(() => authorizeSection({ principal: manager }, "mail")).not.toThrow();
+    expect(() => authorizeSection({ principal: manager }, "chat")).toThrow(ForbiddenError);
+    const withChat: Principal = { ...manager, sections: ["time", "mail", "chat"] };
+    expect(canSection(withChat, "chat")).toBe(true);
   });
 });

@@ -29,16 +29,20 @@ type Context = {
     department: string;
     taskCode: string;
     activityName: string;
+    jobId: string | null;
     jobReference: string | null;
     clientName: string | null;
   } | null;
   tasks: {
     id: string;
     title: string;
+    jobId: string | null;
     jobReference: string | null;
+    activityCode: string | null;
     activityName: string | null;
     startAt: string | null;
     dueOn: string | null;
+    blocked: boolean;
   }[];
   jobs: {
     id: string;
@@ -52,6 +56,7 @@ type Context = {
     startActivity: string | null;
     startedAuto: boolean;
     enabledServices: string[];
+    completedCodes: string[];
   }[];
   activities: { id: string; code: string; name: string; department: string; billable: boolean }[];
   station: string | null;
@@ -71,8 +76,8 @@ type Context = {
     assignedTo: string | null;
     checkedOutTo: string | null;
   }[];
-  shipments: { id: string; reference: string; status: string; coworkers: string[] }[];
-  loads: { id: string; reference: string; kind: string; dock: string; crew: string[] }[];
+  shipments: { id: string; jobId: string | null; reference: string; status: string; coworkers: string[] }[];
+  loads: { id: string; jobId: string | null; reference: string; kind: string; dock: string; crew: string[] }[];
   gaylords: { id: string; code: string; carrier: string }[];
 };
 
@@ -131,6 +136,7 @@ export default function WarehousePage() {
   const [context, setContext] = useState<Context | null>(null);
   const [jobId, setJobId] = useState("");
   const [taskCode, setTaskCode] = useState("");
+  const [assignedTaskId, setAssignedTaskId] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -259,6 +265,7 @@ export default function WarehousePage() {
       if (ending) setFinished((list) => (list.includes(ending) ? list : [...list, ending]));
       setTaskCode("");
       setJobId("");
+      setAssignedTaskId("");
     }
   }
 
@@ -268,38 +275,54 @@ export default function WarehousePage() {
   const startable = (context?.activities ?? []).filter((activity) => {
     if (!context) return false;
     const allowed = context.employee.departments;
-    if (allowed?.length && activity.department !== "indirect" && !allowed.includes(activity.department)) return false;
-    if (!activity.billable) return true;
+    const internal = activity.department === "indirect" || !activity.billable;
+    // Internal work is not a floor default. Show it only if this person is assigned to it.
+    if (internal) return Boolean(allowed?.includes("indirect")) && !finished.includes(activity.code);
+    if (allowed?.length && !allowed.includes(activity.department)) return false;
+    if (finished.includes(activity.code)) return false;
     const service = serviceForDepartment[activity.department];
     if (!service) return false;
-    return jobs.some((job) => job.enabledServices.includes(service));
+    return jobs.some(
+      (job) => job.enabledServices.includes(service) && !(job.completedCodes ?? []).includes(activity.code),
+    );
   });
-  const choices = startable.filter((activity) => !finished.includes(activity.code));
-  const chosen = choices.find((item) => item.code === taskCode) ?? (choices.length === 1 ? choices[0] : null);
+  const openTasks = (context?.tasks ?? []).filter((item) => !item.blocked);
+  const chosen =
+    startable.find((item) => item.code === taskCode) ??
+    (startable.length === 1 && openTasks.length === 0 ? startable[0] : null);
   const projects = chosen?.billable
     ? jobs.filter((job) => {
         const service = serviceForDepartment[chosen.department];
-        return !service || job.enabledServices.includes(service);
+        if (service && !job.enabledServices.includes(service)) return false;
+        return !(job.completedCodes ?? []).includes(chosen.code);
       })
     : [];
   const picked = projects.find((job) => job.id === jobId) ?? (projects.length === 1 ? projects[0] : null);
-  const ready = Boolean(chosen && (!chosen.billable || picked));
+  const assignedTask =
+    openTasks.find((item) => item.id === assignedTaskId) ??
+    (!taskCode && openTasks.length === 1 ? openTasks[0] : null);
+  const ready = Boolean(assignedTask || (chosen && (!chosen.billable || picked)));
   const working = context?.task ?? null;
   const paused = !working ? context?.paused ?? null : null;
   const checkedIn = Boolean(context?.employee.clockedIn);
   const onMeal = Boolean(context?.employee.onMeal);
-  const activeDepartment = working?.department ?? paused?.department ?? chosen?.department ?? null;
+  const currentJobId = working?.jobId ?? paused?.jobId ?? assignedTask?.jobId ?? picked?.id ?? null;
+  const activeDepartment = working?.department ?? paused?.department ?? null;
   const panel =
-    activeDepartment && (AREAS as readonly string[]).includes(activeDepartment)
+    (working || paused) && activeDepartment && (AREAS as readonly string[]).includes(activeDepartment)
       ? (activeDepartment as (typeof AREAS)[number])
       : null;
   const hint = !checkedIn
     ? "Check in at the QR gate first."
-    : !chosen
-      ? "Choose the kind of work."
-      : chosen.billable && !picked
-        ? "Choose a project."
-        : null;
+    : assignedTask
+      ? null
+      : !chosen
+        ? openTasks.length > 0
+          ? "Start an assigned task, or choose the kind of work."
+          : "Choose the kind of work."
+        : chosen.billable && !picked
+          ? "Choose a project."
+          : null;
 
   return (
     <main className={`mx-auto min-h-screen max-w-lg px-4 py-6 ${context ? "pb-40" : ""}`}>
@@ -372,6 +395,7 @@ export default function WarehousePage() {
                 setFinished([]);
                 setTaskCode("");
                 setJobId("");
+                setAssignedTaskId("");
                 setConfirmEnd(false);
               }}
             >
@@ -449,63 +473,83 @@ export default function WarehousePage() {
             </section>
           ) : null}
 
-          {checkedIn && !onMeal && (context.tasks?.length ?? 0) > 0 ? (
-            <section className="card p-4">
-              <p className="mb-2 text-sm font-semibold">Your tasks</p>
-              <ul className="space-y-2 text-sm">
-                {context.tasks.map((item) => (
-                  <li key={item.id}>
-                    <span className="font-medium">{item.title}</span>
-                    <span className="block text-xs text-muted">
-                      {item.jobReference ?? "Project"}
-                      {item.startAt ? ` · starts ${when(item.startAt)}` : ""}
-                      {item.dueOn ? ` · due ${item.dueOn}` : ""}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+          {checkedIn && !onMeal && !working && !paused && openTasks.length > 0 ? (
+            <section>
+              <p className="mb-2 text-sm font-semibold">
+                <span className="mr-2 inline-grid h-6 w-6 place-items-center rounded-full bg-ink text-xs text-paper">1</span>
+                Your tasks
+              </p>
+              <div className="space-y-2">
+                {openTasks.map((item) => {
+                  const selected = assignedTask?.id === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      aria-pressed={selected}
+                      disabled={saving}
+                      className={`card w-full p-4 text-left transition ${
+                        selected ? "border-moss ring-2 ring-moss/30" : "active:bg-black/5"
+                      }`}
+                      onClick={() => {
+                        setAssignedTaskId(item.id);
+                        setTaskCode("");
+                        setJobId("");
+                        setError(null);
+                      }}
+                    >
+                      <span className="block font-semibold">{item.title}</span>
+                      <span className="mt-1 block text-xs text-muted">
+                        {item.jobReference ?? "Project"}
+                        {item.activityName ? ` · ${item.activityName}` : " · start this on the timer"}
+                        {item.startAt ? ` · starts ${when(item.startAt)}` : ""}
+                        {item.dueOn ? ` · due ${item.dueOn}` : ""}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </section>
           ) : null}
 
-          {!working && !paused && !onMeal ? (
+          {!working && !paused && !onMeal && (startable.length > 0 || openTasks.length === 0) ? (
             <section className="space-y-5">
               <div>
                 <p className="mb-2 text-sm font-semibold">
-                  <span className="mr-2 inline-grid h-6 w-6 place-items-center rounded-full bg-ink text-xs text-paper">1</span>
+                  <span className="mr-2 inline-grid h-6 w-6 place-items-center rounded-full bg-ink text-xs text-paper">
+                    {openTasks.length > 0 ? "2" : "1"}
+                  </span>
                   What kind of work?
                 </p>
                 {startable.length === 0 ? (
                   <p className="card p-4 text-sm text-muted">
                     {jobs.length === 0
                       ? `${context.employee.name} is not assigned to an open project. Ask a manager to assign you on the job.`
-                      : "No task type is turned on for your projects yet. Ask a manager to turn the service on for the client."}
+                      : "Finished work stays off this list. Nothing left to start on your projects."}
                   </p>
                 ) : (
                   <div className="flex flex-wrap gap-2">
                     {startable.map((activity) => {
-                      const done = finished.includes(activity.code);
                       const active = chosen?.code === activity.code;
                       return (
                         <button
                           key={activity.id}
                           type="button"
-                          disabled={saving || done}
+                          disabled={saving}
                           aria-pressed={active}
                           className={`min-h-12 rounded-full border px-4 text-sm font-semibold transition ${
                             active
                               ? "border-moss bg-moss text-paper"
-                              : done
-                                ? "border-black/10 bg-black/[0.03] text-muted line-through"
-                                : "border-black/15 bg-surface text-ink active:bg-black/5"
+                              : "border-black/15 bg-surface text-ink active:bg-black/5"
                           }`}
                           onClick={() => {
                             setTaskCode(activity.code);
+                            setAssignedTaskId("");
                             setJobId("");
                             setError(null);
                           }}
                         >
                           {activity.name}
-                          {done ? <span className="ml-1 text-xs font-normal no-underline">· done</span> : null}
                         </button>
                       );
                     })}
@@ -578,8 +622,12 @@ export default function WarehousePage() {
               <p className="mb-2 text-sm font-semibold text-muted">Record your work</p>
               {panel === "packing" ? <PackPanel context={context} badge={badge} run={run} /> : null}
               {panel === "picking" ? <PickPanel context={context} badge={badge} run={run} /> : null}
-              {panel === "receiving" ? <ReceivePanel context={context} badge={badge} run={run} /> : null}
-              {panel === "unloading" ? <UnloadPanel context={context} badge={badge} run={run} /> : null}
+              {panel === "receiving" ? (
+                <ReceivePanel context={context} badge={badge} run={run} jobId={currentJobId} />
+              ) : null}
+              {panel === "unloading" ? (
+                <UnloadPanel context={context} badge={badge} run={run} jobId={currentJobId} />
+              ) : null}
               {panel === "sorting" ? <SortPanel context={context} badge={badge} run={run} /> : null}
             </section>
           ) : null}
@@ -631,12 +679,20 @@ export default function WarehousePage() {
                   onClick={() =>
                     void run("/tracking/tasks/switch", {
                       badge,
-                      activityCode: chosen?.code,
-                      ...(picked ? { jobId: picked.id } : {}),
+                      ...(assignedTask
+                        ? { taskId: assignedTask.id }
+                        : {
+                            activityCode: chosen?.code,
+                            ...(picked ? { jobId: picked.id } : {}),
+                          }),
                     })
                   }
                 >
-                  {ready && chosen ? `Start ${chosen.name}${picked ? ` on ${picked.reference}` : ""}` : "Start timer"}
+                  {assignedTask
+                    ? `Start ${assignedTask.title}${assignedTask.jobReference ? ` on ${assignedTask.jobReference}` : ""}`
+                    : ready && chosen
+                      ? `Start ${chosen.name}${picked ? ` on ${picked.reference}` : ""}`
+                      : "Start timer"}
                 </button>
               </>
             ) : null}
@@ -769,29 +825,43 @@ function ReceivePanel({
   context,
   badge,
   run,
+  jobId,
 }: {
   context: Context;
   badge: string;
   run: (path: string, body: unknown) => Promise<boolean>;
+  jobId: string | null;
 }) {
-  const [shipmentId, setShipmentId] = useState(context.shipments[0]?.id ?? "");
+  const shipments = jobId ? context.shipments.filter((item) => item.jobId === jobId) : [];
+  const [shipmentId, setShipmentId] = useState(shipments[0]?.id ?? "");
   const [sku, setSku] = useState("");
   const [expectedQty, setExpectedQty] = useState(1);
   const [receivedQty, setReceivedQty] = useState(1);
-  const shipment = context.shipments.find((item) => item.id === shipmentId);
-  if (context.shipments.length === 0) {
-    return <p className="card p-4 text-sm text-muted">No open shipment for this project.</p>;
+  useEffect(() => {
+    const next = jobId ? context.shipments.filter((item) => item.jobId === jobId).map((item) => item.id) : [];
+    setShipmentId((current) => (next.includes(current) ? current : next[0] ?? ""));
+  }, [jobId, context.shipments]);
+  const shipment = shipments.find((item) => item.id === shipmentId);
+  if (!jobId) {
+    return <p className="card p-4 text-sm text-muted">Choose the project first. Only that job’s shipment will show.</p>;
+  }
+  if (shipments.length === 0) {
+    return <p className="card p-4 text-sm text-muted">No open shipment on this job.</p>;
   }
   return (
     <div className="card space-y-3 p-4">
       <Field label="Shipment">
-        <select className="field" value={shipmentId} onChange={(event) => setShipmentId(event.target.value)}>
-          {context.shipments.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.reference}
-            </option>
-          ))}
-        </select>
+        {shipments.length === 1 ? (
+          <p className="field flex items-center">{shipment?.reference}</p>
+        ) : (
+          <select className="field" value={shipmentId} onChange={(event) => setShipmentId(event.target.value)}>
+            {shipments.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.reference}
+              </option>
+            ))}
+          </select>
+        )}
       </Field>
       <p className="text-sm text-muted">
         {shipment && shipment.coworkers.length > 0
@@ -833,26 +903,42 @@ function UnloadPanel({
   context,
   badge,
   run,
+  jobId,
 }: {
   context: Context;
   badge: string;
   run: (path: string, body: unknown) => Promise<boolean>;
+  jobId: string | null;
 }) {
-  const [loadId, setLoadId] = useState(context.loads[0]?.id ?? "");
-  const load = context.loads.find((item) => item.id === loadId);
-  if (context.loads.length === 0) {
-    return <p className="card p-4 text-sm text-muted">No open truck or container.</p>;
+  const loads = jobId ? context.loads.filter((item) => item.jobId === jobId) : [];
+  const [loadId, setLoadId] = useState(loads[0]?.id ?? "");
+  useEffect(() => {
+    const next = jobId ? context.loads.filter((item) => item.jobId === jobId).map((item) => item.id) : [];
+    setLoadId((current) => (next.includes(current) ? current : next[0] ?? ""));
+  }, [jobId, context.loads]);
+  const load = loads.find((item) => item.id === loadId);
+  if (!jobId) {
+    return <p className="card p-4 text-sm text-muted">Choose the project first. Only that job’s truck will show.</p>;
+  }
+  if (loads.length === 0) {
+    return <p className="card p-4 text-sm text-muted">No open truck or container on this job.</p>;
   }
   return (
     <div className="card space-y-3 p-4">
       <Field label="Truck or container">
-        <select className="field" value={loadId} onChange={(event) => setLoadId(event.target.value)}>
-          {context.loads.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.reference} · {item.dock}
-            </option>
-          ))}
-        </select>
+        {loads.length === 1 ? (
+          <p className="field flex items-center">
+            {load?.reference} · {load?.dock}
+          </p>
+        ) : (
+          <select className="field" value={loadId} onChange={(event) => setLoadId(event.target.value)}>
+            {loads.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.reference} · {item.dock}
+              </option>
+            ))}
+          </select>
+        )}
       </Field>
       <p className="text-sm text-muted">
         {load && load.crew.length > 0 ? `On it now: ${load.crew.join(", ")}.` : "No crew yet."}

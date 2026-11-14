@@ -60,6 +60,21 @@ type Device = typeof devices.$inferSelect;
 const SCHEDULE_WINDOW_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_GATE_PLACES = ["Front gate", "Dock", "Packing", "Picking", "Receiving", "Unloading", "Sorting"];
 
+function stintDisplayStart(
+  rows: { jobId: string | null; taskCode: string; startedAt: Date; endedAt: Date | null; endReason: string | null }[],
+  current: { jobId: string | null; taskCode: string },
+  now: Date,
+) {
+  let ms = 0;
+  for (const row of rows) {
+    const same = (row.jobId ?? null) === (current.jobId ?? null) && row.taskCode === current.taskCode;
+    if (!same) break;
+    if (row.endedAt && row.endReason !== "pause" && row.endReason !== "meal") break;
+    ms += Math.max(0, (row.endedAt ?? now).getTime() - row.startedAt.getTime());
+  }
+  return new Date(now.getTime() - ms);
+}
+
 function isUnique(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
   if ("code" in err && err.code === "23505") return true;
@@ -332,22 +347,21 @@ export class TrackingService {
       const clientNameById = new Map(clientRows.map((row) => [row.id, row.name]));
       const jobById = new Map(jobRows.map((row) => [row.id, row]));
       const activityName = new Map(activities.map((row) => [row.code, row.name]));
-      const [lastSegment] = segment
-        ? []
-        : await tx
-            .select()
-            .from(segments)
-            .where(eq(segments.employeeId, employee.id))
-            .orderBy(desc(segments.startedAt))
-            .limit(1);
+      const employeeSegments = await tx
+        .select()
+        .from(segments)
+        .where(eq(segments.employeeId, employee.id))
+        .orderBy(desc(segments.startedAt));
+      const lastSegment = segment ? null : employeeSegments[0] ?? null;
       const paused = lastSegment && (lastSegment.endReason === "pause" || lastSegment.endReason === "meal") ? lastSegment : null;
+      const now = new Date();
       const describe = (row: { taskCode: string; jobId: string | null; department: string; startedAt: Date }) => {
         const job = row.jobId ? jobById.get(row.jobId) : null;
         return {
           department: row.department,
           taskCode: row.taskCode,
           activityName: activityName.get(row.taskCode) ?? row.taskCode,
-          startedAt: row.startedAt,
+          startedAt: stintDisplayStart(employeeSegments, row, now),
           jobId: row.jobId,
           jobReference: job?.reference ?? null,
           clientName: job ? clientNameById.get(job.clientId) ?? null : null,
@@ -355,6 +369,19 @@ export class TrackingService {
       };
 
       const taskRows = await tx.select().from(tasks).where(eq(tasks.assigneeId, employee.id));
+      const completedCodesByJob = new Map<string, Set<string>>();
+      const markDone = (jobId: string | null, code: string | null) => {
+        if (!jobId || !code) return;
+        const set = completedCodesByJob.get(jobId) ?? new Set<string>();
+        set.add(code);
+        completedCodesByJob.set(jobId, set);
+      };
+      for (const row of taskRows) {
+        if (row.status === "done") markDone(row.jobId, row.activityCode);
+      }
+      for (const row of employeeSegments) {
+        if (row.endReason === "complete") markDone(row.jobId, row.taskCode);
+      }
       const assignments = await tx.select().from(jobAssignees).where(eq(jobAssignees.employeeId, employee.id));
       const assigned = new Set(assignments.map((row) => row.jobId));
       const assignmentByJob = new Map(assignments.map((row) => [row.jobId, row]));
@@ -409,6 +436,7 @@ export class TrackingService {
               clientName: client?.name ?? "Client",
               clientCode: client?.code ?? "",
               enabledServices: services,
+              completedCodes: [...(completedCodesByJob.get(row.id) ?? [])],
             };
           }),
         activities: activities
@@ -896,17 +924,27 @@ export class TrackingService {
       const employee = await this.employeeByBadge(tx, badge);
       await this.requireReady(tx, employee);
       const open = await this.openSegment(tx, employee.id);
-      if (!open) throw new TrackingError(`${employee.name} has nothing running to finish.`);
+      const [last] = open
+        ? []
+        : await tx
+            .select()
+            .from(segments)
+            .where(eq(segments.employeeId, employee.id))
+            .orderBy(desc(segments.startedAt))
+            .limit(1);
+      const target =
+        open ?? (last && (last.endReason === "pause" || last.endReason === "meal") ? last : null);
+      if (!target) throw new TrackingError(`${employee.name} has nothing running to finish.`);
       const now = new Date();
-      await tx.update(segments).set({ endedAt: now, endReason: "complete" }).where(eq(segments.id, open.id));
-      const minutes = Math.max(0, Math.round((now.getTime() - open.startedAt.getTime()) / 60_000));
+      await tx.update(segments).set({ endedAt: target.endedAt ?? now, endReason: "complete" }).where(eq(segments.id, target.id));
+      const minutes = Math.max(0, Math.round(((target.endedAt ?? now).getTime() - target.startedAt.getTime()) / 60_000));
       const span = minutes === 0 ? "less than a minute" : `${minutes} min`;
-      const job = open.jobId ? await this.jobById(tx, open.jobId) : null;
+      const job = target.jobId ? await this.jobById(tx, target.jobId) : null;
       const message = job
         ? `${employee.name} finished. ${span} is on ${job.reference}.`
         : `${employee.name} finished. ${span} recorded.`;
-      await this.audit(tx, employee.id, "tracking.task_stopped", "activity_segment", open.id, message);
-      if (open.jobId) await this.completeMatchingTask(tx, employee.id, open.jobId, open.taskCode);
+      await this.audit(tx, employee.id, "tracking.task_stopped", "activity_segment", target.id, message);
+      if (target.jobId) await this.completeMatchingTask(tx, employee.id, target.jobId, target.taskCode);
       return { message };
     });
   }
@@ -1914,6 +1952,47 @@ export class TrackingService {
         const alreadyOn = open && open.jobId === job.id && open.taskCode === activity.code;
         // Never steal a timer the worker already started on another job or task.
         if (open && !alreadyOn) return false;
+        if (!open) {
+          const [last] = await tx
+            .select()
+            .from(segments)
+            .where(eq(segments.employeeId, employee.id))
+            .orderBy(desc(segments.startedAt))
+            .limit(1);
+          if (last && (last.endReason === "pause" || last.endReason === "meal")) return false;
+        }
+        const doneTask = (
+          await tx
+            .select({ id: tasks.id })
+            .from(tasks)
+            .where(
+              and(
+                eq(tasks.jobId, job.id),
+                eq(tasks.assigneeId, employee.id),
+                eq(tasks.activityCode, activity.code),
+                eq(tasks.status, "done"),
+              ),
+            )
+            .limit(1)
+        )[0];
+        const doneSegment = (
+          await tx
+            .select({ id: segments.id })
+            .from(segments)
+            .where(
+              and(
+                eq(segments.employeeId, employee.id),
+                eq(segments.jobId, job.id),
+                eq(segments.taskCode, activity.code),
+                eq(segments.endReason, "complete"),
+              ),
+            )
+            .limit(1)
+        )[0];
+        if (doneTask || doneSegment) {
+          await tx.update(jobAssignees).set({ autoStartedAt: new Date() }).where(eq(jobAssignees.id, claim.id));
+          return false;
+        }
         if (!alreadyOn) {
           await assertClientService(this.db.db, job.clientId, department as ClientService);
           await this.claimJob(tx, job.id);

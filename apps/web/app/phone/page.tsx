@@ -53,6 +53,7 @@ type Context = {
     startActivity: string | null;
     startedAuto: boolean;
     enabledServices: string[];
+    completedCodes: string[];
   }[];
   activities: { id: string; code: string; name: string; department: string; billable: boolean }[];
   station: string | null;
@@ -270,17 +271,20 @@ export default function WarehousePage() {
     if (!context) return false;
     const allowed = context.employee.departments;
     if (allowed?.length && activity.department !== "indirect" && !allowed.includes(activity.department)) return false;
+    if (finished.includes(activity.code)) return false;
     if (!activity.billable) return true;
     const service = serviceForDepartment[activity.department];
     if (!service) return false;
-    return jobs.some((job) => job.enabledServices.includes(service));
+    return jobs.some(
+      (job) => job.enabledServices.includes(service) && !(job.completedCodes ?? []).includes(activity.code),
+    );
   });
-  const choices = startable.filter((activity) => !finished.includes(activity.code));
-  const chosen = choices.find((item) => item.code === taskCode) ?? (choices.length === 1 ? choices[0] : null);
+  const chosen = startable.find((item) => item.code === taskCode) ?? (startable.length === 1 ? startable[0] : null);
   const projects = chosen?.billable
     ? jobs.filter((job) => {
         const service = serviceForDepartment[chosen.department];
-        return !service || job.enabledServices.includes(service);
+        if (service && !job.enabledServices.includes(service)) return false;
+        return !(job.completedCodes ?? []).includes(chosen.code);
       })
     : [];
   const picked = projects.find((job) => job.id === jobId) ?? (projects.length === 1 ? projects[0] : null);
@@ -480,25 +484,22 @@ export default function WarehousePage() {
                   <p className="card p-4 text-sm text-muted">
                     {jobs.length === 0
                       ? `${context.employee.name} is not assigned to an open project. Ask a manager to assign you on the job.`
-                      : "No task type is turned on for your projects yet. Ask a manager to turn the service on for the client."}
+                      : "Finished work stays off this list. Nothing left to start on your projects."}
                   </p>
                 ) : (
                   <div className="flex flex-wrap gap-2">
                     {startable.map((activity) => {
-                      const done = finished.includes(activity.code);
                       const active = chosen?.code === activity.code;
                       return (
                         <button
                           key={activity.id}
                           type="button"
-                          disabled={saving || done}
+                          disabled={saving}
                           aria-pressed={active}
                           className={`min-h-12 rounded-full border px-4 text-sm font-semibold transition ${
                             active
                               ? "border-moss bg-moss text-paper"
-                              : done
-                                ? "border-black/10 bg-black/[0.03] text-muted line-through"
-                                : "border-black/15 bg-surface text-ink active:bg-black/5"
+                              : "border-black/15 bg-surface text-ink active:bg-black/5"
                           }`}
                           onClick={() => {
                             setTaskCode(activity.code);
@@ -507,7 +508,6 @@ export default function WarehousePage() {
                           }}
                         >
                           {activity.name}
-                          {done ? <span className="ml-1 text-xs font-normal no-underline">· done</span> : null}
                         </button>
                       );
                     })}

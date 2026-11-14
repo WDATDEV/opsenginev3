@@ -9,9 +9,15 @@ async function proxy(request: NextRequest, path: string[]) {
   const url = `${API}/${path.join("/")}${request.nextUrl.search}`;
   const headers = new Headers();
   const token = request.cookies.get("oe_tracking")?.value;
+  const cookie = request.headers.get("cookie");
+  if (cookie) headers.set("cookie", cookie);
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const contentType = request.headers.get("content-type");
   if (contentType) headers.set("content-type", contentType);
+  const origin = request.headers.get("origin");
+  if (origin) headers.set("origin", origin);
+  const referer = request.headers.get("referer");
+  if (referer) headers.set("referer", referer);
 
   const body =
     request.method === "GET" || request.method === "HEAD"

@@ -10,11 +10,12 @@ export function assertBrowserConfirm(headers: Record<string, unknown>, cookie: s
   if (!cookie) throw new ForbiddenError("Sign in to continue.");
   const origin = header(headers, "origin");
   const referer = header(headers, "referer");
+  const expected = webOrigin.replace(/\/$/, "");
   if (origin) {
-    if (origin !== webOrigin) throw new ForbiddenError("Stock confirm is only from the owner's browser.");
+    if (origin.replace(/\/$/, "") !== expected) throw new ForbiddenError("Stock confirm is only from the owner's browser.");
     return;
   }
-  if (!referer || !referer.startsWith(webOrigin)) {
+  if (!referer || !referer.startsWith(expected)) {
     throw new ForbiddenError("Stock confirm is only from the owner's browser.");
   }
 }

@@ -270,9 +270,11 @@ export default function WarehousePage() {
   const startable = (context?.activities ?? []).filter((activity) => {
     if (!context) return false;
     const allowed = context.employee.departments;
-    if (allowed?.length && activity.department !== "indirect" && !allowed.includes(activity.department)) return false;
+    const internal = activity.department === "indirect" || !activity.billable;
+    // Internal work is not a floor default. Show it only if this person is assigned to it.
+    if (internal) return Boolean(allowed?.includes("indirect")) && !finished.includes(activity.code);
+    if (allowed?.length && !allowed.includes(activity.department)) return false;
     if (finished.includes(activity.code)) return false;
-    if (!activity.billable) return true;
     const service = serviceForDepartment[activity.department];
     if (!service) return false;
     return jobs.some(

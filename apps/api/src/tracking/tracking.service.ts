@@ -199,7 +199,11 @@ export class TrackingService {
     const clientNameById = new Map(clientRows.map((row) => [row.id, row.name]));
     const shiftByEmployee = new Map(openShifts.map((shift) => [shift.employeeId, shift]));
     const mealShiftIds = new Set(openBreaks.map((row) => row.shiftId));
-    const segmentByEmployee = new Map(openSegments.map((row) => [row.employeeId, row]));
+    const segmentByEmployee = new Map(
+      [...openSegments]
+        .sort((a, b) => a.startedAt.getTime() - b.startedAt.getTime())
+        .map((row) => [row.employeeId, row]),
+    );
 
     const counts: Record<Department, number> = {
       packing: 0,
@@ -1906,6 +1910,8 @@ export class TrackingService {
         const department = asDepartment(activity.department);
         const open = await this.openSegment(tx, employee.id);
         const alreadyOn = open && open.jobId === job.id && open.taskCode === activity.code;
+        // Never steal a timer the worker already started on another job or task.
+        if (open && !alreadyOn) return false;
         if (!alreadyOn) {
           await assertClientService(this.db.db, job.clientId, department as ClientService);
           await this.claimJob(tx, job.id);
@@ -1914,7 +1920,7 @@ export class TrackingService {
             jobId: job.id,
             activityId: activity.id,
             taskCode: activity.code,
-            at: open ? undefined : begin,
+            at: begin,
           });
           await this.audit(
             tx,
@@ -2065,8 +2071,20 @@ export class TrackingService {
       .select()
       .from(segments)
       .where(and(eq(segments.employeeId, employeeId), isNull(segments.endedAt)))
+      .orderBy(desc(segments.startedAt))
       .limit(1);
     return row ?? null;
+  }
+
+  private async closeOpenSegments(tx: Conn, employeeId: string, now: Date, reason: string, exceptId?: string) {
+    const open = await tx
+      .select()
+      .from(segments)
+      .where(and(eq(segments.employeeId, employeeId), isNull(segments.endedAt)));
+    for (const row of open) {
+      if (exceptId && row.id === exceptId) continue;
+      await tx.update(segments).set({ endedAt: now, endReason: reason }).where(eq(segments.id, row.id));
+    }
   }
 
   private async requireReady(tx: Conn, employee: Employee) {
@@ -2124,7 +2142,12 @@ export class TrackingService {
     const open = await this.openSegment(tx, employee.id);
     const taskCode = link?.taskCode ?? taskFor(department);
     const jobProvided = Boolean(link && Object.prototype.hasOwnProperty.call(link, "jobId"));
-    const jobId = jobProvided ? (link?.jobId ?? null) : (open?.jobId ?? null);
+    // A packing scan must not keep a picking job on the new timer.
+    const jobId = jobProvided
+      ? (link?.jobId ?? null)
+      : open && open.department === department && open.taskCode === taskCode
+        ? open.jobId
+        : null;
     const activityProvided = Boolean(link && Object.prototype.hasOwnProperty.call(link, "activityId"));
     const activityId = activityProvided
       ? (link?.activityId ?? null)
@@ -2142,11 +2165,10 @@ export class TrackingService {
       if (deviceId && open.deviceId !== deviceId) {
         await tx.update(segments).set({ deviceId }).where(eq(segments.id, open.id));
       }
+      await this.closeOpenSegments(tx, employee.id, now, "switch", open.id);
       return open.id;
     }
-    if (plan.closeId) {
-      await tx.update(segments).set({ endedAt: now, endReason: "switch" }).where(eq(segments.id, plan.closeId));
-    }
+    await this.closeOpenSegments(tx, employee.id, now, "switch");
     const [created] = await tx
       .insert(segments)
       .values({
@@ -2189,10 +2211,7 @@ export class TrackingService {
   }
 
   private async closeOpenWork(tx: Conn, employeeId: string, now: Date) {
-    const segment = await this.openSegment(tx, employeeId);
-    if (segment) {
-      await tx.update(segments).set({ endedAt: now, endReason: "clock_out" }).where(eq(segments.id, segment.id));
-    }
+    await this.closeOpenSegments(tx, employeeId, now, "clock_out");
     const session = await this.openSessionForEmployee(tx, employeeId);
     if (session) {
       await tx.update(stationSessions).set({ endedAt: now }).where(eq(stationSessions.id, session.id));

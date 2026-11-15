@@ -40,7 +40,7 @@ export function filterClaudeTools(tools: McpTool[], hideClients: boolean) {
 }
 
 export function refuseToolForClaude(name: string): string | null {
-  if (name === "propose_send" || name === "propose_inventory" || name === "export_data") return null;
+  if (name === "propose_send" || name === "propose_inventory" || name === "propose_change" || name === "export_data") return null;
   if (!isClaudeReadTool(name)) {
     return "That tool is not allowed. Look up stock, then wait for the owner to Confirm.";
   }

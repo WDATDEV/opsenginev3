@@ -179,7 +179,7 @@ describe("applyConfirmedRows", () => {
     assert.equal(JSON.stringify(calls.map((item) => ({ role: item.role, name: item.name }))).includes(SECRET), false);
   });
 
-  it("skips the connector when on hand is already 0", async () => {
+  it("skips the connector when live quantity already matches the target", async () => {
     const { writes, deps: d } = deps({
       lookup: async () => [{ sku: "UFO-1", location_name: "A-1", warehouse: "Ops Engine", available: 0, quantity_on_hand: 0 }],
     });
@@ -215,5 +215,22 @@ describe("nonce", () => {
     });
     await applyConfirmedRows([row, second], { clientId: null, approvedBy: "owner-1", reason: "r", note: "n" }, d);
     assert.equal(new Set(nonces).size, 2);
+  });
+});
+
+describe("set quantity", () => {
+  it("sends a positive adjust when the target is above on hand", async () => {
+    const target: StockRow = { ...row, qtyAfter: 10 };
+    const sent: { quantity?: unknown }[] = [];
+    const { deps: d } = deps({
+      lookup: async () => [{ sku: "UFO-1", location_name: "A-1", warehouse: "Ops Engine", available: 6, quantity_on_hand: 6 }],
+      adjust: async (args) => {
+        sent.push(args);
+        return { data: { applied_quantity: 4, capped: false }, failed: false };
+      },
+    });
+    const { rows } = await applyConfirmedRows([target], { clientId: 9, approvedBy: "owner-1", reason: "r", note: "n" }, d);
+    assert.equal(sent[0]?.quantity, 4);
+    assert.equal(rows[0]?.ok, true);
   });
 });

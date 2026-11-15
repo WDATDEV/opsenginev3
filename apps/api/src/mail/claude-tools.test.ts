@@ -53,6 +53,6 @@ describe("claude tools", () => {
     assert.deepEqual(calls, []);
     assert.equal(refuseToolForClaude("search_inventory_locations"), null);
     assert.ok(refuseWriteKey([{ name: "search_orders" }]));
-    assert.equal(refuseWriteKey([{ name: "adjust_inventory" }]), null);
+    assert.equal(refuseWriteKey([{ name: "adjust_inventory" }, { name: "get_order" }]), null);
   });
 });

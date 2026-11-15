@@ -14,6 +14,7 @@ describe("settings keys", () => {
     assert.equal(refuseSameKeys("same-secret", "same-secret"), KEYS_SAME_ERROR);
     assert.equal(refuseSameKeys("bot", "write"), null);
     assert.ok(refuseWriteKey([{ name: "search_orders" }]));
-    assert.equal(refuseWriteKey([{ name: "adjust_inventory" }]), null);
+    assert.ok(refuseWriteKey([{ name: "adjust_inventory" }]));
+    assert.equal(refuseWriteKey([{ name: "adjust_inventory" }, { name: "get_order" }]), null);
   });
 });

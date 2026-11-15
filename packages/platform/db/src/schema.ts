@@ -210,6 +210,18 @@ export type ChatStockRow = {
   nonce?: string | null;
 };
 
+export type ChatPreparedChange = {
+  kind: string;
+  args: Record<string, unknown>;
+  summary: string;
+  before: Record<string, unknown>;
+  status: "proposed" | "applying" | "applied" | "rejected";
+  proposedAt: string;
+  expiresAt: string;
+  result: Record<string, unknown> | null;
+  error: string | null;
+};
+
 // A Warehance stock change Claude prepared. Nothing is written until the owner confirms.
 export type ChatStockChange = {
   logId: string | null;
@@ -250,6 +262,7 @@ export const chatMessages = mail.table("chat_messages", {
   lookups: jsonb("lookups").$type<ChatLookup[]>().notNull().default([]),
   proposal: jsonb("proposal").$type<ChatProposal | null>(),
   stockChange: jsonb("stock_change").$type<ChatStockChange | null>(),
+  change: jsonb("change").$type<ChatPreparedChange | null>(),
   sends: jsonb("sends").$type<ChatSend[]>().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -272,6 +285,21 @@ export const chatStockLogs = mail.table("chat_stock_logs", {
   skuPrefix: text("sku_prefix").notNull().default(""),
   rows: jsonb("rows").$type<ChatStockRow[]>().notNull().default([]),
   error: text("error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const chatChangeLogs = mail.table("chat_change_logs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  threadId: uuid("thread_id").notNull(),
+  messageId: uuid("message_id").notNull(),
+  actorId: uuid("actor_id").notNull(),
+  actorEmail: text("actor_email").notNull().default(""),
+  actorName: text("actor_name").notNull().default(""),
+  kind: text("kind").notNull(),
+  args: jsonb("args").$type<Record<string, unknown>>().notNull().default({}),
+  outcome: text("outcome").notNull(),
+  error: text("error"),
+  nonce: text("nonce"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

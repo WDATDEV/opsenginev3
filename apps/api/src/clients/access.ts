@@ -11,7 +11,6 @@ const labels: Record<ClientService, string> = {
   picking: "Picking",
   sorting: "Sorting",
   activities: "Activities",
-  equipment: "Equipment",
   people: "People",
   checkin: "Check-in",
   reports: "Report",

@@ -42,7 +42,7 @@ DELETE FROM tracking.activity_types WHERE client_id IS NOT NULL;
 UPDATE identity.users SET client_ids = NULL;
 `);
 
-console.log("Cleared clients, jobs, people, equipment, and the work already recorded.");
+console.log("Cleared clients, jobs, people, and the work already recorded.");
 console.log("Logins are still there. Sign in as nora@opsengine.local / OpsEngine!dev and add a client.");
 await sql.end();
 process.exit(0);

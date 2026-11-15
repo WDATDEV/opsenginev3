@@ -23,4 +23,4 @@ pnpm db:seed
 pnpm dev
 ```
 
-See `docs/TRACKING.md` for how packing, picking, receiving, unloading, sorting, task changes, and equipment are recorded.
+See `docs/TRACKING.md` for how packing, picking, receiving, unloading, sorting, and task changes are recorded.

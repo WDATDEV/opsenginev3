@@ -150,7 +150,7 @@ await upsertAccount("owen@opsengine.local", "Owen Blake", "client_services", [ja
 await upsertAccount("ice@opsengine.local", "IceCartel Ops", "external_customer", [icecartel.id]);
 await upsertAccount("jacob@opsengine.local", "Jacob Ops", "external_customer", [jacob.id]);
 
-await db.update(clientRecords).set({ enabledServices: ["jobs", "receiving", "unloading", "packing", "activities", "equipment", "people", "checkin", "reports", "invoices"] }).where(eq(clientRecords.id, icecartel.id));
+await db.update(clientRecords).set({ enabledServices: ["jobs", "receiving", "unloading", "packing", "activities", "people", "checkin", "reports", "invoices"] }).where(eq(clientRecords.id, icecartel.id));
 await db.update(clientRecords).set({ enabledServices: ["jobs", "receiving", "unloading", "picking", "activities", "people", "checkin"] }).where(eq(clientRecords.id, jacob.id));
 
 async function upsertOwnedActivity(clientId: string, code: string, name: string, department: string, billable: boolean) {

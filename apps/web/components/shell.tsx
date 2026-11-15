@@ -31,7 +31,6 @@ const FLOOR_LINKS = [
   ["/receiving", "Receiving"],
   ["/unloading", "Unloading"],
   ["/sorting", "Sorting"],
-  ["/equipment", "Equipment"],
   ["/people", "People"],
   ["/checkin", "Check-in"],
   ["/work", "Follow-ups"],

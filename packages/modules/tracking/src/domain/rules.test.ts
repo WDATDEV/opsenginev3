@@ -145,7 +145,7 @@ describe("receiving and unloading", () => {
   });
 });
 
-describe("sorting, task changes, and equipment", () => {
+describe("sorting and task changes", () => {
   it("requires a reason when a package is placed in a gaylord without a scan", () => {
     expect(
       assertSortPlacement({ method: "manual_place", gaylordStatus: "open" }).ok,

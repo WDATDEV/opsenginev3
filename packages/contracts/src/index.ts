@@ -93,7 +93,6 @@ export const clientServices = [
   "picking",
   "sorting",
   "activities",
-  "equipment",
   "people",
   "checkin",
   "reports",

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useSession } from "@/components/shell";
-import { Field, Notice, PageTitle, useResource } from "@/components/ui";
+import { Field, Notice, PageTitle, Spinner, useResource } from "@/components/ui";
 import { ApiError, CLIENT_SERVICES, canManage, post } from "@/lib/api";
 
 export type ClientRecord = {
@@ -21,7 +21,8 @@ export function ClientDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
-  const [services, setServices] = useState<string[]>(["jobs"]);
+  const [services, setServices] = useState<string[]>(["jobs", "unloading", "people", "reports", "invoices"]);
+  const [syncing, setSyncing] = useState(false);
 
   function toggleDraft(service: string) {
     setServices((current) => (current.includes(service) ? current.filter((item) => item !== service) : [...current, service]));
@@ -32,7 +33,7 @@ export function ClientDashboard() {
       <PageTitle
         kicker="Ops Engine"
         title="Clients"
-        detail="Add a client once, then view them. The menu switches to that client's active services. Main menu brings this list back."
+        detail="Warehance brands show up here with Jobs, Unloading, People, Report, and Invoices. Sync to pull them now, or add a client by hand if they are not in Warehance."
       />
       {clients.error ? <Notice tone="bad">{clients.error}</Notice> : null}
       {message ? <Notice tone="ok">{message}</Notice> : null}
@@ -49,7 +50,7 @@ export function ClientDashboard() {
                 setMessage(result.message ?? "Saved.");
                 setName("");
                 setCode("");
-                setServices(["jobs"]);
+                setServices(["jobs", "unloading", "people", "reports", "invoices"]);
                 clients.reload();
               })
               .catch((err: unknown) => setError(err instanceof ApiError ? err.message : "Could not add that client."));
@@ -72,9 +73,28 @@ export function ClientDashboard() {
               ))}
             </div>
           </div>
-          <div>
+          <div className="flex flex-wrap gap-2">
             <button className="btn btn-primary" type="submit">
               Add client
+            </button>
+            <button
+              className="btn"
+              type="button"
+              disabled={syncing}
+              onClick={() => {
+                setError(null);
+                setMessage(null);
+                setSyncing(true);
+                void post<{ message?: string }>("/clients/warehance", {})
+                  .then((result) => {
+                    setMessage(result.message ?? "Warehance clients are up to date.");
+                    clients.reload();
+                  })
+                  .catch((err: unknown) => setError(err instanceof ApiError ? err.message : "Could not load Warehance clients."))
+                  .finally(() => setSyncing(false));
+              }}
+            >
+              {syncing ? <Spinner /> : "Sync from Warehance"}
             </button>
           </div>
         </form>

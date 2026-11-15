@@ -319,6 +319,7 @@ export const clientRecords = clients.table("clients", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
   code: text("code").notNull().unique(),
+  warehanceClientId: bigint("warehance_client_id", { mode: "number" }).unique(),
   enabledServices: jsonb("enabled_services").$type<string[]>().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });

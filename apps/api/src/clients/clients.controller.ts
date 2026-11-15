@@ -18,6 +18,7 @@ import { BillingService } from "../billing/billing.service.js";
 import { DbService } from "../db.service.js";
 import { ZodPipe } from "../http.js";
 import { enabledServiceList } from "./access.js";
+import { WarehanceDirectoryService } from "./warehance-directory.service.js";
 
 function isUnique(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
@@ -32,11 +33,13 @@ export class ClientsController {
   constructor(
     @Inject(DbService) private readonly db: DbService,
     @Inject(BillingService) private readonly billing: BillingService,
+    @Inject(WarehanceDirectoryService) private readonly directory: WarehanceDirectoryService,
   ) {}
 
   @Get()
   async list(@CurrentUser() ctx: RequestContext) {
     authorize(ctx, "client.read");
+    await this.directory.refreshQuietly();
     const [rows, rates] = await Promise.all([
       this.db.db.select().from(clientRecords),
       this.db.db.select().from(rateCards),
@@ -57,6 +60,12 @@ export class ClientsController {
             label: rate.label,
           })),
       }));
+  }
+
+  @Post("warehance")
+  syncWarehance(@CurrentUser() ctx: RequestContext) {
+    authorize(ctx, "tracking.manage");
+    return this.directory.refreshNow();
   }
 
   @Post()

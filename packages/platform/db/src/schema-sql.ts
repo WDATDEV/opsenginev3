@@ -225,6 +225,8 @@ CREATE TABLE IF NOT EXISTS clients.clients (
 );
 
 ALTER TABLE clients.clients ADD COLUMN IF NOT EXISTS enabled_services jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE clients.clients ADD COLUMN IF NOT EXISTS warehance_client_id bigint;
+CREATE UNIQUE INDEX IF NOT EXISTS clients_warehance_client_id ON clients.clients (warehance_client_id) WHERE warehance_client_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS work.jobs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

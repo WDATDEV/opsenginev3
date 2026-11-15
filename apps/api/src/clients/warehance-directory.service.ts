@@ -34,7 +34,14 @@ export class WarehanceDirectoryService {
       const result = await this.pull();
       if (!result) throw new BadRequestException("The Warehance bot is not connected. Add it in Settings.");
       if (result.clients === 0) return { message: "Warehance returned no clients." };
-      const people = result.people > 0 ? ` ${result.people} people.` : " People were added when Warehance sent them.";
+      const people =
+        result.people > 0
+          ? ` ${result.people} people.`
+          : result.userFail
+            ? " People could not be loaded. The staff key may lack read_users, or the connector needs a restart after adding list_users."
+            : result.userTool
+              ? " Warehance returned no people for those brands."
+              : " People were not loaded: the Warehance bot has no users tool. Add list_users (GET /users) to the staff key and restart the connector.";
       return { message: `Loaded ${result.clients} client(s) from Warehance.${people}` };
     } catch (err) {
       if (err instanceof BadRequestException) throw err;
@@ -49,23 +56,30 @@ export class WarehanceDirectoryService {
     const remote = await listWarehanceClients(mcp);
     if (remote.length === 0) {
       this.lastPull = Date.now();
-      return { clients: 0, people: 0 };
+      return { clients: 0, people: 0, userTool: false, userFail: false };
     }
     const tools = await mcp.listTools().catch(() => []);
-    const userTool = tools.find((tool) => tool.name === "search_users" || tool.name === "list_users" || tool.name === "search_client_users");
-    const extraUsers = userTool ? await listUsers(mcp, userTool.name) : [];
+    const userTool = pickUserTool(tools);
 
     const existing = await this.db.db.select().from(clientRecords);
     let people = 0;
+    let userFail = false;
     for (const brand of remote) {
       const row = await this.upsertClient(brand, existing);
       if (!row || row.hidden) continue;
-      const list = [...peopleOf(brand.raw), ...extraUsers.filter((person) => person.clientId === brand.id)];
+      const fromClient = peopleOf(brand.raw);
+      let fromUsers: { id: string; name: string }[] = [];
+      if (userTool) {
+        const pulled = await listUsers(mcp, userTool.name, brand.id);
+        fromUsers = pulled.people;
+        if (pulled.failed) userFail = true;
+      }
+      const list = uniquePeople([...fromClient, ...fromUsers]);
       people += list.length;
       for (const person of list) await this.upsertPerson(row.id, person);
     }
     this.lastPull = Date.now();
-    return { clients: remote.length, people };
+    return { clients: remote.length, people, userTool: Boolean(userTool), userFail };
   }
 
   private async upsertClient(brand: { id: number; name: string }, existing: (typeof clientRecords.$inferSelect)[]) {
@@ -163,7 +177,7 @@ async function listWarehanceClients(mcp: WarehanceClient) {
       break;
     }
     const body = asObj(data);
-    const records = Array.isArray(body.records) ? body.records : Array.isArray(data) ? data : [];
+    const records = recordsOf(data);
     for (const item of records) {
       const raw = asObj(item);
       const id = Number(raw.id);
@@ -176,18 +190,49 @@ async function listWarehanceClients(mcp: WarehanceClient) {
   return found;
 }
 
-async function listUsers(mcp: WarehanceClient, tool: string) {
-  const { data, failed } = await mcp.call(tool, { limit: 100 });
-  if (failed) return [];
+function pickUserTool(tools: { name: string }[]) {
+  const names = ["list_users", "search_users", "search_client_users", "get_users"];
+  return tools.find((tool) => names.includes(tool.name)) ?? tools.find((tool) => /user/.test(tool.name) && /list|search/.test(tool.name));
+}
+
+async function listUsers(mcp: WarehanceClient, tool: string, clientId: number) {
+  const out: { id: string; name: string }[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 10; page += 1) {
+    const args: Record<string, unknown> = { limit: 50, client_id: clientId };
+    if (cursor) args.cursor = cursor;
+    const { data, failed } = await mcp.call(tool, args);
+    if (failed) return { people: out, failed: page === 0 };
+    const body = asObj(data);
+    const records = recordsOf(data);
+    for (const item of records) {
+      const person = personOf(asObj(item));
+      if (person) out.push(person);
+    }
+    cursor = typeof body.next_cursor === "string" ? body.next_cursor : undefined;
+    if (!cursor) break;
+  }
+  return { people: out, failed: false };
+}
+
+function recordsOf(data: unknown) {
+  if (Array.isArray(data)) return data;
   const body = asObj(data);
-  const records = Array.isArray(body.records) ? body.records : Array.isArray(data) ? data : [];
-  const out: { id: string; name: string; clientId: number }[] = [];
-  for (const item of records) {
-    const raw = asObj(item);
-    const clientId = Number(raw.client_id ?? asObj(raw.client).id);
-    const person = personOf(raw);
-    if (!person || !Number.isInteger(clientId) || clientId <= 0) continue;
-    out.push({ ...person, clientId });
+  if (Array.isArray(body.records)) return body.records;
+  if (Array.isArray(body.users)) return body.users;
+  const nested = asObj(body.data);
+  if (Array.isArray(nested.records)) return nested.records;
+  if (Array.isArray(nested.users)) return nested.users;
+  return [];
+}
+
+function uniquePeople(list: { id: string; name: string }[]) {
+  const seen = new Set<string>();
+  const out: { id: string; name: string }[] = [];
+  for (const person of list) {
+    if (seen.has(person.id)) continue;
+    seen.add(person.id);
+    out.push(person);
   }
   return out;
 }

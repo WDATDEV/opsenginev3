@@ -140,6 +140,12 @@ export class ChatController {
     return this.chat.confirmStock(ctx.principal, id, messageId, body.keep);
   }
 
+  @Post("threads/:id/messages/:messageId/change")
+  @UseGuards(BrowserConfirmGuard)
+  confirmChange(@CurrentUser() ctx: RequestContext, @Param("id") id: string, @Param("messageId") messageId: string) {
+    return this.chat.confirmChange(ctx.principal, id, messageId);
+  }
+
   @Post("threads/:id/email")
   email(@CurrentUser() ctx: RequestContext, @Param("id") id: string, @Body(new ZodPipe(emailSchema)) body: z.infer<typeof emailSchema>) {
     return this.chat.email(access(ctx), id, body);

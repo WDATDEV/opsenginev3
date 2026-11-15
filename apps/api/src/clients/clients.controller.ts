@@ -1,4 +1,4 @@
-import { Body, ConflictException, Controller, Get, Inject, NotFoundException, Param, Post, UseGuards } from "@nestjs/common";
+import { Body, ConflictException, Controller, Delete, Get, Inject, NotFoundException, Param, Post, UseGuards } from "@nestjs/common";
 import {
   createClientSchema,
   createInvoiceSchema,
@@ -18,6 +18,7 @@ import { BillingService } from "../billing/billing.service.js";
 import { DbService } from "../db.service.js";
 import { ZodPipe } from "../http.js";
 import { enabledServiceList } from "./access.js";
+import { WarehanceDirectoryService } from "./warehance-directory.service.js";
 
 function isUnique(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
@@ -32,17 +33,19 @@ export class ClientsController {
   constructor(
     @Inject(DbService) private readonly db: DbService,
     @Inject(BillingService) private readonly billing: BillingService,
+    @Inject(WarehanceDirectoryService) private readonly directory: WarehanceDirectoryService,
   ) {}
 
   @Get()
   async list(@CurrentUser() ctx: RequestContext) {
     authorize(ctx, "client.read");
+    await this.directory.refreshQuietly();
     const [rows, rates] = await Promise.all([
       this.db.db.select().from(clientRecords),
       this.db.db.select().from(rateCards),
     ]);
     return rows
-      .filter((client) => canSeeClient(ctx.principal, client.id))
+      .filter((client) => !client.hidden && canSeeClient(ctx.principal, client.id))
       .map((client) => ({
         ...client,
         enabledServices: enabledServiceList(client.enabledServices),
@@ -59,18 +62,38 @@ export class ClientsController {
       }));
   }
 
+  @Post("warehance")
+  syncWarehance(@CurrentUser() ctx: RequestContext) {
+    authorize(ctx, "tracking.manage");
+    return this.directory.refreshNow();
+  }
+
   @Post()
   async create(
     @CurrentUser() ctx: RequestContext,
     @Body(new ZodPipe(createClientSchema)) body: { name: string; code: string; services: ClientService[] },
   ) {
     authorize(ctx, "tracking.manage");
+    const name = body.name.trim();
     const code = body.code.trim().toUpperCase();
+    const rows = await this.db.db.select().from(clientRecords);
+    const prior = rows.find(
+      (row) =>
+        row.hidden &&
+        (row.code.toUpperCase() === code || row.name.trim().toLowerCase() === name.toLowerCase()),
+    );
+    if (prior) {
+      await this.db.db
+        .update(clientRecords)
+        .set({ hidden: false, name, code, enabledServices: body.services })
+        .where(eq(clientRecords.id, prior.id));
+      return { id: prior.id, message: `${name} is back on the list.` };
+    }
     try {
       const [created] = await this.db.db
         .insert(clientRecords)
         .values({
-          name: body.name.trim(),
+          name,
           code,
           enabledServices: body.services,
         })
@@ -83,6 +106,16 @@ export class ClientsController {
     }
   }
 
+  @Delete(":id")
+  async remove(@CurrentUser() ctx: RequestContext, @Param("id") id: string) {
+    authorize(ctx, "tracking.manage");
+    assertClientVisible(ctx.principal, id);
+    const [client] = await this.db.db.select().from(clientRecords).where(eq(clientRecords.id, id)).limit(1);
+    if (!client || client.hidden) throw new NotFoundException("That client is not on file.");
+    await this.db.db.update(clientRecords).set({ hidden: true }).where(eq(clientRecords.id, client.id));
+    return { message: `${client.name} is off the client list.` };
+  }
+
   @Post(":id/services")
   async setService(
     @CurrentUser() ctx: RequestContext,
@@ -92,7 +125,7 @@ export class ClientsController {
     authorize(ctx, "tracking.manage");
     assertClientVisible(ctx.principal, id);
     const [client] = await this.db.db.select().from(clientRecords).where(eq(clientRecords.id, id)).limit(1);
-    if (!client) throw new NotFoundException("That client is not on file.");
+    if (!client || client.hidden) throw new NotFoundException("That client is not on file.");
     const current = enabledServiceList(client.enabledServices);
     const next = body.enabled
       ? [...new Set([...current, body.service])]

@@ -3,14 +3,15 @@ import type { McpTool } from "./warehance-client.js";
 
 export const BOT_WRITE_ERROR = "The Warehance bot key can change stock. Use the read-only staff key.";
 export const KEYS_SAME_ERROR = "The bot key and the write key must be different.";
-export const WRITE_MISSING_TOOL = "The write key must offer adjust_inventory.";
+export const WRITE_MISSING_TOOL = "The write key must offer adjust_inventory and get_order.";
 
 export function refuseStaffKey(tools: McpTool[]) {
   return staffKeyLooksWritable(tools) ? BOT_WRITE_ERROR : null;
 }
 
 export function refuseWriteKey(tools: McpTool[]) {
-  return tools.some((tool) => tool.name === "adjust_inventory") ? null : WRITE_MISSING_TOOL;
+  const names = new Set(tools.map((tool) => tool.name));
+  return names.has("adjust_inventory") && names.has("get_order") ? null : WRITE_MISSING_TOOL;
 }
 
 export function refuseSameKeys(botKey: string, writeKey: string) {

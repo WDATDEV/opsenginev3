@@ -75,13 +75,6 @@ export const trackingPolicy = [
     answer:
       "Whenever the work changes. Starting a new task closes the previous one immediately. There is no minimum time on a task, and home department is not a lock.",
   },
-  {
-    id: "equipment",
-    area: "Equipment",
-    question: "What scanners, packing computers, and handheld devices are already available?",
-    answer:
-      "They live in the equipment register: packing computers, barcode scanners, and handhelds. Each one is personal or shared, has a location, and shows whether someone is on it now.",
-  },
 ] as const;
 
 export function resolvePacker(input: {

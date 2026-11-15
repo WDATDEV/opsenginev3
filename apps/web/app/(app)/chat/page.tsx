@@ -30,6 +30,16 @@ type StockChange = {
   expiresAt: string;
   note: string | null;
 };
+type PreparedChange = {
+  kind: string;
+  args: Record<string, unknown>;
+  summary: string;
+  before: Record<string, unknown>;
+  status: "proposed" | "applying" | "applied" | "rejected";
+  expiresAt: string;
+  result: Record<string, unknown> | null;
+  error: string | null;
+};
 type Send = { kind: "email" | "slack"; to: string; at: string; ok: boolean; note: string; file: string | null };
 type BotLog = { tool: string; ok: boolean; records: number; error: string | null };
 type Message = {
@@ -42,6 +52,7 @@ type Message = {
   botLogs: BotLog[];
   proposal: Proposal | null;
   stockChange: StockChange | null;
+  change: PreparedChange | null;
   sends: Send[];
   createdAt: string;
 };
@@ -57,7 +68,7 @@ const EXAMPLES = [
   "Make an Excel file of this month's shipments",
   "Which products are low on stock?",
   "List SKUs with quantity greater than 0 as a CSV",
-  "Zero UFO SKUs for Tempostorm to 0 at Ops Engine",
+  "Change stock for AI Testing Client",
 ];
 
 function size(bytes: number) {
@@ -479,6 +490,9 @@ function Bubble({
         {message.stockChange ? (
           <StockCard threadId={threadId} messageId={message.id} change={message.stockChange} isOwner={isOwner} canWrite={canWrite} onDone={onFilesChanged} />
         ) : null}
+        {message.change ? (
+          <ChangeCard threadId={threadId} messageId={message.id} change={message.change} isOwner={isOwner} canWrite={canWrite} onDone={onFilesChanged} />
+        ) : null}
 
         {files.map((file) => (
           <ChatFile key={file.id} file={file} onSaved={onFilesChanged} />
@@ -634,6 +648,117 @@ function StockCard({
       {change.status === "proposed" && isOwner && !expired ? (
         <button className="btn btn-primary btn-sm" type="button" disabled={busy || rows.length === 0} onClick={() => void confirm()}>
           {busy ? <Spinner /> : `Confirm ${rows.length} row(s)`}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function changeTitle(change: PreparedChange) {
+  const args = change.args;
+  if (change.kind === "cancel_order") return `Cancel order #${args.order_id ?? ""}`.trim();
+  if (change.kind === "update_order") return `Update order #${args.order_id ?? ""}`.trim();
+  if (change.kind === "cancel_order_item") return `Cancel order item #${args.order_item_id ?? ""}`.trim();
+  if (change.kind === "update_order_item") return `Update order item #${args.order_item_id ?? ""}`.trim();
+  if (change.kind === "update_product") return `Update product #${args.product_id ?? ""}`.trim();
+  if (change.kind === "move_inventory") return `Move SKU ${args.sku ?? ""}`.trim();
+  if (change.kind === "adjust_inventory") return `Adjust SKU ${args.sku ?? ""}`.trim();
+  return change.kind;
+}
+
+function confirmLabel(change: PreparedChange) {
+  if (change.kind === "cancel_order") return `Cancel order #${change.args.order_id ?? ""}`.trim();
+  if (change.kind === "cancel_order_item") return `Cancel item #${change.args.order_item_id ?? ""}`.trim();
+  return "Confirm";
+}
+
+function fieldRows(change: PreparedChange) {
+  const skip = new Set(["client_id", "reason", "note"]);
+  return Object.entries(change.args).filter(([key]) => !skip.has(key));
+}
+
+function ChangeCard({
+  threadId,
+  messageId,
+  change,
+  isOwner,
+  canWrite,
+  onDone,
+}: {
+  threadId: string;
+  messageId: string;
+  change: PreparedChange;
+  isOwner: boolean;
+  canWrite: boolean;
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const expired = change.status === "proposed" && new Date(change.expiresAt).getTime() < Date.now();
+  const cancel = change.kind === "cancel_order" || change.kind === "cancel_order_item";
+  const bins = Array.isArray(change.before.bins) ? (change.before.bins as { location?: string; quantity?: number | null }[]) : [];
+
+  async function confirm() {
+    setBusy(true);
+    setError(null);
+    try {
+      await post(`/mail/chat/threads/${threadId}/messages/${messageId}/change`, {});
+      onDone();
+    } catch (err) {
+      setError(reason(err, "Could not apply that change."));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className={`card space-y-2 p-3 text-sm ${cancel ? "border-red-300" : "border-moss/30"}`}>
+      <p className="font-medium">{changeTitle(change)}</p>
+      {change.summary ? <p className="text-xs text-muted">{change.summary}</p> : null}
+      {cancel ? (
+        <Notice tone="warn">
+          This cancels {change.kind === "cancel_order" ? "the order" : "the item"}. It can&apos;t be undone from Ops Engine.
+        </Notice>
+      ) : null}
+      <table className="w-full text-left text-xs">
+        <thead className="text-muted">
+          <tr>
+            <th className="py-1 font-medium">Field</th>
+            <th className="py-1 font-medium">Before</th>
+            <th className="py-1 font-medium">After</th>
+          </tr>
+        </thead>
+        <tbody>
+          {fieldRows(change).map(([key, value]) => (
+            <tr key={key} className="border-t border-black/5">
+              <td className="py-1 pr-2 font-mono">{key}</td>
+              <td className="py-1 text-muted">{change.before[key] == null ? "—" : typeof change.before[key] === "object" ? JSON.stringify(change.before[key]) : String(change.before[key])}</td>
+              <td className="py-1">{typeof value === "object" ? JSON.stringify(value) : String(value)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {change.kind === "move_inventory" && bins.length > 0 ? (
+        <ul className="text-xs text-muted">
+          {bins.map((bin) => (
+            <li key={String(bin.location)}>
+              {bin.location}: {bin.quantity ?? "?"} on hand
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {change.status === "proposed" && !isOwner ? <p className="text-xs text-muted">Only the owner can confirm this. Warehance is unchanged.</p> : null}
+      {change.status === "proposed" && isOwner && !canWrite ? (
+        <Notice tone="warn">Add a Warehance write key in Settings. Confirm cannot change Warehance without it.</Notice>
+      ) : null}
+      {change.status === "applying" ? <Notice tone="warn">Applying… do not confirm again.</Notice> : null}
+      {change.status === "proposed" && isOwner && expired ? <Notice tone="warn">This card expired. Ask again.</Notice> : null}
+      {error ? <Notice tone="bad">{error}</Notice> : null}
+      {change.status === "applied" ? <Notice tone="ok">Warehance was updated.</Notice> : null}
+      {change.status === "rejected" ? <Notice tone="bad">{change.error ?? "That change was not applied."}</Notice> : null}
+      {change.status === "proposed" && isOwner && !expired ? (
+        <button className={`btn btn-sm ${cancel ? "btn-danger" : "btn-primary"}`} type="button" disabled={busy} onClick={() => void confirm()}>
+          {busy ? <Spinner /> : confirmLabel(change)}
         </button>
       ) : null}
     </div>

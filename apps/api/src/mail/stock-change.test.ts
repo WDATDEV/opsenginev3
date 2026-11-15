@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { liveBinFromRecords, rowsFromInput, skusFromInput, type StockRow } from "./stock-change.js";
+import { filterJobRows, liveBinFromRecords, rowsFromInput, skusFromInput, type StockRow } from "./stock-change.js";
 import { parseAdjustResult } from "./stock-confirm.js";
 
 describe("connector adjust result", () => {
@@ -53,5 +53,22 @@ describe("card rows from connector records", () => {
     assert.equal(rows.length, 1);
     assert.deepEqual([rows[0]!.sku, rows[0]!.location, rows[0]!.warehouse, rows[0]!.qtyBefore], [row.sku, row.location, "Ops Engine", 6]);
     assert.deepEqual(skusFromInput([bin()]), [row.sku]);
+  });
+});
+
+describe("filterJobRows", () => {
+  it("keeps any SKU and warehouse for AI Testing Client", () => {
+    const other: StockRow = { ...row, sku: "ABC-9", warehouse: "Main", qtyAfter: 12 };
+    const { kept, dropped } = filterJobRows([other], "AI Testing Client");
+    assert.equal(dropped.length, 0);
+    assert.equal(kept.length, 1);
+    assert.equal(kept[0]?.qtyAfter, 12);
+    assert.equal(kept[0]?.warehouse, "Main");
+  });
+
+  it("blocks every other client", () => {
+    const { kept, dropped } = filterJobRows([row], "Tempostorm");
+    assert.equal(kept.length, 0);
+    assert.match(dropped[0] ?? "", /AI Testing Client/);
   });
 });

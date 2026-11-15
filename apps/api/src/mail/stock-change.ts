@@ -1,14 +1,16 @@
 import type { McpTool } from "./warehance-client.js";
 
 export const STOCK_JOB = {
-  clientName: "tempostorm",
-  skuPrefix: "UFO",
-  warehouse: "Ops Engine",
+  clientName: "AI Testing Client",
+  skuPrefix: "",
   action: "set" as const,
-  quantity: 0,
-  reason: "Ops Engine Chat zero",
+  reason: "Ops Engine Chat",
   ttlMs: 15 * 60_000,
 };
+
+export function allowedStockClient(name: string | null | undefined) {
+  return name?.trim().toLowerCase() === STOCK_JOB.clientName.toLowerCase();
+}
 
 export function stockRowCap() {
   const n = Number(process.env.STOCK_CHANGE_MAX_ROWS ?? "1");
@@ -49,18 +51,19 @@ export function pickLocationLookupTool(tools: McpTool[]) {
   return tools.find((tool) => tool.name === "search_inventory_locations") ?? null;
 }
 
-export function argsForLocationLookup(tool: McpTool, sku: string, clientId: number | null) {
+export function argsForLocationLookup(tool: McpTool, sku: string, clientId: number | null, warehouse?: string) {
   const props = Object.keys((tool.inputSchema?.properties ?? {}) as Record<string, unknown>);
   const want: Record<string, string | number> = {
     sku,
     product_sku: sku,
     query: sku,
     search: sku,
-    sku_prefix: STOCK_JOB.skuPrefix,
-    warehouse: STOCK_JOB.warehouse,
-    warehouse_name: STOCK_JOB.warehouse,
     limit: 100,
   };
+  if (warehouse) {
+    want.warehouse = warehouse;
+    want.warehouse_name = warehouse;
+  }
   if (clientId) want.client_id = clientId;
   const args: Record<string, unknown> = {};
   for (const prop of props) {
@@ -69,8 +72,8 @@ export function argsForLocationLookup(tool: McpTool, sku: string, clientId: numb
   }
   if (props.length === 0) {
     args.sku = sku;
-    args.warehouse = STOCK_JOB.warehouse;
     args.limit = 100;
+    if (warehouse) args.warehouse = warehouse;
     if (clientId) args.client_id = clientId;
   }
   return args;
@@ -153,7 +156,7 @@ export function liveBinFromRecords(raw: unknown, row: StockRow): { available: nu
     const warehouse = warehouseOf(record);
     if (sku.toLowerCase() !== row.sku.toLowerCase()) return false;
     if (location.toLowerCase() !== row.location.toLowerCase()) return false;
-    if (warehouse && warehouse.toLowerCase() !== row.warehouse.toLowerCase()) return false;
+    if (warehouse && row.warehouse && warehouse.toLowerCase() !== row.warehouse.toLowerCase()) return false;
     return true;
   });
   if (hits.length === 0) return null;
@@ -191,16 +194,23 @@ export function skusFromInput(input: unknown): string[] {
   const seen = new Set<string>();
   for (const record of flattenRecords(input)) {
     const sku = skuOf(record);
-    if (sku && sku.toLowerCase().startsWith(STOCK_JOB.skuPrefix.toLowerCase())) seen.add(sku);
+    if (sku) seen.add(sku);
   }
   return [...seen];
 }
 
 function warehouseName(value: string) {
   const v = value.trim();
-  if (!v || /^\d+$/.test(v)) return STOCK_JOB.warehouse;
-  if (v.toLowerCase() === STOCK_JOB.warehouse.toLowerCase()) return STOCK_JOB.warehouse;
+  if (!v || /^\d+$/.test(v)) return "";
   return v;
+}
+
+function qtyAfterOf(record: Record<string, unknown>, qtyBefore: number) {
+  const set = numberField(record, ["qty_after", "qtyAfter", "set_quantity", "target_quantity", "quantity_after"]);
+  if (set != null) return set;
+  const quantity = numberField(record, ["quantity", "qty"]);
+  if (quantity != null) return quantity;
+  return qtyBefore;
 }
 
 export function rowsFromInput(input: unknown): StockRow[] {
@@ -208,16 +218,17 @@ export function rowsFromInput(input: unknown): StockRow[] {
   for (const record of flattenRecords(input)) {
     const sku = skuOf(record);
     const location = locationOf(record, ["location", "location_name", "bin", "location_code", "shelf"]);
-    const warehouse = warehouseName(warehouseOf(record) || STOCK_JOB.warehouse);
+    const warehouse = warehouseName(warehouseOf(record));
     const lotCode = field(record, ["lot_code", "lot"]);
     if (!sku || !location) continue;
     if (/^\d+$/.test(location) && location === field(record, ["warehouse"])) continue;
+    const qtyBefore = qtyOf(record);
     rows.push({
       sku,
       location,
       warehouse,
-      qtyBefore: qtyOf(record),
-      qtyAfter: STOCK_JOB.quantity,
+      qtyBefore,
+      qtyAfter: qtyAfterOf(record, qtyBefore),
       lotCode,
       ok: null,
       error: null,
@@ -227,30 +238,26 @@ export function rowsFromInput(input: unknown): StockRow[] {
 }
 
 export function filterJobRows(rows: StockRow[], clientName: string) {
-  const clientOk = clientName.trim().toLowerCase() === STOCK_JOB.clientName;
-  const prefix = STOCK_JOB.skuPrefix.toLowerCase();
-  const warehouse = STOCK_JOB.warehouse.toLowerCase();
   const seen = new Set<string>();
   const kept: StockRow[] = [];
   const dropped: string[] = [];
-  if (!clientOk) return { kept, dropped: ["Client must be Tempostorm."] };
+  if (!allowedStockClient(clientName)) return { kept, dropped: ["Stock changes are only allowed for AI Testing Client."] };
   for (const row of rows) {
-    if (!row.sku.toLowerCase().startsWith(prefix)) {
-      dropped.push(`${row.sku} is not a UFO SKU.`);
+    if (!row.sku.trim() || !row.location.trim()) {
+      dropped.push("Each row needs a SKU and a location.");
       continue;
     }
-    const wh = warehouseName(row.warehouse).toLowerCase();
-    if (wh !== warehouse) {
-      dropped.push(`${row.sku} is not in warehouse Ops Engine.`);
+    if (!Number.isFinite(row.qtyAfter) || row.qtyAfter < 0 || !Number.isInteger(row.qtyAfter)) {
+      dropped.push(`${row.sku} needs a whole-number quantity to set (0 or more).`);
       continue;
     }
-    const key = `${row.sku.toLowerCase()}|${row.location.toLowerCase()}`;
+    const key = `${row.sku.toLowerCase()}|${row.location.toLowerCase()}|${row.warehouse.toLowerCase()}`;
     if (seen.has(key)) {
       dropped.push(`${row.sku} @ ${row.location} is duplicated.`);
       continue;
     }
     seen.add(key);
-    kept.push({ ...row, warehouse: STOCK_JOB.warehouse, qtyAfter: STOCK_JOB.quantity });
+    kept.push(row);
   }
   return { kept, dropped };
 }

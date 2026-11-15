@@ -7,6 +7,7 @@ import { AuthService } from "./auth/auth.service.js";
 import { BillingController } from "./billing/billing.controller.js";
 import { BillingService } from "./billing/billing.service.js";
 import { ClientsController } from "./clients/clients.controller.js";
+import { WarehanceDirectoryService } from "./clients/warehance-directory.service.js";
 import { DbService } from "./db.service.js";
 import { JobsController } from "./jobs/jobs.controller.js";
 import { JobsService } from "./jobs/jobs.service.js";
@@ -61,6 +62,7 @@ import { WorkService } from "./work/work.service.js";
     SchedulerService,
     JobsService,
     BillingService,
+    WarehanceDirectoryService,
     WorkService,
     SettingsService,
     GmailService,

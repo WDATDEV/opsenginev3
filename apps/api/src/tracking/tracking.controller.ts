@@ -20,7 +20,6 @@ import {
   clockSchema,
   completePackSchema,
   createActivitySchema,
-  createDeviceSchema,
   createEmployeeSchema,
   siteSchema,
   createGaylordSchema,
@@ -266,33 +265,6 @@ export class TrackingController {
   @Post("devices/checkin")
   checkin(@Body(new ZodPipe(checkoutSchema)) body: { badge: string; deviceCode: string }) {
     return this.tracking.checkin(body.badge, body.deviceCode);
-  }
-
-  @Get("devices")
-  @UseGuards(AuthGuard)
-  devices(@CurrentUser() ctx: RequestContext) {
-    authorize(ctx, "tracking.read");
-    return this.tracking.listDevices();
-  }
-
-  @Post("devices")
-  @UseGuards(AuthGuard)
-  createDevice(
-    @CurrentUser() ctx: RequestContext,
-    @Body(new ZodPipe(createDeviceSchema))
-    body: {
-      code: string;
-      label: string;
-      kind: "packing_computer" | "barcode_scanner" | "handheld";
-      ownership: "personal" | "shared_pool";
-      warehanceLoginMode: "individual" | "shared" | "none";
-      location: string;
-      assignedBadge?: string;
-      clientId?: string;
-    },
-  ) {
-    authorize(ctx, "tracking.manage");
-    return this.tracking.createDevice(body, ctx.principal);
   }
 
   @Get("employees")

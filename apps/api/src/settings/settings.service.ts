@@ -146,7 +146,7 @@ export class SettingsService {
         const tools = await client.listTools();
         const blocked = refuseWriteKey(tools);
         if (blocked) throw new Error(blocked);
-        detail = `Connected. Write key has adjust_inventory. ${tools.length} tool(s) listed.`;
+        detail = `Connected. Write key has adjust_inventory and get_order. ${tools.length} tool(s) listed.`;
       } catch (err) {
         throw new BadRequestException(err instanceof Error ? err.message : "Could not reach the Warehance connector.");
       }

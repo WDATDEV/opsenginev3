@@ -80,6 +80,125 @@ export function signApproval(
   return { approval: `${p}.${sig}`, payload, p };
 }
 
+export type ChangeValue = string | number | boolean | ChangeValue[];
+export type ChangeArgs = Record<string, ChangeValue>;
+
+export type ChangeApprovalPayload = {
+  v: 2;
+  tool: string;
+  change: ChangeArgs;
+  approved_by: string;
+  approved_at: number;
+  exp: number;
+  nonce: string;
+};
+
+export function canonicalChange(value: unknown): ChangeArgs {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ApprovalError("Approval is not valid.");
+  }
+  return sortValue(value) as ChangeArgs;
+}
+
+function sortValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortValue);
+  if (value && typeof value === "object") {
+    const row = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(row).sort()) out[key] = sortValue(row[key]);
+    return out;
+  }
+  return value;
+}
+
+export function signChangeApproval(
+  input: {
+    tool: string;
+    change: ChangeArgs;
+    approved_by: string;
+    approved_at: number;
+    exp: number;
+    nonce?: string;
+  },
+  secret: string,
+): { approval: string; payload: ChangeApprovalPayload; p: string } {
+  if (!input.tool.trim()) throw new ApprovalError("Approval is not valid.");
+  if (input.exp < input.approved_at || input.exp - input.approved_at > APPROVAL_TTL_SECONDS) {
+    throw new ApprovalError("Approval expiry must be at most 120 seconds after approval.");
+  }
+  const payload: ChangeApprovalPayload = {
+    v: 2,
+    tool: input.tool,
+    change: canonicalChange(input.change),
+    approved_by: input.approved_by,
+    approved_at: input.approved_at,
+    exp: input.exp,
+    nonce: input.nonce ?? randomUUID(),
+  };
+  const p = toBase64Url(Buffer.from(JSON.stringify(payload), "utf8"));
+  const sig = toBase64Url(createHmac("sha256", secret).update(p).digest());
+  return { approval: `${p}.${sig}`, payload, p };
+}
+
+export function verifyChangeApproval(approval: string, secret: string): ChangeApprovalPayload {
+  const parsed = decodeSigned(approval, secret);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new ApprovalError("Approval is not valid.");
+  const row = parsed as Record<string, unknown>;
+  if (row.v !== 2) throw new ApprovalError("Approval is not valid.");
+  if (typeof row.tool !== "string" || typeof row.approved_by !== "string" || typeof row.nonce !== "string") {
+    throw new ApprovalError("Approval is not valid.");
+  }
+  const approved_at = row.approved_at;
+  const exp = row.exp;
+  if (typeof approved_at !== "number" || typeof exp !== "number" || !Number.isInteger(approved_at) || !Number.isInteger(exp)) {
+    throw new ApprovalError("Approval is not valid.");
+  }
+  if (exp < approved_at || exp - approved_at > APPROVAL_TTL_SECONDS) throw new ApprovalError("Approval is not valid.");
+  assertChangeValues(row.change);
+  return {
+    v: 2,
+    tool: row.tool,
+    change: canonicalChange(row.change),
+    approved_by: row.approved_by,
+    approved_at,
+    exp,
+    nonce: row.nonce,
+  };
+}
+
+function decodeSigned(approval: string, secret: string): unknown {
+  const dot = approval.indexOf(".");
+  if (dot <= 0 || approval.indexOf(".", dot + 1) !== -1) throw new ApprovalError("Approval is not valid.");
+  const p = approval.slice(0, dot);
+  const sig = approval.slice(dot + 1);
+  const expected = toBase64Url(createHmac("sha256", secret).update(p).digest());
+  const left = Buffer.from(sig);
+  const right = Buffer.from(expected);
+  if (left.length !== right.length || !timingSafeEqual(left, right)) throw new ApprovalError("Approval is not valid.");
+  try {
+    return JSON.parse(Buffer.from(fromBase64Url(p)).toString("utf8"));
+  } catch {
+    throw new ApprovalError("Approval is not valid.");
+  }
+}
+
+function assertChangeValues(value: unknown): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new ApprovalError("Approval is not valid.");
+  const walk = (item: unknown) => {
+    if (typeof item === "string" || typeof item === "boolean") return;
+    if (typeof item === "number") {
+      if (!Number.isFinite(item)) throw new ApprovalError("Approval is not valid.");
+      return;
+    }
+    if (Array.isArray(item)) {
+      for (const entry of item) walk(entry);
+      return;
+    }
+    throw new ApprovalError("Approval is not valid.");
+  };
+  for (const item of Object.values(value as Record<string, unknown>)) walk(item);
+}
+
 export function verifyApproval(approval: string, secret: string): ApprovalPayload {
   const dot = approval.indexOf(".");
   if (dot <= 0 || approval.indexOf(".", dot + 1) !== -1) {

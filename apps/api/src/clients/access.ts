@@ -11,7 +11,6 @@ const labels: Record<ClientService, string> = {
   picking: "Picking",
   sorting: "Sorting",
   activities: "Activities",
-  equipment: "Equipment",
   people: "People",
   checkin: "Check-in",
   reports: "Report",
@@ -24,7 +23,7 @@ export function enabledServiceList(value: unknown) {
 
 export async function assertClientService(db: Database, clientId: string, service: ClientService) {
   const [client] = await db.select().from(clientRecords).where(eq(clientRecords.id, clientId)).limit(1);
-  if (!client) throw new NotFoundException("That client is not on file.");
+  if (!client || client.hidden) throw new NotFoundException("That client is not on file.");
   if (!enabledServiceList(client.enabledServices).includes(service)) {
     throw new ConflictException(`${labels[service]} is turned off for ${client.name}.`);
   }

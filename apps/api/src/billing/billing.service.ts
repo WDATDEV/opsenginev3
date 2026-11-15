@@ -33,7 +33,7 @@ export class BillingService {
   ) {
     assertClientVisible(principal, clientId);
     const [client] = await this.db.db.select().from(clientRecords).where(eq(clientRecords.id, clientId)).limit(1);
-    if (!client) throw new NotFoundException("That client is not on file.");
+    if (!client || client.hidden) throw new NotFoundException("That client is not on file.");
     if (input.activityCode) {
       const [activity] = await this.db.db
         .select()
@@ -75,7 +75,7 @@ export class BillingService {
   ) {
     assertClientVisible(principal, clientId);
     const [client] = await this.db.db.select().from(clientRecords).where(eq(clientRecords.id, clientId)).limit(1);
-    if (!client) throw new NotFoundException("That client is not on file.");
+    if (!client || client.hidden) throw new NotFoundException("That client is not on file.");
 
     const current = await this.db.db.select().from(rateCards).where(eq(rateCards.clientId, clientId));
     for (const entry of input) {

@@ -1417,84 +1417,6 @@ export class TrackingService {
     });
   }
 
-  async listDevices() {
-    const orm = this.db.db;
-    const [deviceRows, people, sessions, checkouts] = await Promise.all([
-      orm.select().from(devices),
-      orm.select().from(employees),
-      orm.select().from(stationSessions).where(isNull(stationSessions.endedAt)),
-      orm.select().from(deviceCheckouts).where(isNull(deviceCheckouts.endedAt)),
-    ]);
-    const names = new Map(people.map((person) => [person.id, person.name]));
-    return deviceRows.map((row) => {
-      const session = sessions.find((item) => item.deviceId === row.id);
-      const checkout = checkouts.find((item) => item.deviceId === row.id);
-      const live = session || checkout ? "in_use" : "available";
-      return {
-        ...row,
-        assignedTo: row.assignedEmployeeId ? names.get(row.assignedEmployeeId) ?? null : null,
-        heldBy: session
-          ? names.get(session.employeeId) ?? null
-          : checkout
-            ? names.get(checkout.employeeId) ?? null
-            : null,
-        liveStatus: row.status === "maintenance" ? "maintenance" : live,
-      };
-    });
-  }
-
-  async createDevice(
-    input: {
-      code: string;
-      label: string;
-      kind: DeviceKind;
-      ownership: Ownership;
-      warehanceLoginMode: LoginMode;
-      location: string;
-      assignedBadge?: string;
-      clientId?: string;
-    },
-    principal: Principal,
-  ) {
-    const owner = input.clientId ? await assertClientService(this.db.db, input.clientId, "equipment") : null;
-    return this.inTx(async (tx) => {
-      const assigned = input.assignedBadge
-        ? await this.employeeByBadge(tx, input.assignedBadge)
-        : null;
-      const check = normalizeDevice({
-        kind: input.kind,
-        ownership: input.ownership,
-        warehanceLoginMode: input.warehanceLoginMode,
-        assignedEmployeeId: assigned?.id,
-      });
-      if (!check.ok) throw new TrackingError(check.reason);
-      const [created] = await tx
-        .insert(devices)
-        .values({
-          code: clean(input.code),
-          label: input.label.trim(),
-          kind: input.kind,
-          ownership: input.ownership,
-          warehanceLoginMode: input.warehanceLoginMode,
-          location: input.location.trim(),
-          assignedEmployeeId: assigned?.id ?? null,
-          clientId: owner?.id ?? null,
-          status: "available",
-        })
-        .returning();
-      if (!created) throw new TrackingError("Could not register that device.");
-      await this.audit(
-        tx,
-        principal.id,
-        "tracking.device_registered",
-        "device",
-        created.id,
-        `${created.code} added to the equipment register.`,
-      );
-      return created;
-    });
-  }
-
   async receivingBoard() {
     const orm = this.db.db;
     const [shipmentRows, workers, lines, people, clientRows, jobRows] = await Promise.all([
@@ -2146,7 +2068,7 @@ export class TrackingService {
 
   private async deviceByCode(tx: Conn, code: string) {
     const [device] = await tx.select().from(devices).where(eq(devices.code, clean(code))).limit(1);
-    if (!device) throw new TrackingError("That device is not in the equipment register.");
+    if (!device) throw new TrackingError("That device is not on file.");
     return device;
   }
 

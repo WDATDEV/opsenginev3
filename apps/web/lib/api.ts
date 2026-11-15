@@ -88,7 +88,6 @@ export const CLIENT_SERVICES = [
   ["packing", "Packing"],
   ["picking", "Picking"],
   ["sorting", "Sorting"],
-  ["equipment", "Equipment"],
   ["people", "People"],
   ["checkin", "Check-in"],
   ["reports", "Report"],

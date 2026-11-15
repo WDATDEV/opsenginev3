@@ -90,14 +90,20 @@ export async function applyConfirmedRows(
     }
     const bin = liveBinFromRecords(live, row);
     if (!bin) {
-      out.push({ ...row, ok: false, error: `${row.sku} was not found at ${row.location} in ${row.warehouse}.`, nonce: null, appliedQuantity: null, capped: null });
+      out.push({ ...row, ok: false, error: `${row.sku} was not found at ${row.location}${row.warehouse ? ` in ${row.warehouse}` : ""}.`, nonce: null, appliedQuantity: null, capped: null });
       continue;
     }
-    if (bin.onHand === 0) {
-      out.push({ ...row, qtyBefore: 0, ok: true, error: null, nonce: null, appliedQuantity: 0, capped: false });
+    const target = Math.trunc(row.qtyAfter);
+    if (!Number.isInteger(target) || target < 0) {
+      out.push({ ...row, qtyBefore: bin.onHand, ok: false, error: "Quantity to set must be a whole number 0 or more.", nonce: null, appliedQuantity: null, capped: null });
       continue;
     }
-    if (bin.available === 0 && bin.onHand > 0) {
+    if (bin.onHand === target) {
+      out.push({ ...row, qtyBefore: bin.onHand, ok: true, error: null, nonce: null, appliedQuantity: 0, capped: false });
+      continue;
+    }
+    const quantity = target - bin.onHand;
+    if (quantity < 0 && bin.available === 0 && bin.onHand > 0) {
       out.push({
         ...row,
         qtyBefore: bin.onHand,
@@ -109,9 +115,8 @@ export async function applyConfirmedRows(
       });
       continue;
     }
-    const quantity = -Math.trunc(bin.available);
     if (!Number.isInteger(quantity) || quantity === 0) {
-      out.push({ ...row, qtyBefore: bin.onHand, ok: false, error: "Live available quantity could not be turned into a signed change.", nonce: null, appliedQuantity: null, capped: null });
+      out.push({ ...row, qtyBefore: bin.onHand, ok: false, error: "Live quantity could not be turned into a signed change.", nonce: null, appliedQuantity: null, capped: null });
       continue;
     }
     const approved_at = deps.nowSeconds();
@@ -183,27 +188,28 @@ export async function applyConfirmedRows(
   return { rows: out, calls };
 }
 
-export async function staffAndWrite(database: { select: () => { from: (table: typeof connectors) => unknown } }) {
+export async function writeSetup(database: { select: () => { from: (table: typeof connectors) => unknown } }) {
   const rows = (await database.select().from(connectors)) as { kind: string; secret: string | null; extra: string | null }[];
-  const staff = rows.find((row) => row.kind === "warehance");
+  const bot = rows.find((row) => row.kind === "warehance");
   const write = rows.find((row) => row.kind === WRITE_KIND);
   const secret = readApprovalSecret();
-  const url = write?.extra || staff?.extra || "";
-  if (!secret || !write?.secret || !url || !staff?.secret || !staff.extra) {
-    return { ok: false as const, secret: null, staff: null, write: null };
+  const url = write?.extra || bot?.extra || "";
+  if (!secret || !write?.secret || !url) {
+    return { ok: false as const, secret: null, write: null };
   }
-  return {
-    ok: true as const,
-    secret,
-    staff: new WarehanceClient(staff.extra, staff.secret),
-    write: new WarehanceClient(url, write.secret),
-  };
+  return { ok: true as const, secret, write: new WarehanceClient(url, write.secret) };
+}
+
+export async function staffAndWrite(database: { select: () => { from: (table: typeof connectors) => unknown } }) {
+  const setup = await writeSetup(database);
+  if (!setup.ok) return { ok: false as const, secret: null, staff: null, write: null };
+  return { ok: true as const, secret: setup.secret, staff: setup.write, write: setup.write };
 }
 
 export async function lookupLiveBin(staff: WarehanceClient, row: StockRow, clientId: number | null) {
   const tools = await staff.listTools();
   const tool = pickLocationLookupTool(tools);
-  if (!tool) throw new Error("The staff key cannot search inventory locations.");
+  if (!tool) throw new Error("The write key cannot search inventory locations.");
   const args = argsForLocationLookup(tool, row.sku, clientId);
   args.location_name = row.location;
   args.warehouse = row.warehouse;

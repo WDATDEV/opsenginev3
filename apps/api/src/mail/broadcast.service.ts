@@ -206,7 +206,11 @@ export class BroadcastService implements OnModuleInit, OnModuleDestroy {
 
   async options() {
     const [clients, contacts] = await Promise.all([
-      this.db.db.select({ id: clientRecords.id, name: clientRecords.name }).from(clientRecords).orderBy(asc(clientRecords.name)),
+      this.db.db
+        .select({ id: clientRecords.id, name: clientRecords.name })
+        .from(clientRecords)
+        .where(eq(clientRecords.hidden, false))
+        .orderBy(asc(clientRecords.name)),
       this.db.db.select({ groups: mailContacts.groups }).from(mailContacts),
     ]);
     const groups = [...new Set(contacts.flatMap((row) => row.groups))].sort((a, b) => a.localeCompare(b));

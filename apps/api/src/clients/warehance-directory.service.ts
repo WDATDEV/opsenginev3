@@ -59,6 +59,7 @@ export class WarehanceDirectoryService {
     let people = 0;
     for (const brand of remote) {
       const row = await this.upsertClient(brand, existing);
+      if (!row || row.hidden) continue;
       const list = [...peopleOf(brand.raw), ...extraUsers.filter((person) => person.clientId === brand.id)];
       people += list.length;
       for (const person of list) await this.upsertPerson(row.id, person);
@@ -72,6 +73,13 @@ export class WarehanceDirectoryService {
     const byName = existing.find((row) => row.name.trim().toLowerCase() === brand.name.trim().toLowerCase());
     const hit = byId ?? byName;
     if (hit) {
+      if (hit.hidden) {
+        if (hit.warehanceClientId == null) {
+          await this.db.db.update(clientRecords).set({ warehanceClientId: brand.id }).where(eq(clientRecords.id, hit.id));
+          hit.warehanceClientId = brand.id;
+        }
+        return hit;
+      }
       const firstLink = hit.warehanceClientId == null;
       const next = {
         name: brand.name,

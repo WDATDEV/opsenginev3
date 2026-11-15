@@ -157,7 +157,7 @@ export class JobsService {
           };
         }),
       clients: clientRows
-        .filter((client) => canSeeClient(principal, client.id))
+        .filter((client) => !client.hidden && canSeeClient(principal, client.id))
         .map((client) => ({ id: client.id, name: client.name, code: client.code })),
       activities: activities
         .filter((activity) => activity.active)
@@ -177,7 +177,7 @@ export class JobsService {
   async create(principal: Principal, input: { clientId: string; reference: string; title: string; billBasis?: string }) {
     assertClientVisible(principal, input.clientId);
     const [client] = await this.db.db.select().from(clientRecords).where(eq(clientRecords.id, input.clientId)).limit(1);
-    if (!client) throw new NotFoundException("That client is not on file.");
+    if (!client || client.hidden) throw new NotFoundException("That client is not on file.");
     await assertClientService(this.db.db, client.id, "jobs");
     try {
       const [created] = await this.db.db

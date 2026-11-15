@@ -321,6 +321,7 @@ export const clientRecords = clients.table("clients", {
   code: text("code").notNull().unique(),
   warehanceClientId: bigint("warehance_client_id", { mode: "number" }).unique(),
   enabledServices: jsonb("enabled_services").$type<string[]>().notNull().default([]),
+  hidden: boolean("hidden").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

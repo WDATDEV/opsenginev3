@@ -27,5 +27,8 @@ describe("chat lockdown", () => {
     assert.match(confirm, /warehance_write/);
     assert.doesNotMatch(change, /warehance_write/);
     assert.match(chat, /propose_change/);
+    const jobsChat = readFileSync(join(here, "../jobs/jobs-chat.service.ts"), "utf8");
+    assert.doesNotMatch(jobsChat, /warehance_write/);
+    assert.doesNotMatch(jobsChat, /adjust_inventory/);
   });
 });

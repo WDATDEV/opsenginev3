@@ -222,6 +222,25 @@ export type ChatPreparedChange = {
   error: string | null;
 };
 
+export type ChatJobPerson = { employeeId: string; name: string };
+
+export type ChatJobChange = {
+  kind: "create_job" | "assign_people";
+  clientId: string;
+  clientName: string;
+  jobId: string | null;
+  jobReference: string;
+  title: string;
+  billBasis: string | null;
+  people: ChatJobPerson[];
+  summary: string;
+  status: "proposed" | "applying" | "applied" | "rejected";
+  proposedAt: string;
+  expiresAt: string;
+  result: string | null;
+  error: string | null;
+};
+
 // A Warehance stock change Claude prepared. Nothing is written until the owner confirms.
 export type ChatStockChange = {
   logId: string | null;
@@ -246,6 +265,8 @@ export const chatThreads = mail.table("chat_threads", {
   // A Warehance client ID locks every lookup to that client. Empty means all clients.
   warehanceClientId: bigint("warehance_client_id", { mode: "number" }),
   warehanceClientName: text("warehance_client_name"),
+  // warehance = Mail Chat. jobs = Time tracking Jobs chat.
+  kind: text("kind").notNull().default("warehance"),
   model: text("model").notNull().default("haiku"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -263,6 +284,7 @@ export const chatMessages = mail.table("chat_messages", {
   proposal: jsonb("proposal").$type<ChatProposal | null>(),
   stockChange: jsonb("stock_change").$type<ChatStockChange | null>(),
   change: jsonb("change").$type<ChatPreparedChange | null>(),
+  jobChange: jsonb("job_change").$type<ChatJobChange | null>(),
   sends: jsonb("sends").$type<ChatSend[]>().notNull().default([]),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });

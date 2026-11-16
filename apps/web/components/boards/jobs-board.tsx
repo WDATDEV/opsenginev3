@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useSession } from "@/components/shell";
 import { asCount, CountInput, Field, Notice, PageTitle, useResource } from "@/components/ui";
 import { ApiError, BILL_BASES, billBasisLabel, canApproveCharges, canManageJobs, money, post } from "@/lib/api";
+import { JobsChat } from "@/components/boards/jobs-chat";
 
 type JobTask = {
   id: string;
@@ -147,6 +148,8 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
       {board.error ? <Notice tone="bad">{board.error}</Notice> : null}
       {message ? <Notice tone="ok">{message}</Notice> : null}
       {error ? <Notice tone="bad">{error}</Notice> : null}
+      <div className="mb-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
+      <div>
       {canManageJobs(user?.role) ? (
         <form
           className="card mb-6 grid gap-3 p-4 md:grid-cols-4"
@@ -391,6 +394,9 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
             </article>
           );
         })}
+      </div>
+      </div>
+      <JobsChat clientId={client?.id} onChanged={() => board.reload()} />
       </div>
     </div>
   );

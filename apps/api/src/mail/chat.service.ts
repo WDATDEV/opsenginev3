@@ -16,7 +16,7 @@ import {
   type ChatStockChange,
 } from "@opsengine/db";
 import { ForbiddenError, type Principal } from "@opsengine/kernel";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { DbService } from "../db.service.js";
 import { ask, modelFor, type Block, type ClaudeTool, type Message } from "./anthropic.js";
 import { AutomationService } from "./automation.service.js";
@@ -167,7 +167,7 @@ export class ChatService {
     return this.db.db
       .select()
       .from(chatThreads)
-      .where(eq(chatThreads.ownerId, ownerId))
+      .where(and(eq(chatThreads.ownerId, ownerId), or(eq(chatThreads.kind, "warehance"), isNull(chatThreads.kind))))
       .orderBy(desc(chatThreads.updatedAt))
       .limit(200);
   }
@@ -177,6 +177,7 @@ export class ChatService {
       .insert(chatThreads)
       .values({
         ownerId,
+        kind: "warehance",
         warehanceClientId: input.clientId,
         warehanceClientName: input.clientId ? input.clientName : null,
         model: input.model,
@@ -189,7 +190,13 @@ export class ChatService {
     const [row] = await this.db.db
       .select()
       .from(chatThreads)
-      .where(and(eq(chatThreads.id, id), eq(chatThreads.ownerId, ownerId)))
+      .where(
+        and(
+          eq(chatThreads.id, id),
+          eq(chatThreads.ownerId, ownerId),
+          or(eq(chatThreads.kind, "warehance"), isNull(chatThreads.kind)),
+        ),
+      )
       .limit(1);
     if (!row) throw new NotFoundException("That chat was not found.");
     return row;

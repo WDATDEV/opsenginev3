@@ -136,6 +136,7 @@ CREATE TABLE IF NOT EXISTS mail.chat_threads (
 );
 -- Warehance client IDs can be larger than a 32-bit integer. Fixes tables made with the first version.
 ALTER TABLE mail.chat_threads ALTER COLUMN warehance_client_id TYPE bigint;
+ALTER TABLE mail.chat_threads ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'warehance';
 CREATE INDEX IF NOT EXISTS chat_threads_by_owner ON mail.chat_threads (owner_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS mail.chat_messages (
@@ -153,6 +154,7 @@ CREATE TABLE IF NOT EXISTS mail.chat_messages (
 );
 ALTER TABLE mail.chat_messages ADD COLUMN IF NOT EXISTS stock_change jsonb;
 ALTER TABLE mail.chat_messages ADD COLUMN IF NOT EXISTS change jsonb;
+ALTER TABLE mail.chat_messages ADD COLUMN IF NOT EXISTS job_change jsonb;
 CREATE INDEX IF NOT EXISTS chat_messages_by_thread ON mail.chat_messages (thread_id, created_at);
 
 CREATE TABLE IF NOT EXISTS mail.chat_stock_logs (

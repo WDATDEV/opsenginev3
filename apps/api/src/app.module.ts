@@ -9,6 +9,8 @@ import { BillingService } from "./billing/billing.service.js";
 import { ClientsController } from "./clients/clients.controller.js";
 import { WarehanceDirectoryService } from "./clients/warehance-directory.service.js";
 import { DbService } from "./db.service.js";
+import { JobsChatController } from "./jobs/jobs-chat.controller.js";
+import { JobsChatService } from "./jobs/jobs-chat.service.js";
 import { JobsController } from "./jobs/jobs.controller.js";
 import { JobsService } from "./jobs/jobs.service.js";
 import { HealthController } from "./health.controller.js";
@@ -43,6 +45,7 @@ import { WorkService } from "./work/work.service.js";
     UsersController,
     ClientsController,
     JobsController,
+    JobsChatController,
     BillingController,
     TrackingController,
     WorkController,
@@ -61,6 +64,7 @@ import { WorkService } from "./work/work.service.js";
     TrackingService,
     SchedulerService,
     JobsService,
+    JobsChatService,
     BillingService,
     WarehanceDirectoryService,
     WorkService,

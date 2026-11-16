@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Notice, PageTitle, useResource } from "@/components/ui";
+import { Notice, PageTitle, SkeletonList, Spinner, useResource } from "@/components/ui";
 import { CLIENT_SERVICES } from "@/lib/api";
 import type { ClientRecord } from "@/components/client-dashboard";
 
@@ -19,7 +19,17 @@ export function ClientService({
   const label = CLIENT_SERVICES.find(([code]) => code === service)?.[1] ?? service;
 
   if (clients.error) return <Notice tone="bad">{clients.error}</Notice>;
-  if (!clients.data) return <p className="text-muted">Loading…</p>;
+  if (clients.loading && !clients.data) {
+    return (
+      <div>
+        <SkeletonList rows={3} />
+        <p className="mt-3">
+          <Spinner label="Loading this client" />
+        </p>
+      </div>
+    );
+  }
+  if (!clients.data) return <Notice tone="bad">Could not load clients.</Notice>;
   if (!client) return <Notice tone="bad">That client is not on your list.</Notice>;
   if (!client.enabledServices.includes(service)) {
     return (

@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 import { clientRecords, connectors, employees } from "@opsengine/db";
 import { eq } from "drizzle-orm";
 import { DbService } from "../db.service.js";
@@ -6,32 +6,19 @@ import { WarehanceClient } from "../mail/warehance-client.js";
 
 export const WAREHANCE_CLIENT_SERVICES = ["jobs", "unloading", "people", "reports", "invoices"] as const;
 
-const PULL_MS = 5 * 60_000;
-
 @Injectable()
 export class WarehanceDirectoryService {
-  private readonly log = new Logger("WarehanceDirectory");
-  private lastPull = 0;
-  private pulling: Promise<void> | null = null;
+  private pulling: Promise<unknown> | null = null;
 
   constructor(@Inject(DbService) private readonly db: DbService) {}
 
-  async refreshQuietly() {
-    if (Date.now() - this.lastPull < PULL_MS) return;
-    if (this.pulling) return this.pulling;
-    this.pulling = this.pull()
-      .catch((err: unknown) => this.log.warn(err instanceof Error ? err.message : "Could not load Warehance clients."))
-      .finally(() => {
-        this.pulling = null;
-      });
-    return this.pulling;
-  }
-
   async refreshNow() {
-    this.lastPull = 0;
     if (this.pulling) await this.pulling;
+    this.pulling = this.pull().finally(() => {
+      this.pulling = null;
+    });
     try {
-      const result = await this.pull();
+      const result = await this.pulling;
       if (!result) throw new BadRequestException("The Warehance bot is not connected. Add it in Settings.");
       if (result.clients === 0) return { message: "Warehance returned no clients." };
       const people =
@@ -55,30 +42,32 @@ export class WarehanceDirectoryService {
     const mcp = new WarehanceClient(bot.extra, bot.secret);
     const remote = await listWarehanceClients(mcp);
     if (remote.length === 0) {
-      this.lastPull = Date.now();
       return { clients: 0, people: 0, userTool: false, userFail: false };
     }
     const tools = await mcp.listTools().catch(() => []);
     const userTool = pickUserTool(tools);
 
     const existing = await this.db.db.select().from(clientRecords);
-    let people = 0;
-    let userFail = false;
+    const rows: { brand: { id: number; name: string; raw: Record<string, unknown> }; row: (typeof clientRecords.$inferSelect) }[] = [];
     for (const brand of remote) {
       const row = await this.upsertClient(brand, existing);
-      if (!row || row.hidden) continue;
-      const fromClient = peopleOf(brand.raw);
+      if (row) rows.push({ brand, row });
+    }
+    let people = 0;
+    let userFail = false;
+    for (const item of rows) {
+      if (item.row.hidden) continue;
+      const fromClient = peopleOf(item.brand.raw);
       let fromUsers: { id: string; name: string }[] = [];
       if (userTool) {
-        const pulled = await listUsers(mcp, userTool.name, brand.id);
+        const pulled = await listUsers(mcp, userTool.name, item.brand.id);
         fromUsers = pulled.people;
         if (pulled.failed) userFail = true;
       }
       const list = uniquePeople([...fromClient, ...fromUsers]);
       people += list.length;
-      for (const person of list) await this.upsertPerson(row.id, person);
+      for (const person of list) await this.upsertPerson(item.row.id, person);
     }
-    this.lastPull = Date.now();
     return { clients: remote.length, people, userTool: Boolean(userTool), userFail };
   }
 

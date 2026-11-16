@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useSession } from "@/components/shell";
-import { Field, Notice, PageTitle, Spinner, useResource } from "@/components/ui";
+import { Field, Notice, PageTitle, SkeletonList, Spinner, useResource } from "@/components/ui";
 import { ApiError, CLIENT_SERVICES, api, canManage, post } from "@/lib/api";
 
 export type ClientRecord = {
@@ -33,7 +33,7 @@ export function ClientDashboard() {
       <PageTitle
         kicker="Ops Engine"
         title="Clients"
-        detail="Warehance brands show up here with Jobs, Unloading, People, Report, and Invoices. Sync to pull them now, add a client by hand, or remove one from this list. Removed clients stay off even after Sync."
+        detail="This list is saved in Ops Engine. Sync from Warehance pulls brands and people once and writes them here. After that, opening Clients only reads the database. Removed clients stay off even after Sync."
       />
       {clients.error ? <Notice tone="bad">{clients.error}</Notice> : null}
       {message ? <Notice tone="ok">{message}</Notice> : null}
@@ -100,7 +100,17 @@ export function ClientDashboard() {
         </form>
       ) : null}
       <div className="grid gap-4 md:grid-cols-2">
-        {clients.data?.length === 0 ? <div className="card p-6 text-muted">No clients yet.</div> : null}
+        {clients.loading && !(clients.data && clients.data.length > 0) ? (
+          <div className="md:col-span-2">
+            <SkeletonList rows={4} />
+            <p className="mt-3">
+              <Spinner label="Loading clients" />
+            </p>
+          </div>
+        ) : null}
+        {!clients.loading && clients.data?.length === 0 ? (
+          <div className="card p-6 text-muted">No clients yet. Press Sync from Warehance if the list should fill from Warehance.</div>
+        ) : null}
         {clients.data?.map((client) => (
             <article key={client.id} className="card p-4">
               <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted">{client.code}</p>

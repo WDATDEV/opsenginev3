@@ -39,7 +39,6 @@ export class ClientsController {
   @Get()
   async list(@CurrentUser() ctx: RequestContext) {
     authorize(ctx, "client.read");
-    await this.directory.refreshQuietly();
     const [rows, rates] = await Promise.all([
       this.db.db.select().from(clientRecords),
       this.db.db.select().from(rateCards),

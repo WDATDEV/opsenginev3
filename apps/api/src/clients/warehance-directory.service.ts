@@ -3,6 +3,7 @@ import { clientRecords, connectors, employees } from "@opsengine/db";
 import { eq } from "drizzle-orm";
 import { DbService } from "../db.service.js";
 import { WarehanceClient } from "../mail/warehance-client.js";
+import { LIST_PAGE_CAP, LIST_PAGE_SIZE, asObj, listPageArgs, nextListPage, recordsOf } from "./warehance-pages.js";
 
 export const WAREHANCE_CLIENT_SERVICES = ["jobs", "unloading", "people", "reports", "invoices"] as const;
 
@@ -73,7 +74,11 @@ export class WarehanceDirectoryService {
 
   private async upsertClient(brand: { id: number; name: string }, existing: (typeof clientRecords.$inferSelect)[]) {
     const byId = existing.find((row) => row.warehanceClientId === brand.id);
-    const byName = existing.find((row) => row.name.trim().toLowerCase() === brand.name.trim().toLowerCase());
+    const byName = existing.find(
+      (row) =>
+        row.name.trim().toLowerCase() === brand.name.trim().toLowerCase() &&
+        (row.warehanceClientId == null || row.warehanceClientId === brand.id),
+    );
     const hit = byId ?? byName;
     if (hit) {
       if (hit.hidden) {
@@ -156,25 +161,29 @@ export class WarehanceDirectoryService {
 
 async function listWarehanceClients(mcp: WarehanceClient) {
   const found: { id: number; name: string; raw: Record<string, unknown> }[] = [];
+  const seen = new Set<number>();
   let cursor: string | undefined;
-  for (let page = 0; page < 10; page += 1) {
-    const args: Record<string, unknown> = { limit: 50 };
-    if (cursor) args.cursor = cursor;
-    const { data, failed } = await mcp.call("list_clients", args);
+  let offset = 0;
+  for (let page = 0; page < LIST_PAGE_CAP; page += 1) {
+    const { data, failed } = await mcp.call("list_clients", listPageArgs(LIST_PAGE_SIZE, cursor, offset));
     if (failed) {
       if (page === 0) throw new Error(typeof data === "string" ? data : "The Warehance bot could not list clients.");
       break;
     }
-    const body = asObj(data);
     const records = recordsOf(data);
+    let added = 0;
     for (const item of records) {
       const raw = asObj(item);
       const id = Number(raw.id);
-      if (!Number.isInteger(id) || id <= 0) continue;
+      if (!Number.isInteger(id) || id <= 0 || seen.has(id)) continue;
+      seen.add(id);
+      added += 1;
       found.push({ id, name: String(raw.name ?? raw.company_name ?? `Client ${id}`).trim() || `Client ${id}`, raw });
     }
-    cursor = typeof body.next_cursor === "string" ? body.next_cursor : undefined;
-    if (!cursor) break;
+    const next = nextListPage(data, records.length, LIST_PAGE_SIZE, offset);
+    if (!next || added === 0) break;
+    cursor = next.cursor;
+    offset = next.offset ?? offset + records.length;
   }
   return found;
 }
@@ -186,33 +195,28 @@ function pickUserTool(tools: { name: string }[]) {
 
 async function listUsers(mcp: WarehanceClient, tool: string, clientId: number) {
   const out: { id: string; name: string }[] = [];
+  const seen = new Set<string>();
   let cursor: string | undefined;
-  for (let page = 0; page < 10; page += 1) {
-    const args: Record<string, unknown> = { limit: 50, client_id: clientId };
-    if (cursor) args.cursor = cursor;
+  let offset = 0;
+  for (let page = 0; page < LIST_PAGE_CAP; page += 1) {
+    const args = { ...listPageArgs(LIST_PAGE_SIZE, cursor, offset), client_id: clientId };
     const { data, failed } = await mcp.call(tool, args);
     if (failed) return { people: out, failed: page === 0 };
-    const body = asObj(data);
     const records = recordsOf(data);
+    let added = 0;
     for (const item of records) {
       const person = personOf(asObj(item));
-      if (person) out.push(person);
+      if (!person || seen.has(person.id)) continue;
+      seen.add(person.id);
+      added += 1;
+      out.push(person);
     }
-    cursor = typeof body.next_cursor === "string" ? body.next_cursor : undefined;
-    if (!cursor) break;
+    const next = nextListPage(data, records.length, LIST_PAGE_SIZE, offset);
+    if (!next || added === 0) break;
+    cursor = next.cursor;
+    offset = next.offset ?? offset + records.length;
   }
   return { people: out, failed: false };
-}
-
-function recordsOf(data: unknown) {
-  if (Array.isArray(data)) return data;
-  const body = asObj(data);
-  if (Array.isArray(body.records)) return body.records;
-  if (Array.isArray(body.users)) return body.users;
-  const nested = asObj(body.data);
-  if (Array.isArray(nested.records)) return nested.records;
-  if (Array.isArray(nested.users)) return nested.users;
-  return [];
 }
 
 function uniquePeople(list: { id: string; name: string }[]) {
@@ -251,10 +255,6 @@ function personOf(raw: Record<string, unknown>) {
 
 function text(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : "";
-}
-
-function asObj(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
 function codeFrom(name: string) {

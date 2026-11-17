@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { jobChatGate, matchPeople, parseAssignPeople, parseCreateJob, takeProposed } from "./jobs-chat.js";
+import { jobChatGate, matchJob, matchOne, matchPeople, parseAssignPeople, parseCreateJob, takeProposed } from "./jobs-chat.js";
 
 const clients = [
-  { id: "c1", name: "Harbor Goods", enabledServices: ["jobs"] },
+  { id: "c1", name: "Harbor Goods", code: "HG", enabledServices: ["jobs"] },
   { id: "c2", name: "Hidden Co", hidden: true, enabledServices: ["jobs"] },
 ];
 const people = [
@@ -57,6 +57,25 @@ describe("jobs chat cards", () => {
     assert.equal(made.card.kind, "assign_people");
     assert.equal(made.card.jobId, "j1");
     assert.equal(made.card.people.length, 2);
+  });
+
+  it("matches a client code and a first name, not a substring", () => {
+    const byCode = matchOne(clients, "HG", "client");
+    assert.equal(byCode.ok, true);
+    const last = matchPeople(people, ["Cole"]);
+    assert.equal(last.ok, false);
+    const job = matchJob(jobs, "100");
+    assert.equal(job.ok, false);
+    const spaced = matchJob(jobs, "HG 100");
+    assert.equal(spaced.ok, true);
+  });
+
+  it("refuses a job reference that is already on file", () => {
+    const made = parseCreateJob(
+      { client_name: "Harbor Goods", reference: "HG-100", title: "Again" },
+      { clients, people, jobs, now },
+    );
+    assert.equal(made.ok, false);
   });
 
   it("does not assign when two people share the name", () => {

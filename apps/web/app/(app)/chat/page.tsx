@@ -42,6 +42,7 @@ type PreparedChange = {
 };
 type Send = { kind: "email" | "slack"; to: string; at: string; ok: boolean; note: string; file: string | null };
 type BotLog = { tool: string; ok: boolean; records: number; error: string | null };
+type WarehanceLink = { href: string; label: string; kind: string };
 type Message = {
   id: string;
   role: "user" | "assistant";
@@ -50,6 +51,7 @@ type Message = {
   error: string | null;
   lookups: { tool: string; summary: string }[];
   botLogs: BotLog[];
+  links: WarehanceLink[];
   proposal: Proposal | null;
   stockChange: StockChange | null;
   change: PreparedChange | null;
@@ -485,6 +487,26 @@ function Bubble({
         ) : null}
         {message.status === "done" ? (
           <p className="whitespace-pre-wrap rounded-2xl rounded-bl-md bg-black/[0.04] px-3.5 py-2.5 text-sm leading-6">{message.content}</p>
+        ) : null}
+
+        {message.status === "done" && (message.links ?? []).length > 0 ? (
+          <div className="rounded-xl border border-black/10 px-3 py-2">
+            <p className="text-xs font-medium text-muted">Open in Warehance</p>
+            <ul className="mt-1.5 flex flex-wrap gap-1.5">
+              {message.links.map((link) => (
+                <li key={link.href}>
+                  <a
+                    className="btn btn-sm btn-ghost"
+                    href={link.href}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {link.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : null}
 
         {message.stockChange ? (

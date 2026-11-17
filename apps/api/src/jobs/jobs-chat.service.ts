@@ -35,9 +35,10 @@ const STUCK_MS = 6 * 60_000;
 const RULES = `You are the Ops Engine assistant for Time tracking jobs. You help open jobs and assign people on the floor.
 
 Rules:
-- Use only the Time tracking list tools. Never invent a client, person, job, or id.
-- To open a job, look up the client (and people if they named a crew), then call propose_create_job. That only fills a card. Tell them to press Confirm on the card. Never claim the job exists until they confirm.
-- To assign people to an existing job, look the job and people up, then call propose_assign_people. Same card and Confirm rule.
+- Use only the Time tracking list tools. Never invent a client, person, job, reference, or id.
+- Before propose_create_job, call list_ops_clients. If they named people, call list_ops_people for that client. Copy client_name and people strings exactly from those records. If a name is missing or several people match, ask — do not guess.
+- Before propose_assign_people, call list_ops_jobs and list_ops_people. Copy job_reference and people exactly from those records.
+- A card only fills a form. Tell them to press Confirm. Never claim the job was created or people were assigned until they confirm.
 - If this chat is limited to one client, do not use another client.
 - Answer in plain text, short and clear. No markdown tables.
 - You cannot change Warehance from here.`;
@@ -194,11 +195,15 @@ export class JobsChatService {
     const system = [
       RULES,
       scope ? `This jobs page is limited to ${scope.name}. Only use that client.` : "This jobs page can see every Time tracking client.",
-    ].join("\n");
+      rosterLines(catalog, scopedClientId),
+    ]
+      .filter(Boolean)
+      .join("\n");
     const tools = this.tools();
     let lookups: ChatLookup[] = [];
     let jobChange: ChatJobChange | null = null;
-    let reply = await ask(key, { model: modelFor("haiku"), system, messages, tools });
+    const model = modelFor("sonnet");
+    let reply = await ask(key, { model, system, messages, tools });
     for (let turn = 0; turn < MAX_TURNS; turn += 1) {
       const uses = reply.content.filter((block): block is ToolUse => block.type === "tool_use");
       const text = reply.content
@@ -224,7 +229,7 @@ export class JobsChatService {
       }
       messages.push({ role: "assistant", content: reply.content });
       messages.push({ role: "user", content: results });
-      reply = await ask(key, { model: modelFor("haiku"), system, messages, tools });
+      reply = await ask(key, { model, system, messages, tools });
     }
     await this.db.db
       .update(chatMessages)
@@ -236,12 +241,12 @@ export class JobsChatService {
     return [
       {
         name: "list_ops_clients",
-        description: "List Time tracking clients that jobs can be opened for.",
+        description: "List Time tracking clients. Use the exact name (or code) from the records in propose_create_job.",
         input_schema: { type: "object", properties: {} },
       },
       {
         name: "list_ops_people",
-        description: "List people who can be assigned to a job. Optionally filter by client_name or query.",
+        description: "List people on the Time tracking list. Filter with query (name or badge) and client_name. Copy names exactly into propose tools.",
         input_schema: {
           type: "object",
           properties: { client_name: { type: "string" }, query: { type: "string" } },
@@ -249,7 +254,7 @@ export class JobsChatService {
       },
       {
         name: "list_ops_jobs",
-        description: "List open Time tracking jobs. Optionally filter by client_name or query.",
+        description: "List open Time tracking jobs. Copy the exact job reference into propose_assign_people.",
         input_schema: {
           type: "object",
           properties: { client_name: { type: "string" }, query: { type: "string" } },
@@ -295,22 +300,23 @@ export class JobsChatService {
     try {
       if (use.name === "list_ops_clients") {
         const rows = catalog.clients.filter((client) => !scopedClientId || client.id === scopedClientId);
-        return [JSON.stringify({ records: rows.map((client) => ({ name: client.name })) }), false];
+        return [JSON.stringify({ records: rows.map((client) => ({ name: client.name, code: client.code ?? null })) }), false];
       }
       if (use.name === "list_ops_people") {
         const query = String(args.query ?? "").trim().toLowerCase();
         const clientName = String(args.client_name ?? "").trim().toLowerCase();
-        const client = clientName ? catalog.clients.find((item) => item.name.trim().toLowerCase() === clientName) : null;
+        const clientHit = clientName ? catalog.clients.find((item) => item.name.trim().toLowerCase() === clientName || (item.code && item.code.toLowerCase() === clientName)) : null;
         const rows = catalog.people.filter((person) => {
           if (scopedClientId && person.clientId && person.clientId !== scopedClientId) return false;
-          if (client && person.clientId && person.clientId !== client.id) return false;
-          if (query && !person.name.toLowerCase().includes(query)) return false;
+          if (clientHit && person.clientId && person.clientId !== clientHit.id) return false;
+          if (query && !personFits(person, query)) return false;
           return true;
         });
         return [
           JSON.stringify({
             records: rows.slice(0, 80).map((person) => ({
               name: person.name,
+              badge: person.badgeCode ?? null,
               client: catalog.clients.find((item) => item.id === person.clientId)?.name ?? null,
             })),
           }),
@@ -320,11 +326,11 @@ export class JobsChatService {
       if (use.name === "list_ops_jobs") {
         const query = String(args.query ?? "").trim().toLowerCase();
         const clientName = String(args.client_name ?? "").trim().toLowerCase();
-        const client = clientName ? catalog.clients.find((item) => item.name.trim().toLowerCase() === clientName) : null;
+        const clientHit = clientName ? catalog.clients.find((item) => item.name.trim().toLowerCase() === clientName || (item.code && item.code.toLowerCase() === clientName)) : null;
         const rows = catalog.jobs.filter((job) => {
           if (scopedClientId && job.clientId !== scopedClientId) return false;
-          if (client && job.clientId !== client.id) return false;
-          if (query && !`${job.reference} ${job.title}`.toLowerCase().includes(query)) return false;
+          if (clientHit && job.clientId !== clientHit.id) return false;
+          if (query && !jobFits(job, query)) return false;
           return job.status !== "done";
         });
         return [
@@ -332,6 +338,7 @@ export class JobsChatService {
             records: rows.slice(0, 80).map((job) => ({
               reference: job.reference,
               title: job.title,
+              status: job.status,
               client: catalog.clients.find((item) => item.id === job.clientId)?.name ?? null,
             })),
           }),
@@ -361,6 +368,7 @@ export class JobsChatService {
     const clients: OpsClient[] = (await this.db.db.select().from(clientRecords)).map((client) => ({
       id: client.id,
       name: client.name,
+      code: client.code,
       hidden: client.hidden,
       enabledServices: client.enabledServices,
     }));
@@ -370,6 +378,7 @@ export class JobsChatService {
       name: person.name,
       clientId: person.clientId,
       active: person.active,
+      badgeCode: person.badgeCode,
     }));
     const jobRows: OpsJob[] = (await this.db.db.select().from(jobs)).map((job) => ({
       id: job.id,
@@ -386,26 +395,82 @@ export class JobsChatService {
   }
 
   private async applyCard(principal: Principal, card: JobCard) {
+    const catalog = await this.catalog(principal);
+    const people = card.people.map((person) => person.name);
+    const checked =
+      card.kind === "create_job"
+        ? parseCreateJob(
+            {
+              client_name: card.clientName,
+              reference: card.jobReference,
+              title: card.title,
+              bill_basis: card.billBasis,
+              people,
+            },
+            { ...catalog, now: Date.now() },
+          )
+        : parseAssignPeople(
+            { job_reference: card.jobReference, people },
+            { ...catalog, now: Date.now() },
+          );
+    if (!checked.ok) throw new Error(checked.error);
+    if (checked.card.clientId !== card.clientId) throw new Error("That client changed. Ask again.");
+    if (card.kind === "assign_people" && checked.card.jobId !== card.jobId) throw new Error("That job changed. Ask again.");
     const notes: string[] = [];
-    let jobId = card.jobId;
+    let jobId = checked.card.jobId;
     if (card.kind === "create_job") {
       const created = await this.jobs.create(principal, {
-        clientId: card.clientId,
-        reference: card.jobReference,
-        title: card.title,
-        billBasis: card.billBasis ?? "mixed",
+        clientId: checked.card.clientId,
+        reference: checked.card.jobReference,
+        title: checked.card.title,
+        billBasis: checked.card.billBasis ?? "mixed",
       });
       jobId = created.id;
       notes.push(created.message);
     }
     if (!jobId) throw new Error("That job is not on file.");
-    for (const person of card.people) {
+    for (const person of checked.card.people) {
       const assigned = await this.jobs.assign(principal, jobId, person.employeeId);
       notes.push(assigned.message);
     }
-    if (notes.length === 0) return `${card.jobReference} is assigned.`;
+    if (notes.length === 0) return `${checked.card.jobReference} is assigned.`;
     return notes.join(" ");
   }
+}
+
+function rosterLines(catalog: { clients: OpsClient[]; people: OpsPerson[]; jobs: OpsJob[] }, scopedClientId: string | null) {
+  const clients = catalog.clients.filter((client) => !scopedClientId || client.id === scopedClientId);
+  const jobs = catalog.jobs.filter((job) => job.status !== "done" && (!scopedClientId || job.clientId === scopedClientId));
+  const people = catalog.people.filter((person) => !scopedClientId || !person.clientId || person.clientId === scopedClientId);
+  const clientBit = clients
+    .slice(0, 40)
+    .map((client) => (client.code ? `${client.name} (${client.code})` : client.name))
+    .join("; ");
+  const jobBit = jobs
+    .slice(0, 30)
+    .map((job) => job.reference)
+    .join(", ");
+  const peopleBit = people
+    .slice(0, 40)
+    .map((person) => person.name)
+    .join(", ");
+  return `Live Time tracking list — copy these names exactly.\nClients: ${clientBit || "none"}.\nOpen jobs: ${jobBit || "none"}.\nPeople: ${peopleBit || "none"}.`;
+}
+
+function personFits(person: OpsPerson, query: string) {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const name = person.name.toLowerCase();
+  const badge = (person.badgeCode ?? "").toLowerCase();
+  return name === q || name.startsWith(`${q} `) || name.split(" ")[0] === q || badge === q || badge.replace(/\s+/g, "") === q.replace(/\s+/g, "");
+}
+
+function jobFits(job: OpsJob, query: string) {
+  const q = query.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (!q) return true;
+  const ref = job.reference.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const title = job.title.toLowerCase();
+  return ref === q || ref.startsWith(q) || title === query.trim().toLowerCase();
 }
 
 function explain(err: unknown) {

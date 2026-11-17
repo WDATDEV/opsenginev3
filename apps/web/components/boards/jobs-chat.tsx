@@ -96,12 +96,14 @@ export function JobsChat({ clientId, onChanged }: { clientId?: string; onChanged
       <h2 className="text-lg font-semibold">Jobs chat</h2>
       <p className="mt-1 text-sm text-muted">
         Ask to open a job or assign people
-        {clientId ? " for this client" : ""}. Claude prepares a card. Confirm is what saves it.
+        {clientId ? " for this client" : ""}. Names must match Time tracking. Claude prepares a card. Confirm is what saves it.
       </p>
       {ready === false ? <Notice tone="bad">Add the Claude API key in Settings to use jobs chat.</Notice> : null}
       {error ? <Notice tone="bad">{error}</Notice> : null}
       <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-        {detail?.messages.length ? null : <p className="text-sm text-muted">Try: Open HG-100 inbound for Harbor Goods and assign Ada.</p>}
+        {detail?.messages.length ? null : (
+          <p className="text-sm text-muted">Try: Open job HG-100 inbound for Harbor Goods and assign Ada Cole.</p>
+        )}
         {detail?.messages.map((message) => (
           <div key={message.id} className="space-y-2">
             <p className={`text-sm ${message.role === "user" ? "font-medium" : ""}`}>

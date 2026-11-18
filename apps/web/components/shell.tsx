@@ -327,7 +327,10 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
                   <MainTab href="/settings" label="Settings" icon="settings" active={settingsActive} />
                   {settingsActive ? (
                     <SubTabs>
-                      <SubLink href="/settings" label="Connectors" active />
+                      <SubLink href="/settings" label="Connectors" active={pathname === "/settings"} />
+                      {user?.role === "owner" ? (
+                        <SubLink href="/settings/chat" label="Chat log" active={pathname.startsWith("/settings/chat")} />
+                      ) : null}
                     </SubTabs>
                   ) : null}
                 </div>

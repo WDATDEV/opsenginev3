@@ -209,7 +209,7 @@ function Editor({
               <label key={id} className="flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={sections.includes(id)} disabled={locked} onChange={() => toggle(id)} />
                 {label}
-                {id === "settings" ? <span className="text-xs text-muted">Connectors and API keys</span> : null}
+                {id === "settings" ? <span className="text-xs text-muted">Connectors (Chat log is owner-only)</span> : null}
               </label>
             );
           })}

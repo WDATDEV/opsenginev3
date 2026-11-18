@@ -7,6 +7,7 @@ import {
   chatMessages,
   chatStockLogs,
   chatThreads,
+  chatWarehanceRecords,
   connectors,
   users,
   type ChatLookup,
@@ -47,6 +48,7 @@ import {
   type StockRow,
 } from "./stock-change.js";
 import { checkInventoryLocations, toInventoryLocations } from "./warehance-templates.js";
+import { eventsFromLookup, eventsFromPreparedChange, eventsFromStockChange, type WarehanceAuditEvent } from "./warehance-audit.js";
 import { linksForMessage } from "./warehance-links.js";
 
 type Thread = typeof chatThreads.$inferSelect;
@@ -442,8 +444,29 @@ export class ChatService {
         recordCount: input.records.length,
         records: tooBig || !input.ok ? [] : input.records,
       });
+      await this.keepWarehanceAudit(
+        work.thread.id,
+        work.messageId,
+        eventsFromLookup({
+          tool: input.tool,
+          ok: input.ok,
+          error: input.error,
+          records: tooBig || !input.ok ? [] : input.records,
+          via: input.via,
+          recordCount: input.records.length,
+        }),
+      );
     } catch (err) {
       this.log.error(`Could not keep Warehance records for ${input.tool}: ${String(err)}`);
+    }
+  }
+
+  private async keepWarehanceAudit(threadId: string, messageId: string, events: WarehanceAuditEvent[]) {
+    if (events.length === 0) return;
+    try {
+      await this.db.db.insert(chatWarehanceRecords).values(events.map((event) => ({ threadId, messageId, ...event })));
+    } catch (err) {
+      this.log.error(`Could not keep the owner Warehance log: ${String(err)}`);
     }
   }
 
@@ -1175,6 +1198,7 @@ export class ChatService {
       error,
       nonce,
     });
+    await this.keepWarehanceAudit(row.threadId, messageId, eventsFromPreparedChange(change, outcome, error));
   }
 
   private async finishStock(messageId: string, change: ChatStockChange, actor: Principal, status: string, error: string | null) {
@@ -1198,6 +1222,7 @@ export class ChatService {
       rows: change.rows,
       error,
     });
+    await this.keepWarehanceAudit(row.threadId, messageId, eventsFromStockChange(change, status, error));
   }
 
   // ---------------------------------------------------------------- sending

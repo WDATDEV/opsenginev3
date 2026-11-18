@@ -208,6 +208,22 @@ CREATE TABLE IF NOT EXISTS mail.chat_lookup_logs (
 );
 CREATE INDEX IF NOT EXISTS chat_lookup_logs_by_message ON mail.chat_lookup_logs (message_id, created_at);
 
+CREATE TABLE IF NOT EXISTS mail.chat_warehance_records (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  thread_id uuid NOT NULL REFERENCES mail.chat_threads(id) ON DELETE CASCADE,
+  message_id uuid NOT NULL REFERENCES mail.chat_messages(id) ON DELETE CASCADE,
+  action text NOT NULL,
+  tool text NOT NULL,
+  kind text NOT NULL DEFAULT '',
+  record_id text NOT NULL DEFAULT '',
+  label text NOT NULL DEFAULT '',
+  payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+  outcome text NOT NULL DEFAULT 'ok',
+  error text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS chat_warehance_records_by_thread ON mail.chat_warehance_records (thread_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS mail.chat_files (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   thread_id uuid NOT NULL REFERENCES mail.chat_threads(id) ON DELETE CASCADE,

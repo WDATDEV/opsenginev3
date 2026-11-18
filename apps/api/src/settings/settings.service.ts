@@ -1,6 +1,6 @@
-import { BadRequestException, Inject, Injectable } from "@nestjs/common";
-import { connectors } from "@opsengine/db";
-import { eq } from "drizzle-orm";
+import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { chatThreads, chatWarehanceRecords, connectors } from "@opsengine/db";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { DbService } from "../db.service.js";
 import { checkKey, modelFor } from "../mail/anthropic.js";
 import { GmailService } from "../mail/gmail.service.js";
@@ -110,6 +110,77 @@ export class SettingsService {
       detail: "Saved. Test the connection before drafts go to Slack.",
     });
     return this.list();
+  }
+
+  async chatWarehanceThreads() {
+    const counts = await this.db.db
+      .select({
+        threadId: chatWarehanceRecords.threadId,
+        retrieved: sql<number>`cast(count(*) filter (where ${chatWarehanceRecords.action} = 'retrieve') as int)`,
+        changed: sql<number>`cast(count(*) filter (where ${chatWarehanceRecords.action} = 'change') as int)`,
+        lastAt: sql<Date>`max(${chatWarehanceRecords.createdAt})`,
+      })
+      .from(chatWarehanceRecords)
+      .groupBy(chatWarehanceRecords.threadId)
+      .orderBy(sql`max(${chatWarehanceRecords.createdAt}) desc`)
+      .limit(80);
+    if (counts.length === 0) return { threads: [] };
+    const threads = await this.db.db
+      .select()
+      .from(chatThreads)
+      .where(
+        inArray(
+          chatThreads.id,
+          counts.map((row) => row.threadId),
+        ),
+      );
+    const byId = new Map(threads.map((row) => [row.id, row]));
+    return {
+      threads: counts.map((row) => {
+        const thread = byId.get(row.threadId);
+        return {
+          id: row.threadId,
+          title: thread?.title ?? "Chat",
+          kind: thread?.kind ?? "warehance",
+          clientName: thread?.warehanceClientName ?? null,
+          retrieved: Number(row.retrieved),
+          changed: Number(row.changed),
+          lastAt: row.lastAt,
+        };
+      }),
+    };
+  }
+
+  async chatWarehanceThread(id: string) {
+    const [thread] = await this.db.db.select().from(chatThreads).where(eq(chatThreads.id, id)).limit(1);
+    if (!thread) throw new NotFoundException("That chat was not found.");
+    const events = await this.db.db
+      .select({
+        id: chatWarehanceRecords.id,
+        messageId: chatWarehanceRecords.messageId,
+        action: chatWarehanceRecords.action,
+        tool: chatWarehanceRecords.tool,
+        kind: chatWarehanceRecords.kind,
+        recordId: chatWarehanceRecords.recordId,
+        label: chatWarehanceRecords.label,
+        payload: chatWarehanceRecords.payload,
+        outcome: chatWarehanceRecords.outcome,
+        error: chatWarehanceRecords.error,
+        createdAt: chatWarehanceRecords.createdAt,
+      })
+      .from(chatWarehanceRecords)
+      .where(eq(chatWarehanceRecords.threadId, id))
+      .orderBy(desc(chatWarehanceRecords.createdAt))
+      .limit(200);
+    return {
+      thread: {
+        id: thread.id,
+        title: thread.title,
+        kind: thread.kind,
+        clientName: thread.warehanceClientName,
+      },
+      events,
+    };
   }
 
   async disconnect(kind: Kind) {

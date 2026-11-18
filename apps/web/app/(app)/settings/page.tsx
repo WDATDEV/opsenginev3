@@ -83,7 +83,7 @@ export default function SettingsPage() {
       <PageTitle
         kicker="Settings"
         title="Connectors"
-        detail="Gmail receives the client’s letter. The Warehance bot looks up the order. Claude writes the draft. Slack tells people about it."
+        detail="Keys for the whole app. Gmail is Mail. Warehance and Claude are Chat and Mail. Slack is alerts. The write key is only for owner Confirm in Chat."
       />
       {loading && !data ? <SkeletonList rows={4} /> : null}
       <div className="mb-4 max-w-3xl space-y-3 empty:hidden">
@@ -303,7 +303,7 @@ function ClaudeCard({
           setKey("");
         }}
       >
-        <p className="text-sm text-muted">The Anthropic API key writes the draft replies. It is billed per use and is separate from a Claude subscription.</p>
+        <p className="text-sm text-muted">The Anthropic API key powers Chat and Mail drafts. It is billed per use and is separate from a Claude subscription.</p>
         <Field label="API key">
           <input className="field" type="password" placeholder="sk-ant-" value={key} onChange={(event) => setKey(event.target.value)} />
         </Field>
@@ -342,7 +342,7 @@ function SlackCard({
           setToken("");
         }}
       >
-        <p className="text-sm text-muted">Only the bot token is needed. Each automation rule chooses its own channels or people.</p>
+        <p className="text-sm text-muted">Only the bot token is needed. Mail automation and Chat each pick their own channels or people.</p>
         <Field label="Bot token">
           <input className="field" type="password" placeholder="xoxb-" value={token} onChange={(event) => setToken(event.target.value)} />
         </Field>

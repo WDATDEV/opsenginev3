@@ -338,6 +338,22 @@ export const chatLookupLogs = mail.table("chat_lookup_logs", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+// Per-chat Warehance retrieve/change log for the owner Settings page. Separate from lookup pages used to rebuild files.
+export const chatWarehanceRecords = mail.table("chat_warehance_records", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  threadId: uuid("thread_id").notNull(),
+  messageId: uuid("message_id").notNull(),
+  action: text("action").notNull(),
+  tool: text("tool").notNull(),
+  kind: text("kind").notNull().default(""),
+  recordId: text("record_id").notNull().default(""),
+  label: text("label").notNull().default(""),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+  outcome: text("outcome").notNull().default("ok"),
+  error: text("error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const chatFiles = mail.table("chat_files", {
   id: uuid("id").defaultRandom().primaryKey(),
   threadId: uuid("thread_id").notNull(),

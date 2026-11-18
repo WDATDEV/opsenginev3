@@ -47,7 +47,7 @@ import {
   type StockRow,
 } from "./stock-change.js";
 import { checkInventoryLocations, toInventoryLocations } from "./warehance-templates.js";
-import { linksFromLookups } from "./warehance-links.js";
+import { linksForMessage } from "./warehance-links.js";
 
 type Thread = typeof chatThreads.$inferSelect;
 type ToolUse = Extract<Block, { type: "tool_use" }>;
@@ -228,6 +228,7 @@ export class ChatService {
         error: chatLookupLogs.error,
         recordCount: chatLookupLogs.recordCount,
         records: chatLookupLogs.records,
+        args: chatLookupLogs.args,
       })
       .from(chatLookupLogs)
       .where(eq(chatLookupLogs.threadId, id))
@@ -247,14 +248,17 @@ export class ChatService {
       .orderBy(asc(chatFiles.createdAt));
     return {
       thread,
-      messages: messages.map((row) => {
-        const mine = logs.filter((log) => log.messageId === row.id);
-        return {
-          ...row,
-          botLogs: mine.map((log) => ({ tool: log.tool, ok: log.ok, records: log.recordCount, error: log.error })),
-          links: linksFromLookups(mine),
-        };
-      }),
+      messages: (() => {
+        const already = new Set<string>();
+        return messages.map((row) => {
+          const mine = logs.filter((log) => String(log.messageId) === String(row.id));
+          return {
+            ...row,
+            botLogs: mine.map((log) => ({ tool: log.tool, ok: log.ok, records: log.recordCount, error: log.error })),
+            links: row.role === "assistant" ? linksForMessage(row.id, row.lookups ?? [], logs, already) : [],
+          };
+        });
+      })(),
       files,
     };
   }
@@ -423,7 +427,7 @@ export class ChatService {
 
   private async logBot(
     work: Work,
-    input: { tool: string; args: Record<string, unknown>; ok: boolean; error: string | null; records: Record<string, unknown>[] },
+    input: { tool: string; args: Record<string, unknown>; ok: boolean; error: string | null; records: Record<string, unknown>[]; via?: string },
   ) {
     try {
       const encoded = JSON.stringify(input.records);
@@ -432,7 +436,7 @@ export class ChatService {
         threadId: work.thread.id,
         messageId: work.messageId,
         tool: input.tool,
-        args: slimArgs(input.args),
+        args: { ...slimArgs(input.args), ...(input.via ? { __via: input.via } : {}) },
         ok: input.ok,
         error: tooBig ? `Kept the count (${input.records.length}) but the payload was too large to store.` : input.error,
         recordCount: input.records.length,
@@ -837,12 +841,12 @@ export class ChatService {
       const { data, failed } = await work.client.call(input.tool, args);
       if (failed) {
         const reason = typeof data === "string" ? data : JSON.stringify(data);
-        await this.logBot(work, { tool: input.tool, args, ok: false, error: reason, records: [] });
+        await this.logBot(work, { tool: input.tool, args, ok: false, error: reason, records: [], via: "export" });
         if (pages === 0) return [reason, true];
         break;
       }
       const { body, records: got } = recordsOf(data);
-      await this.logBot(work, { tool: input.tool, args, ok: true, error: null, records: got });
+      await this.logBot(work, { tool: input.tool, args, ok: true, error: null, records: got, via: "export" });
       chunk.push(...got);
       for (const id of orderIds(input.tool, got)) work.seenOrders.add(id);
       while (chunk.length >= ROWS_PER_FILE && saved.length < MAX_FILES) {

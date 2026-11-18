@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { linksFromLookups } from "./warehance-links.js";
+import { linksForMessage, linksFromLookups } from "./warehance-links.js";
 
 describe("Warehance chat links", () => {
   it("builds order and shipment links from lookup records", () => {
@@ -29,5 +29,23 @@ describe("Warehance chat links", () => {
       { tool: "search_orders", records: [{ id: 2, order_number: "A" }] },
     ]);
     assert.equal(links.length, 1);
+  });
+
+  it("skips bulk export pages and later replies that reuse the same records", () => {
+    const logs = [
+      { messageId: "m1", tool: "search_products", ok: true, records: [{ id: 3, sku: "ABC" }], args: { __via: "export" } },
+      { messageId: "m1", tool: "search_orders", ok: true, records: [{ id: 8, order_number: "HG-1" }] },
+      { messageId: "m2", tool: "search_orders", ok: true, records: [{ id: 8, order_number: "HG-1" }] },
+    ];
+    const already = new Set<string>();
+    const first = linksForMessage("m1", [{ tool: "search_orders" }, { tool: "export_data" }], logs, already);
+    const second = linksForMessage("m2", [{ tool: "search_orders" }], logs, already);
+    const exported = linksForMessage("m1", [{ tool: "export_data" }], logs, new Set());
+    assert.deepEqual(
+      first.map((link) => link.label),
+      ["Order HG-1"],
+    );
+    assert.equal(second.length, 0);
+    assert.equal(exported.length, 0);
   });
 });

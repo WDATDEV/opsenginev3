@@ -73,12 +73,13 @@ function linkFor(tool: string, raw: Record<string, unknown>): WarehanceLink | nu
 }
 
 export function linksFromLookups(
-  pages: { tool: string; ok?: boolean; records?: Record<string, unknown>[] }[],
+  pages: { tool: string; ok?: boolean; records?: Record<string, unknown>[]; args?: Record<string, unknown> }[],
 ): WarehanceLink[] {
   const out: WarehanceLink[] = [];
   const seen = new Set<string>();
   for (const page of pages) {
     if (page.ok === false) continue;
+    if (asObj(page.args).__via === "export") continue;
     for (const record of page.records ?? []) {
       const link = linkFor(page.tool, record);
       if (!link || seen.has(link.href)) continue;
@@ -88,4 +89,20 @@ export function linksFromLookups(
     }
   }
   return out;
+}
+
+const SKIP_TOOLS = new Set(["export_data", "propose_send", "propose_inventory", "propose_change"]);
+
+export function linksForMessage(
+  messageId: string,
+  lookups: { tool: string }[],
+  logs: { messageId: string; tool: string; ok?: boolean; records?: Record<string, unknown>[]; args?: Record<string, unknown> }[],
+  already: Set<string>,
+): WarehanceLink[] {
+  const tools = new Set(lookups.map((item) => item.tool).filter((tool) => !SKIP_TOOLS.has(tool)));
+  if (tools.size === 0) return [];
+  const mine = logs.filter((log) => String(log.messageId) === String(messageId) && tools.has(log.tool));
+  const links = linksFromLookups(mine).filter((link) => !already.has(link.href));
+  for (const link of links) already.add(link.href);
+  return links;
 }

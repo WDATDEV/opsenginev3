@@ -85,6 +85,16 @@ function reason(err: unknown, fallback: string) {
   return err instanceof ApiError ? err.message : fallback;
 }
 
+function WarehanceLinkIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 4h5v5" />
+      <path d="M16 4 9 11" />
+      <path d="M8 5H5.5A1.5 1.5 0 0 0 4 6.5v8A1.5 1.5 0 0 0 5.5 16h8a1.5 1.5 0 0 0 1.5-1.5V12" />
+    </svg>
+  );
+}
+
 export default function ChatPage() {
   const user = useSession();
   const allowed = hasSection(user, "chat");
@@ -492,16 +502,19 @@ function Bubble({
         {message.status === "done" && (message.links ?? []).length > 0 ? (
           <div className="rounded-xl border border-black/10 px-3 py-2">
             <p className="text-xs font-medium text-muted">Open in Warehance</p>
-            <ul className="mt-1.5 flex flex-wrap gap-1.5">
+            <ul className="mt-1 grid gap-x-6 gap-y-0.5 sm:grid-cols-2">
               {message.links.map((link) => (
-                <li key={link.href}>
+                <li key={link.href} className="flex items-center gap-2 py-1 text-sm">
+                  <span className="min-w-0 flex-1 truncate">{link.label}</span>
                   <a
-                    className="btn btn-sm btn-ghost"
+                    className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-lg text-moss hover:bg-moss/10"
                     href={link.href}
                     target="_blank"
                     rel="noreferrer"
+                    aria-label={`Open ${link.label} in Warehance`}
+                    title="Open in Warehance"
                   >
-                    {link.label}
+                    <WarehanceLinkIcon />
                   </a>
                 </li>
               ))}

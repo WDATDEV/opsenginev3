@@ -36,6 +36,10 @@ function reason(err: unknown, fallback: string) {
   return err instanceof ApiError ? err.message : fallback;
 }
 
+function clock(value: string) {
+  return new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(new Date(value));
+}
+
 export function JobsChat({ clientId, onChanged }: { clientId?: string; onChanged: () => void }) {
   const user = useSession();
   const manage = canManageJobs(user?.role);
@@ -45,6 +49,7 @@ export function JobsChat({ clientId, onChanged }: { clientId?: string; onChanged
   const [sending, setSending] = useState(false);
   const [ready, setReady] = useState<boolean | null>(null);
   const bottom = useRef<HTMLDivElement | null>(null);
+  const box = useRef<HTMLTextAreaElement | null>(null);
   const path = clientId ? `/jobs/chat?clientId=${encodeURIComponent(clientId)}` : "/jobs/chat";
 
   const load = useCallback(async () => {
@@ -75,6 +80,13 @@ export function JobsChat({ clientId, onChanged }: { clientId?: string; onChanged
     bottom.current?.scrollIntoView({ block: "end" });
   }, [detail?.messages.length, working]);
 
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.style.height = "0px";
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, 44), 120)}px`;
+  }, [text]);
+
   async function submit() {
     const asked = text.trim();
     if (!asked || sending || working || !manage) return;
@@ -91,54 +103,97 @@ export function JobsChat({ clientId, onChanged }: { clientId?: string; onChanged
     }
   }
 
+  const blocked = sending || working || ready === false;
+
   return (
-    <aside className="card flex min-h-[28rem] flex-col p-4">
-      <h2 className="text-lg font-semibold">Jobs chat</h2>
-      <p className="mt-1 text-sm text-muted">
-        Ask to open a job or assign people
-        {clientId ? " for this client" : ""}. Names must match Time tracking. Claude prepares a card. Confirm is what saves it.
-      </p>
-      {ready === false ? <Notice tone="bad">Add the Claude API key in Settings to use jobs chat.</Notice> : null}
-      {error ? <Notice tone="bad">{error}</Notice> : null}
-      <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+    <aside className="card flex min-h-[32rem] flex-col overflow-hidden">
+      <div className="border-b border-black/10 px-4 py-3">
+        <h2 className="text-lg font-semibold">Jobs chat</h2>
+        <p className="mt-1 text-sm leading-5 text-muted">
+          Ask to open a job or assign people
+          {clientId ? " for this client" : ""}. Names must match Time tracking. Confirm is what saves it.
+        </p>
+      </div>
+      {ready === false ? (
+        <div className="px-4 pt-3">
+          <Notice tone="bad">Add the Claude API key in Settings to use jobs chat.</Notice>
+        </div>
+      ) : null}
+      {error ? (
+        <div className="px-4 pt-3">
+          <Notice tone="bad">{error}</Notice>
+        </div>
+      ) : null}
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
         {detail?.messages.length ? null : (
-          <p className="text-sm text-muted">Try: Open job HG-100 inbound for Harbor Goods and assign Ada Cole.</p>
-        )}
-        {detail?.messages.map((message) => (
-          <div key={message.id} className="space-y-2">
-            <p className={`text-sm ${message.role === "user" ? "font-medium" : ""}`}>
-              {message.role === "user" ? "You · " : ""}
-              {message.status === "working" ? <Spinner label="Looking that up" /> : message.content}
-            </p>
-            {message.error ? <p className="text-xs text-clay">{message.error}</p> : null}
-            {message.jobChange ? (
-              <JobCard change={message.jobChange} messageId={message.id} canConfirm={manage} onDone={() => void load().then(onChanged)} />
-            ) : null}
+          <div className="rounded-xl bg-black/[0.03] px-3 py-3 text-sm leading-6 text-muted">
+            Try: Open job HG-100 inbound for Harbor Goods and assign Ada Cole.
           </div>
-        ))}
+        )}
+        {detail?.messages.map((message) =>
+          message.role === "user" ? (
+            <div key={message.id} className="flex flex-col items-end gap-1">
+              <p className="max-w-[90%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-moss px-3 py-2 text-sm leading-6 text-paper">{message.content}</p>
+              <span className="px-1 text-[11px] text-muted">{clock(message.createdAt)}</span>
+            </div>
+          ) : (
+            <div key={message.id} className="max-w-[92%] space-y-2">
+              {message.status === "working" ? (
+                <p className="rounded-2xl rounded-bl-md bg-black/[0.04] px-3 py-2 text-sm">
+                  <span className="inline-flex items-center gap-2 text-muted">
+                    <span className="chat-dots" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                    </span>
+                    Looking that up…
+                  </span>
+                </p>
+              ) : (
+                <p className="whitespace-pre-wrap rounded-2xl rounded-bl-md bg-black/[0.04] px-3 py-2 text-sm leading-6">{message.content}</p>
+              )}
+              {message.error ? <p className="text-xs text-clay">{message.error}</p> : null}
+              {message.jobChange ? (
+                <JobCard change={message.jobChange} messageId={message.id} canConfirm={manage} onDone={() => void load().then(onChanged)} />
+              ) : null}
+            </div>
+          ),
+        )}
         <div ref={bottom} />
       </div>
       {manage ? (
         <form
-          className="mt-3 flex gap-2"
+          className="border-t border-black/10 px-3 py-3"
           onSubmit={(event) => {
             event.preventDefault();
             void submit();
           }}
         >
-          <input
-            className="field flex-1"
-            value={text}
-            disabled={sending || working || ready === false}
-            onChange={(event) => setText(event.target.value)}
-            placeholder="Open a job and assign the crew"
-          />
-          <button className="btn btn-primary" type="submit" disabled={sending || working || ready === false || !text.trim()}>
-            {sending ? <Spinner /> : "Ask"}
-          </button>
+          <div className="flex items-end gap-2">
+            <textarea
+              ref={box}
+              className="field min-h-[2.75rem] flex-1 resize-none overflow-hidden py-2.5"
+              rows={1}
+              value={text}
+              disabled={blocked}
+              onChange={(event) => setText(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void submit();
+                }
+              }}
+              placeholder="Open a job and assign the crew"
+              aria-label="Jobs chat message"
+            />
+            <button className="btn btn-primary" type="submit" disabled={blocked || !text.trim()}>
+              {sending || working ? <Spinner /> : "Ask"}
+            </button>
+          </div>
+          <p className="mt-1.5 px-0.5 text-[11px] text-muted">Enter to send · Shift+Enter for a new line</p>
         </form>
       ) : (
-        <p className="mt-3 text-xs text-muted">You can read this chat. Someone who manages jobs confirms the cards.</p>
+        <p className="border-t border-black/10 px-4 py-3 text-xs text-muted">You can read this chat. Someone who manages jobs confirms the cards.</p>
       )}
     </aside>
   );
@@ -175,7 +230,7 @@ function JobCard({
   const title = change.kind === "create_job" ? `Open ${change.jobReference}` : `Assign to ${change.jobReference}`;
 
   return (
-    <div className="space-y-2 rounded-xl border border-moss/30 p-3 text-sm">
+    <div className="space-y-2 rounded-xl border border-moss/30 bg-white px-3 py-2.5 text-sm">
       <p className="font-medium">{title}</p>
       <p className="text-xs text-muted">{change.summary}</p>
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">

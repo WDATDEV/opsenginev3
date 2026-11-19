@@ -37,6 +37,12 @@ export class JobsChatController {
     return this.chat.ask(ctx.principal, body.text, body.clientId ?? null);
   }
 
+  @Post("messages/:messageId/cancel")
+  cancel(@CurrentUser() ctx: RequestContext, @Param("messageId") messageId: string, @Query("clientId") clientId?: string) {
+    authorize(ctx, "job.manage");
+    return this.chat.cancel(ctx.principal, messageId, clientId || null);
+  }
+
   @Post("messages/:messageId/confirm")
   @UseGuards(BrowserConfirmGuard)
   confirm(@CurrentUser() ctx: RequestContext, @Param("messageId") messageId: string) {

@@ -69,7 +69,8 @@ export function JobsChat({ clientId, onChanged }: { clientId?: string; onChanged
       .catch(() => setReady(false));
   }, [load]);
 
-  const working = Boolean(detail?.messages.some((message) => message.status === "working"));
+  const workingId = detail?.messages.find((message) => message.status === "working")?.id ?? null;
+  const working = Boolean(workingId);
   useEffect(() => {
     if (!working) return;
     const timer = setInterval(() => void load(), 2000);
@@ -86,6 +87,23 @@ export function JobsChat({ clientId, onChanged }: { clientId?: string; onChanged
     el.style.height = "0px";
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 44), 120)}px`;
   }, [text]);
+
+  async function cancelFetch() {
+    if (!workingId || sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      const next = await post<Detail>(
+        clientId ? `/jobs/chat/messages/${workingId}/cancel?clientId=${encodeURIComponent(clientId)}` : `/jobs/chat/messages/${workingId}/cancel`,
+        {},
+      );
+      setDetail(next);
+    } catch (err) {
+      setError(reason(err, "Could not stop that."));
+    } finally {
+      setSending(false);
+    }
+  }
 
   async function submit() {
     const asked = text.trim();
@@ -139,7 +157,7 @@ export function JobsChat({ clientId, onChanged }: { clientId?: string; onChanged
           ) : (
             <div key={message.id} className="max-w-[92%] space-y-2">
               {message.status === "working" ? (
-                <p className="rounded-2xl rounded-bl-md bg-black/[0.04] px-3 py-2 text-sm">
+                <div className="rounded-2xl rounded-bl-md bg-black/[0.04] px-3 py-2 text-sm">
                   <span className="inline-flex items-center gap-2 text-muted">
                     <span className="chat-dots" aria-hidden="true">
                       <span />
@@ -148,7 +166,10 @@ export function JobsChat({ clientId, onChanged }: { clientId?: string; onChanged
                     </span>
                     Looking that up…
                   </span>
-                </p>
+                  <button className="btn btn-sm mt-2" type="button" onClick={() => void cancelFetch()}>
+                    Cancel
+                  </button>
+                </div>
               ) : (
                 <p className="whitespace-pre-wrap rounded-2xl rounded-bl-md bg-black/[0.04] px-3 py-2 text-sm leading-6">{message.content}</p>
               )}
@@ -186,9 +207,15 @@ export function JobsChat({ clientId, onChanged }: { clientId?: string; onChanged
               placeholder="Open a job and assign the crew"
               aria-label="Jobs chat message"
             />
-            <button className="btn btn-primary" type="submit" disabled={blocked || !text.trim()}>
-              {sending || working ? <Spinner /> : "Ask"}
-            </button>
+            {working ? (
+              <button className="btn" type="button" onClick={() => void cancelFetch()} disabled={sending}>
+                Cancel
+              </button>
+            ) : (
+              <button className="btn btn-primary" type="submit" disabled={blocked || !text.trim()}>
+                {sending ? <Spinner /> : "Ask"}
+              </button>
+            )}
           </div>
           <p className="mt-1.5 px-0.5 text-[11px] text-muted">Enter to send · Shift+Enter for a new line</p>
         </form>

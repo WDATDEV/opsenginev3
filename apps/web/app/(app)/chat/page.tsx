@@ -176,7 +176,8 @@ export default function ChatPage() {
     if (id) void load(id);
   }
 
-  const working = Boolean(detail?.messages.some((message) => message.status === "working"));
+  const workingId = detail?.messages.find((message) => message.status === "working")?.id ?? null;
+  const working = Boolean(workingId);
   useEffect(() => {
     if (!selected || !working) return;
     const timer = setInterval(() => void load(selected), 2000);
@@ -229,6 +230,21 @@ export default function ChatPage() {
       reloadThreads();
     } catch (err) {
       setError(reason(err, "Could not save that change."));
+    }
+  }
+
+  async function cancelFetch() {
+    if (!selected || !workingId || sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      const next = await post<Detail>(`/mail/chat/threads/${selected}/messages/${workingId}/cancel`, {});
+      setDetail(next);
+      reloadThreads();
+    } catch (err) {
+      setError(reason(err, "Could not stop that."));
+    } finally {
+      setSending(false);
     }
   }
 
@@ -437,6 +453,7 @@ export default function ChatPage() {
                     canWrite={Boolean(config.data?.warehanceWrite)}
                     onSend={(kind, prefill) => setPanel({ messageId: message.id, kind, prefill })}
                     onFilesChanged={() => void load(detail.thread.id)}
+                    onCancel={message.status === "working" ? () => void cancelFetch() : undefined}
                   />
                 </Fragment>
               );
@@ -467,6 +484,7 @@ export default function ChatPage() {
             onSubmit={() => void submit(text)}
             disabled={!ready || sending}
             busy={sending || working}
+            onCancel={working ? () => void cancelFetch() : undefined}
             placeholder={ready ? "Ask a question, or ask for a file…" : "Finish setup in Settings first"}
             hint={
               activeScope.id
@@ -486,6 +504,7 @@ function Composer({
   onSubmit,
   disabled,
   busy,
+  onCancel,
   placeholder,
   hint,
 }: {
@@ -494,6 +513,7 @@ function Composer({
   onSubmit: () => void;
   disabled: boolean;
   busy: boolean;
+  onCancel?: () => void;
   placeholder: string;
   hint?: string;
 }) {
@@ -531,9 +551,15 @@ function Composer({
             }
           }}
         />
-        <button className="btn btn-primary" type="submit" disabled={disabled || busy || !value.trim()}>
-          {busy ? <Spinner /> : "Send"}
-        </button>
+        {onCancel ? (
+          <button className="btn" type="button" onClick={onCancel} disabled={disabled}>
+            Cancel
+          </button>
+        ) : (
+          <button className="btn btn-primary" type="submit" disabled={disabled || busy || !value.trim()}>
+            {busy ? <Spinner /> : "Send"}
+          </button>
+        )}
       </div>
       {hint ? <p className="mt-1.5 px-0.5 text-[11px] leading-4 text-muted">{hint}</p> : null}
     </form>
@@ -550,6 +576,7 @@ function Bubble({
   canWrite,
   onSend,
   onFilesChanged,
+  onCancel,
 }: {
   threadId: string;
   message: Message;
@@ -558,6 +585,7 @@ function Bubble({
   canWrite: boolean;
   onSend: (kind: "email" | "slack", prefill: Proposal | null) => void;
   onFilesChanged: () => void;
+  onCancel?: () => void;
 }) {
   const [showLookups, setShowLookups] = useState(false);
   const [recovering, setRecovering] = useState(false);
@@ -587,10 +615,15 @@ function Bubble({
               </ul>
             ) : null}
             {kept > 0 ? <p className="mt-2 text-xs text-muted">Keeping {kept} Warehance record(s) in case this fails.</p> : null}
+            {onCancel ? (
+              <button className="btn btn-sm mt-2" type="button" onClick={onCancel}>
+                Cancel
+              </button>
+            ) : null}
           </div>
         ) : null}
         {message.status === "failed" ? (
-          <Notice tone="bad">
+          <Notice tone={message.error?.startsWith("Stopped.") ? "warn" : "bad"}>
             {message.error ?? "That did not work."}
             {kept > 0 ? ` The Warehance records from this turn were kept (${kept} row(s)), so you can recover them as a file.` : ""}
           </Notice>

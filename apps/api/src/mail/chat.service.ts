@@ -49,6 +49,7 @@ import {
 } from "./stock-change.js";
 import { checkInventoryLocations, toInventoryLocations } from "./warehance-templates.js";
 import { eventsFromLookup, eventsFromPreparedChange, eventsFromStockChange, type WarehanceAuditEvent } from "./warehance-audit.js";
+import { isCancelled, STOPPED, throwIfAborted } from "./abort.js";
 import { linksForMessage } from "./warehance-links.js";
 
 type Thread = typeof chatThreads.$inferSelect;
@@ -65,6 +66,7 @@ type Work = {
   stockChange: ChatStockChange | null;
   change: ChatPreparedChange | null;
   made: string[];
+  signal: AbortSignal;
 };
 
 const MAX_TURNS = 10;
@@ -141,6 +143,7 @@ function addresses(value: string) {
 @Injectable()
 export class ChatService {
   private readonly log = new Logger("Chat");
+  private readonly turns = new Map<string, AbortController>();
 
   constructor(
     @Inject(DbService) private readonly db: DbService,
@@ -557,12 +560,29 @@ export class ChatService {
       .set({ updatedAt: new Date(), ...(thread.title === "New chat" ? { title: clip(text.replace(/\s+/g, " ").trim(), 60) } : {}) })
       .where(eq(chatThreads.id, id));
 
+    const ctrl = new AbortController();
+    this.turns.get(answer!.id)?.abort();
+    this.turns.set(answer!.id, ctrl);
     // The answer can take a minute, longer than a web request may last, so it runs on its own and the page checks back.
-    void this.runTurn(thread, answer!.id).catch((err) => this.log.error(`Chat turn crashed: ${String(err)}`));
+    void this.runTurn(thread, answer!.id, ctrl.signal).catch((err) => this.log.error(`Chat turn crashed: ${String(err)}`));
     return this.get(ownerId, id);
   }
 
-  private async runTurn(threadRow: Thread, messageId: string) {
+  async cancel(ownerId: string, threadId: string, messageId: string) {
+    await this.mine(ownerId, threadId);
+    await this.ownMessage(threadId, messageId);
+    this.turns.get(messageId)?.abort();
+    const [claimed] = await this.db.db
+      .update(chatMessages)
+      .set({ status: "failed", error: STOPPED })
+      .where(and(eq(chatMessages.id, messageId), eq(chatMessages.threadId, threadId), eq(chatMessages.status, "working")))
+      .returning({ id: chatMessages.id });
+    if (!claimed) throw new BadRequestException("Nothing is fetching on that message.");
+    await this.db.db.update(chatThreads).set({ updatedAt: new Date() }).where(eq(chatThreads.id, threadId));
+    return this.get(ownerId, threadId);
+  }
+
+  private async runTurn(threadRow: Thread, messageId: string, signal: AbortSignal) {
     const work: Work = {
       thread: threadRow,
       messageId,
@@ -574,6 +594,7 @@ export class ChatService {
       stockChange: null,
       change: null,
       made: [],
+      signal,
     };
     try {
       const [thread] = await this.db.db.select().from(chatThreads).where(eq(chatThreads.id, threadRow.id)).limit(1);
@@ -599,7 +620,9 @@ export class ChatService {
       let finished = false;
 
       for (let turn = 0; turn < MAX_TURNS; turn += 1) {
-        const reply = await ask(key, { model, system, messages, tools, maxTokens: 3000 });
+        throwIfAborted(signal);
+        const reply = await ask(key, { model, system, messages, tools, maxTokens: 3000, signal });
+        throwIfAborted(signal);
         messages.push({ role: "assistant", content: reply.content });
         const uses = reply.content.filter((block): block is ToolUse => block.type === "tool_use");
         if (uses.length === 0) {
@@ -613,9 +636,13 @@ export class ChatService {
         }
         const results: Block[] = [];
         for (const use of uses) {
+          throwIfAborted(signal);
           results.push(await this.runTool(use, work));
           // Shows progress while the answer is still being worked out.
-          await this.db.db.update(chatMessages).set({ lookups: work.lookups, stockChange: work.stockChange, change: work.change }).where(eq(chatMessages.id, messageId));
+          await this.db.db
+            .update(chatMessages)
+            .set({ lookups: work.lookups, stockChange: work.stockChange, change: work.change })
+            .where(and(eq(chatMessages.id, messageId), eq(chatMessages.status, "working")));
         }
         messages.push({ role: "user", content: results });
       }
@@ -626,13 +653,17 @@ export class ChatService {
       await this.db.db
         .update(chatMessages)
         .set({ content: finalText, status: "done", error: null, lookups: work.lookups, proposal: work.proposal, stockChange: work.stockChange, change: work.change })
-        .where(eq(chatMessages.id, messageId));
+        .where(and(eq(chatMessages.id, messageId), eq(chatMessages.status, "working")));
     } catch (err) {
-      const reason = err instanceof Error ? err.message : "Something went wrong.";
-      await this.db.db
-        .update(chatMessages)
-        .set({ status: "failed", error: clip(reason, 400), lookups: work.lookups })
-        .where(eq(chatMessages.id, messageId));
+      if (!isCancelled(err)) {
+        const reason = err instanceof Error ? err.message : "Something went wrong.";
+        await this.db.db
+          .update(chatMessages)
+          .set({ status: "failed", error: clip(reason, 400), lookups: work.lookups })
+          .where(and(eq(chatMessages.id, messageId), eq(chatMessages.status, "working")));
+      }
+    } finally {
+      this.turns.delete(messageId);
     }
     await this.db.db.update(chatThreads).set({ updatedAt: new Date() }).where(eq(chatThreads.id, threadRow.id));
   }
@@ -668,7 +699,7 @@ export class ChatService {
   private async tools(work: Work): Promise<ClaudeTool[]> {
     const scoped = work.thread.warehanceClientId !== null;
     const list: ClaudeTool[] = [];
-    const listed = await work.client.listTools();
+    const listed = await work.client.listTools(work.signal);
     assertStaffToolsReadOnly(listed);
     for (const tool of filterClaudeTools(listed, scoped)) {
       const properties = { ...((tool.inputSchema?.properties ?? {}) as Record<string, unknown>) };
@@ -768,7 +799,7 @@ export class ChatService {
       const blocked = this.blocked(use.name, args, work);
       if (blocked) return reply(blocked, true);
 
-      const { data, failed } = await work.client.call(use.name, args);
+      const { data, failed } = await work.client.call(use.name, args, work.signal);
       if (failed) {
         const reason = typeof data === "string" ? data : JSON.stringify(data);
         await this.logBot(work, { tool: use.name, args, ok: false, error: reason, records: [] });
@@ -782,6 +813,7 @@ export class ChatService {
       const text = JSON.stringify(body);
       return reply(text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)} …(cut short; ask for fewer records or add filters)` : text);
     } catch (err) {
+      if (isCancelled(err)) throw err;
       const reason = err instanceof Error ? err.message : "That tool failed.";
       if (use.name !== "export_data" && use.name !== "propose_send" && use.name !== "propose_inventory") {
         await this.logBot(work, { tool: use.name, args: use.input, ok: false, error: reason, records: [] });
@@ -858,10 +890,11 @@ export class ChatService {
     };
 
     for (pages = 0; pages < MAX_PAGES; pages += 1) {
+      throwIfAborted(work.signal);
       const args = { ...base };
       if (info.props.has("limit") && args.limit === undefined) args.limit = 100;
       if (cursor) args.cursor = cursor;
-      const { data, failed } = await work.client.call(input.tool, args);
+      const { data, failed } = await work.client.call(input.tool, args, work.signal);
       if (failed) {
         const reason = typeof data === "string" ? data : JSON.stringify(data);
         await this.logBot(work, { tool: input.tool, args, ok: false, error: reason, records: [], via: "export" });
@@ -951,7 +984,7 @@ export class ChatService {
   }
 
   private async lookupStockLocations(work: Work, skus: string[]): Promise<StockRow[]> {
-    const tool = pickLocationLookupTool(await work.client.listTools());
+    const tool = pickLocationLookupTool(await work.client.listTools(work.signal));
     if (!tool) return [];
     const info = {
       scoped: "client_id" in ((tool.inputSchema?.properties ?? {}) as Record<string, unknown>),
@@ -959,8 +992,9 @@ export class ChatService {
     };
     const collected: StockRow[] = [];
     for (const sku of skus.slice(0, Math.max(stockRowCap(), 5))) {
+      throwIfAborted(work.signal);
       const args = this.argsFor(argsForLocationLookup(tool, sku, work.thread.warehanceClientId), info, work);
-      const { data, failed } = await work.client.call(tool.name, args);
+      const { data, failed } = await work.client.call(tool.name, args, work.signal);
       const { records } = recordsOf(data);
       await this.logBot(work, {
         tool: tool.name,

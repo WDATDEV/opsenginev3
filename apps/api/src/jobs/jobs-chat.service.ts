@@ -12,6 +12,7 @@ import {
 import { can, ForbiddenError, type Principal } from "@opsengine/kernel";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { DbService } from "../db.service.js";
+import { isCancelled, STOPPED, throwIfAborted } from "../mail/abort.js";
 import { ask, modelFor, type Block, type ClaudeTool, type Message } from "../mail/anthropic.js";
 import { JobsService } from "./jobs.service.js";
 import {
@@ -54,6 +55,7 @@ function asRecord(value: unknown) {
 @Injectable()
 export class JobsChatService {
   private readonly log = new Logger("JobsChat");
+  private readonly turns = new Map<string, AbortController>();
 
   constructor(
     @Inject(DbService) private readonly db: DbService,
@@ -116,9 +118,32 @@ export class JobsChatService {
       .values({ threadId: thread.id, role: "assistant", status: "working" })
       .returning();
     await this.db.db.update(chatThreads).set({ updatedAt: new Date() }).where(eq(chatThreads.id, thread.id));
-    void this.runTurn(principal, thread, answer!.id, scopedClientId ?? null).catch((err) =>
+    const ctrl = new AbortController();
+    this.turns.get(answer!.id)?.abort();
+    this.turns.set(answer!.id, ctrl);
+    void this.runTurn(principal, thread, answer!.id, scopedClientId ?? null, ctrl.signal).catch((err) =>
       this.log.error(`Jobs chat turn crashed: ${String(err)}`),
     );
+    return this.get(principal, scopedClientId);
+  }
+
+  async cancel(principal: Principal, messageId: string, scopedClientId?: string | null) {
+    if (!can(principal, "job.manage")) throw new ForbiddenError();
+    const thread = await this.thread(principal.id);
+    const [row] = await this.db.db
+      .select({ id: chatMessages.id })
+      .from(chatMessages)
+      .where(and(eq(chatMessages.id, messageId), eq(chatMessages.threadId, thread.id)))
+      .limit(1);
+    if (!row) throw new NotFoundException("That message was not found.");
+    this.turns.get(messageId)?.abort();
+    const [claimed] = await this.db.db
+      .update(chatMessages)
+      .set({ status: "failed", error: STOPPED })
+      .where(and(eq(chatMessages.id, messageId), eq(chatMessages.status, "working")))
+      .returning({ id: chatMessages.id });
+    if (!claimed) throw new BadRequestException("Nothing is fetching on that message.");
+    await this.db.db.update(chatThreads).set({ updatedAt: new Date() }).where(eq(chatThreads.id, thread.id));
     return this.get(principal, scopedClientId);
   }
 
@@ -177,7 +202,7 @@ export class JobsChatService {
     return created;
   }
 
-  private async runTurn(principal: Principal, thread: Thread, messageId: string, scopedClientId: string | null) {
+  private async runTurn(principal: Principal, thread: Thread, messageId: string, scopedClientId: string | null, signal: AbortSignal) {
     const key = (await this.db.db.select().from(connectors).where(eq(connectors.kind, "anthropic")).limit(1))[0]?.secret || process.env.ANTHROPIC_API_KEY;
     if (!key) throw new Error("Add the Claude API key in Settings first.");
     const catalog = await this.catalog(principal);
@@ -203,38 +228,56 @@ export class JobsChatService {
     let lookups: ChatLookup[] = [];
     let jobChange: ChatJobChange | null = null;
     const model = modelFor("sonnet");
-    let reply = await ask(key, { model, system, messages, tools });
-    for (let turn = 0; turn < MAX_TURNS; turn += 1) {
-      const uses = reply.content.filter((block): block is ToolUse => block.type === "tool_use");
-      const text = reply.content
-        .filter((block) => block.type === "text")
-        .map((block) => block.text)
-        .join("\n")
-        .trim();
-      if (uses.length === 0) {
+    try {
+      throwIfAborted(signal);
+      let reply = await ask(key, { model, system, messages, tools, signal });
+      for (let turn = 0; turn < MAX_TURNS; turn += 1) {
+        throwIfAborted(signal);
+        const uses = reply.content.filter((block): block is ToolUse => block.type === "tool_use");
+        const text = reply.content
+          .filter((block) => block.type === "text")
+          .map((block) => block.text)
+          .join("\n")
+          .trim();
+        if (uses.length === 0) {
+          await this.db.db
+            .update(chatMessages)
+            .set({ content: text || "Ask me to open a job or assign people.", status: "done", error: null, lookups, jobChange })
+            .where(and(eq(chatMessages.id, messageId), eq(chatMessages.status, "working")));
+          return;
+        }
+        const results: Block[] = [];
+        for (const use of uses) {
+          throwIfAborted(signal);
+          const [content, isError] = await this.useTool(use, catalog, scopedClientId, (card) => {
+            jobChange = card;
+          });
+          lookups = [...lookups, { tool: use.name, summary: clip(`${use.name}: ${isError ? content : "ok"}`, 120) }];
+          await this.db.db
+            .update(chatMessages)
+            .set({ lookups, jobChange })
+            .where(and(eq(chatMessages.id, messageId), eq(chatMessages.status, "working")));
+          results.push({ type: "tool_result", tool_use_id: use.id, content, is_error: isError || undefined });
+        }
+        messages.push({ role: "assistant", content: reply.content });
+        messages.push({ role: "user", content: results });
+        reply = await ask(key, { model, system, messages, tools, signal });
+      }
+      await this.db.db
+        .update(chatMessages)
+        .set({ content: "That took too many steps. Ask again with the client, job reference, and people named.", status: "done", lookups, jobChange })
+        .where(and(eq(chatMessages.id, messageId), eq(chatMessages.status, "working")));
+    } catch (err) {
+      if (!isCancelled(err)) {
+        const reason = err instanceof Error ? err.message : "Something went wrong.";
         await this.db.db
           .update(chatMessages)
-          .set({ content: text || "Ask me to open a job or assign people.", status: "done", error: null, lookups, jobChange })
-          .where(eq(chatMessages.id, messageId));
-        return;
+          .set({ status: "failed", error: clip(reason, 400), lookups, jobChange })
+          .where(and(eq(chatMessages.id, messageId), eq(chatMessages.status, "working")));
       }
-      const results: Block[] = [];
-      for (const use of uses) {
-        const [content, isError] = await this.useTool(use, catalog, scopedClientId, (card) => {
-          jobChange = card;
-        });
-        lookups = [...lookups, { tool: use.name, summary: clip(`${use.name}: ${isError ? content : "ok"}`, 120) }];
-        await this.db.db.update(chatMessages).set({ lookups, jobChange }).where(eq(chatMessages.id, messageId));
-        results.push({ type: "tool_result", tool_use_id: use.id, content, is_error: isError || undefined });
-      }
-      messages.push({ role: "assistant", content: reply.content });
-      messages.push({ role: "user", content: results });
-      reply = await ask(key, { model, system, messages, tools });
+    } finally {
+      this.turns.delete(messageId);
     }
-    await this.db.db
-      .update(chatMessages)
-      .set({ content: "That took too many steps. Ask again with the client, job reference, and people named.", status: "done", lookups, jobChange })
-      .where(eq(chatMessages.id, messageId));
   }
 
   private tools(): ClaudeTool[] {

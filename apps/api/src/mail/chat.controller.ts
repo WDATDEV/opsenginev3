@@ -113,6 +113,11 @@ export class ChatController {
     return this.chat.ask(access(ctx), id, body.text);
   }
 
+  @Post("threads/:id/messages/:messageId/cancel")
+  cancel(@CurrentUser() ctx: RequestContext, @Param("id") id: string, @Param("messageId") messageId: string) {
+    return this.chat.cancel(access(ctx), id, messageId);
+  }
+
   @Post("threads/:id/messages/:messageId/recover")
   recover(
     @CurrentUser() ctx: RequestContext,

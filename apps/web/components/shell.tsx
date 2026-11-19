@@ -210,6 +210,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
   const chatActive = pathname.startsWith("/chat");
   const usersActive = pathname.startsWith("/users");
   const settingsActive = pathname.startsWith("/settings");
+  const chatFill = pathname.startsWith("/chat");
   const showTime = hasSection(user, "time");
   const showMail = hasSection(user, "mail");
   const showChat = hasSection(user, "chat");
@@ -219,7 +220,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
   return (
     <SessionContext.Provider value={user}>
       <ClientNavContext.Provider value={reloadClientNav}>
-        <div className="min-h-screen md:grid md:grid-cols-[256px_1fr]">
+        <div className={`min-h-screen md:grid md:grid-cols-[256px_1fr] ${chatFill ? "md:h-screen md:overflow-hidden" : ""}`}>
           {/* Phone top bar */}
           <header className="sticky top-0 z-30 flex items-center justify-between border-b border-black/10 bg-surface/90 px-4 py-3 backdrop-blur md:hidden">
             <Brand />
@@ -354,7 +355,15 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
             </div>
           </aside>
 
-          <main className="min-w-0 px-4 py-6 md:px-10 md:py-9">{children}</main>
+          <main
+            className={
+              chatFill
+                ? "flex min-h-0 min-w-0 flex-col overflow-hidden px-4 py-4 max-md:h-[calc(100dvh-3.75rem)] md:px-10 md:py-5"
+                : "min-w-0 px-4 py-6 md:px-10 md:py-9"
+            }
+          >
+            {children}
+          </main>
         </div>
       </ClientNavContext.Provider>
     </SessionContext.Provider>

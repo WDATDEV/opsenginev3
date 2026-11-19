@@ -271,7 +271,7 @@ export default function ChatPage() {
   });
 
   return (
-    <div className="flex h-[calc(100dvh-7.5rem)] min-h-[28rem] flex-col md:h-[calc(100dvh-6.75rem)]">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <header className="mb-3 flex flex-none flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-moss">Chat</p>
@@ -285,9 +285,9 @@ export default function ChatPage() {
         </div>
       ) : null}
 
-      <div className="relative grid min-h-0 flex-1 gap-3 md:grid-cols-[248px_1fr]">
+      <div className="relative grid min-h-0 flex-1 gap-3 overflow-hidden md:grid-cols-[248px_1fr]">
         <aside
-          className={`${showList ? "absolute inset-0 z-20 flex flex-col rounded-2xl border border-black/10 bg-surface p-3 shadow-md md:static md:z-auto md:rounded-none md:border-0 md:bg-transparent md:p-0 md:shadow-none" : "hidden md:flex md:flex-col"}`}
+          className={`${showList ? "absolute inset-0 z-20 flex min-h-0 flex-col overflow-hidden rounded-2xl border border-black/10 bg-surface p-3 shadow-md md:static md:z-auto md:rounded-none md:border-0 md:bg-transparent md:p-0 md:shadow-none" : "hidden min-h-0 md:flex md:flex-col md:overflow-hidden"}`}
         >
           <button className="btn btn-primary w-full" type="button" onClick={() => open(null)}>
             New chat
@@ -403,7 +403,7 @@ export default function ChatPage() {
             {selected && !detail && !loadError ? <SkeletonList rows={3} /> : null}
             {loadError ? <Notice tone="bad">{loadError}</Notice> : null}
             {!selected ? (
-              <div className="flex h-full flex-col items-center justify-center px-2 py-8 text-center">
+              <div className="flex min-h-full flex-col items-center justify-center px-2 py-8 text-center">
                 <p className="text-lg font-semibold">Ask about warehouse data</p>
                 <p className="mt-1 max-w-md text-sm leading-6 text-muted">Orders, shipments, stock, clients. Ask for a file when you want the full list.</p>
                 <div className="mt-5 flex max-w-xl flex-wrap justify-center gap-2">

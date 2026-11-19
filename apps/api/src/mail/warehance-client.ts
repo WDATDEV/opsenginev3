@@ -1,3 +1,5 @@
+import { timedSignal } from "./abort.js";
+
 export type McpTool = {
   name: string;
   description?: string;
@@ -44,7 +46,7 @@ async function explain(url: string, res: Response) {
   return `The Warehance connector answered ${res.status}${snippet ? `: ${snippet}` : "."}`;
 }
 
-async function rpc(url: string, key: string, id: number, method: string, params: unknown): Promise<RpcReply> {
+async function rpc(url: string, key: string, id: number, method: string, params: unknown, signal?: AbortSignal): Promise<RpcReply> {
   const res = await fetch(endpoint(url), {
     method: "POST",
     headers: {
@@ -53,7 +55,7 @@ async function rpc(url: string, key: string, id: number, method: string, params:
       accept: "application/json, text/event-stream",
     },
     body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
-    signal: AbortSignal.timeout(20_000),
+    signal: timedSignal(20_000, signal),
   });
   if (!res.ok) throw new Error(await explain(url, res));
   const reply = await readReply(res);
@@ -69,13 +71,13 @@ export class WarehanceClient {
     private readonly key: string,
   ) {}
 
-  async listTools(): Promise<McpTool[]> {
+  async listTools(signal?: AbortSignal): Promise<McpTool[]> {
     await rpc(this.url, this.key, this.next++, "initialize", {
       protocolVersion: "2024-11-05",
       capabilities: {},
       clientInfo: { name: "ops-engine", version: "0.0.1" },
-    });
-    const reply = await rpc(this.url, this.key, this.next++, "tools/list", {});
+    }, signal);
+    const reply = await rpc(this.url, this.key, this.next++, "tools/list", {}, signal);
     return ((reply.result as { tools?: McpTool[] } | undefined)?.tools ?? []) as McpTool[];
   }
 
@@ -103,8 +105,8 @@ export class WarehanceClient {
   }
 
   // Returns what the tool printed. The connector prints JSON, so it is parsed when possible.
-  async call(name: string, args: Record<string, unknown>): Promise<{ data: unknown; failed: boolean }> {
-    const reply = await rpc(this.url, this.key, this.next++, "tools/call", { name, arguments: args });
+  async call(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{ data: unknown; failed: boolean }> {
+    const reply = await rpc(this.url, this.key, this.next++, "tools/call", { name, arguments: args }, signal);
     const result = reply.result as { content?: { type: string; text?: string }[]; isError?: boolean } | undefined;
     const text = (result?.content ?? []).map((part) => part.text ?? "").join("\n");
     let data: unknown = text;

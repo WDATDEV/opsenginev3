@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Delete, Get, Inject, Param, Post, UseGuards } from "@nestjs/common";
 import { z } from "zod";
-import { authorizeSection, type RequestContext } from "@opsengine/kernel";
+import { authorizeSection, ForbiddenError, type RequestContext } from "@opsengine/kernel";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser } from "../auth/current-user.js";
 import { ZodPipe } from "../http.js";
@@ -37,6 +37,11 @@ function connectors(ctx: RequestContext) {
   authorizeSection(ctx, "settings");
 }
 
+function ownerChatLog(ctx: RequestContext) {
+  authorizeSection(ctx, "settings");
+  if (ctx.principal.role !== "owner") throw new ForbiddenError("Only the owner can see chat Warehance records.");
+}
+
 @Controller()
 @UseGuards(AuthGuard)
 export class SettingsController {
@@ -46,6 +51,18 @@ export class SettingsController {
   list(@CurrentUser() ctx: RequestContext) {
     connectors(ctx);
     return this.settings.list();
+  }
+
+  @Get("settings/chat-warehance")
+  chatWarehance(@CurrentUser() ctx: RequestContext) {
+    ownerChatLog(ctx);
+    return this.settings.chatWarehanceThreads();
+  }
+
+  @Get("settings/chat-warehance/:threadId")
+  chatWarehanceThread(@CurrentUser() ctx: RequestContext, @Param("threadId") threadId: string) {
+    ownerChatLog(ctx);
+    return this.settings.chatWarehanceThread(threadId);
   }
 
   @Get("mail/status")

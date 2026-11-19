@@ -1,3 +1,5 @@
+import { timedSignal } from "./abort.js";
+
 export type Block =
   | { type: "text"; text: string }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
@@ -28,7 +30,7 @@ const HEADERS = (key: string) => ({
 
 export async function ask(
   key: string,
-  input: { model: string; system: string; messages: Message[]; tools: ClaudeTool[]; maxTokens?: number },
+  input: { model: string; system: string; messages: Message[]; tools: ClaudeTool[]; maxTokens?: number; signal?: AbortSignal },
 ): Promise<ClaudeReply> {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -40,7 +42,7 @@ export async function ask(
       messages: input.messages,
       tools: input.tools,
     }),
-    signal: AbortSignal.timeout(60_000),
+    signal: timedSignal(60_000, input.signal),
   });
   if (res.status === 401) throw new Error("Anthropic rejected the API key.");
   if (res.status === 429) throw new Error("Anthropic is rate limiting this key. Try again shortly.");

@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "@/components/shell";
-import { Badge, EmptyState, Field, Notice, PageTitle, SkeletonList, Spinner, timeAgo, useResource } from "@/components/ui";
+import { Badge, Field, Notice, SkeletonList, Spinner, timeAgo, useResource } from "@/components/ui";
 import { api, ApiError, hasSection, post } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api";
@@ -81,8 +81,49 @@ function stamp(value: string) {
   return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value));
 }
 
+function clock(value: string) {
+  return new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(new Date(value));
+}
+
+function dayKey(value: string) {
+  return new Date(value).toDateString();
+}
+
+function dayLabel(value: string) {
+  const date = new Date(value);
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) return "Today";
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return new Intl.DateTimeFormat("en", { weekday: "short", month: "short", day: "numeric" }).format(date);
+}
+
+function Typing({ label }: { label: string }) {
+  return (
+    <span className="inline-flex items-center gap-2 text-muted">
+      <span className="chat-dots" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+      {label}
+    </span>
+  );
+}
+
 function reason(err: unknown, fallback: string) {
   return err instanceof ApiError ? err.message : fallback;
+}
+
+function WarehanceLinkIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 4h5v5" />
+      <path d="M16 4 9 11" />
+      <path d="M8 5H5.5A1.5 1.5 0 0 0 4 6.5v8A1.5 1.5 0 0 0 5.5 16h8a1.5 1.5 0 0 0 1.5-1.5V12" />
+    </svg>
+  );
 }
 
 export default function ChatPage() {
@@ -99,6 +140,7 @@ export default function ChatPage() {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [showList, setShowList] = useState(false);
+  const [query, setQuery] = useState("");
   // The settings for a chat that has not started yet.
   const [scope, setScope] = useState<{ id: number | null; name: string | null }>({ id: null, name: null });
   const [model, setModel] = useState<Model>("haiku");
@@ -134,7 +176,8 @@ export default function ChatPage() {
     if (id) void load(id);
   }
 
-  const working = Boolean(detail?.messages.some((message) => message.status === "working"));
+  const workingId = detail?.messages.find((message) => message.status === "working")?.id ?? null;
+  const working = Boolean(workingId);
   useEffect(() => {
     if (!selected || !working) return;
     const timer = setInterval(() => void load(selected), 2000);
@@ -190,6 +233,21 @@ export default function ChatPage() {
     }
   }
 
+  async function cancelFetch() {
+    if (!selected || !workingId || sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      const next = await post<Detail>(`/mail/chat/threads/${selected}/messages/${workingId}/cancel`, {});
+      setDetail(next);
+      reloadThreads();
+    } catch (err) {
+      setError(reason(err, "Could not stop that."));
+    } finally {
+      setSending(false);
+    }
+  }
+
   async function remove(thread: Thread) {
     if (!window.confirm(`Delete "${thread.title}"? Its files go with it.`)) return;
     try {
@@ -222,96 +280,109 @@ export default function ChatPage() {
         !config.data.claude ? "the Claude API key" : null,
       ].filter(Boolean)
     : [];
+  const listed = (threads.data ?? []).filter((item) => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return true;
+    return `${item.title} ${item.warehanceClientName ?? "all clients"}`.toLowerCase().includes(needle);
+  });
 
   return (
-    <div>
-      <PageTitle
-        kicker="Owner only"
-        title="Chat"
-        detail="Ask about your Warehance data. Get lists as CSV, Excel or JSON, then email them or post them in Slack. Old chats are kept."
-      />
-      {setupGaps.length > 0 ? (
-        <div className="mb-4">
-          <Notice tone="warn">Add {setupGaps.join(" and ")} in Settings before chatting.</Notice>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <header className="mb-3 flex flex-none flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-moss">Chat</p>
+          <h1 className="mt-0.5 text-xl font-semibold tracking-tight">Warehance</h1>
         </div>
-      ) : null}
+        {setupGaps.length > 0 ? <Notice tone="warn">Add {setupGaps.join(" and ")} in Settings before chatting.</Notice> : null}
+      </header>
       {clients.data && clients.data.connected && clients.data.error ? (
-        <div className="mb-4">
+        <div className="mb-3 flex-none">
           <Notice tone="warn">The client list could not be loaded ({clients.data.error}). You can still chat about all clients.</Notice>
         </div>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-[260px_1fr]">
-        {/* Past chats */}
-        <aside className={`${showList ? "block" : "hidden"} md:block`}>
-          <button className="btn btn-primary mb-3 w-full" type="button" onClick={() => open(null)}>
+      <div className="relative grid min-h-0 flex-1 gap-3 overflow-hidden md:grid-cols-[248px_1fr]">
+        <aside
+          className={`${showList ? "absolute inset-0 z-20 flex min-h-0 flex-col overflow-hidden rounded-2xl border border-black/10 bg-surface p-3 shadow-md md:static md:z-auto md:rounded-none md:border-0 md:bg-transparent md:p-0 md:shadow-none" : "hidden min-h-0 md:flex md:flex-col md:overflow-hidden"}`}
+        >
+          <button className="btn btn-primary w-full" type="button" onClick={() => open(null)}>
             New chat
           </button>
-          {threads.loading && !threads.data ? <SkeletonList rows={4} /> : null}
-          {threads.error ? <Notice tone="bad">{threads.error}</Notice> : null}
-          {threads.data && threads.data.length === 0 ? <p className="px-1 text-sm text-muted">No chats yet.</p> : null}
-          <ul className="space-y-1">
-            {(threads.data ?? []).map((item) => (
-              <li key={item.id}>
-                <div
-                  className={`group flex items-start gap-1 rounded-xl px-3 py-2 text-sm transition-colors ${
-                    item.id === selected ? "bg-moss/10" : "hover:bg-black/5"
-                  }`}
-                >
-                  <button className="min-w-0 flex-1 text-left" type="button" onClick={() => open(item.id)}>
-                    <span className="block truncate font-medium">{item.title}</span>
-                    <span className="block truncate text-xs text-muted">
-                      {item.warehanceClientName ?? "All clients"} · {timeAgo(item.updatedAt)}
-                    </span>
-                  </button>
-                  <button
-                    className="flex-none rounded-md px-1.5 text-muted opacity-60 hover:bg-black/5 hover:text-rust group-hover:opacity-100"
-                    type="button"
-                    aria-label={`Delete ${item.title}`}
-                    onClick={() => void remove(item)}
+          <input
+            className="field mt-2 h-9"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search chats"
+            aria-label="Search chats"
+          />
+          <div className="mt-2 min-h-0 flex-1 overflow-y-auto pr-0.5">
+            {threads.loading && !threads.data ? <SkeletonList rows={4} /> : null}
+            {threads.error ? <Notice tone="bad">{threads.error}</Notice> : null}
+            {threads.data && threads.data.length === 0 ? <p className="px-1 py-2 text-sm text-muted">No chats yet.</p> : null}
+            {threads.data && threads.data.length > 0 && listed.length === 0 ? <p className="px-1 py-2 text-sm text-muted">No chats match that search.</p> : null}
+            <ul className="space-y-0.5">
+              {listed.map((item) => (
+                <li key={item.id}>
+                  <div
+                    className={`group flex items-start gap-1 rounded-xl px-2.5 py-2 text-sm transition-colors ${
+                      item.id === selected ? "bg-moss/10 text-moss" : "hover:bg-black/5"
+                    }`}
                   >
-                    ×
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+                    <button className="min-w-0 flex-1 text-left" type="button" onClick={() => open(item.id)}>
+                      <span className="block truncate font-medium text-ink">{item.title}</span>
+                      <span className="mt-0.5 block truncate text-xs text-muted">
+                        {item.warehanceClientName ?? "All clients"} · {timeAgo(item.updatedAt)}
+                      </span>
+                    </button>
+                    <button
+                      className="mt-0.5 flex-none rounded-md px-1.5 text-base leading-none text-muted opacity-0 hover:bg-black/5 hover:text-rust group-hover:opacity-100 focus:opacity-100"
+                      type="button"
+                      aria-label={`Delete ${item.title}`}
+                      title="Delete"
+                      onClick={() => void remove(item)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
         </aside>
 
-        {/* The conversation */}
-        <section className="min-w-0">
-          <div className="mb-3 flex flex-wrap items-center gap-2">
+        <section className="card flex min-h-0 min-w-0 flex-col overflow-hidden">
+          <div className="flex flex-none flex-wrap items-center gap-2 border-b border-black/10 px-3 py-2.5 sm:px-4">
             <button className="btn btn-sm btn-ghost md:hidden" type="button" onClick={() => setShowList((value) => !value)}>
-              {showList ? "Hide chats" : "Past chats"}
+              {showList ? "Close" : "Chats"}
             </button>
             {thread ? (
               renaming !== null ? (
                 <form
-                  className="flex items-center gap-2"
+                  className="flex min-w-0 flex-1 items-center gap-2"
                   onSubmit={(event) => {
                     event.preventDefault();
                     if (renaming.trim()) void change({ title: renaming.trim() });
                     setRenaming(null);
                   }}
                 >
-                  <input className="field h-9 w-56" value={renaming} onChange={(event) => setRenaming(event.target.value)} maxLength={120} autoFocus aria-label="Chat name" />
+                  <input className="field h-9 min-w-0 flex-1" value={renaming} onChange={(event) => setRenaming(event.target.value)} maxLength={120} autoFocus aria-label="Chat name" />
                   <button className="btn btn-sm" type="submit">Save</button>
                 </form>
               ) : (
-                <button className="max-w-xs truncate text-sm font-semibold hover:underline" type="button" onClick={() => setRenaming(thread.title)} title="Rename">
+                <button className="min-w-0 flex-1 truncate text-left text-sm font-semibold hover:underline" type="button" onClick={() => setRenaming(thread.title)} title="Rename">
                   {thread.title}
                 </button>
               )
             ) : (
-              <span className="text-sm font-semibold">New chat</span>
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold">New chat</span>
             )}
-            <span className="flex-1" />
-            <label className="flex items-center gap-2 text-sm">
-              <span className="text-muted">Client</span>
+            <label className="flex items-center gap-1.5 text-sm">
+              <span className="sr-only sm:not-sr-only text-muted">Client</span>
               <select
-                className="field h-9 w-48"
+                className="field h-9 w-36 sm:w-44"
                 value={activeScope.id ? String(activeScope.id) : ""}
                 disabled={!clients.data?.connected}
+                aria-label="Client"
                 onChange={(event) => {
                   const next = pickClient(event.target.value);
                   if (thread) void change({ clientId: next.id, clientName: next.name });
@@ -326,11 +397,12 @@ export default function ChatPage() {
                 ))}
               </select>
             </label>
-            <label className="flex items-center gap-2 text-sm">
-              <span className="text-muted">Model</span>
+            <label className="flex items-center gap-1.5 text-sm">
+              <span className="sr-only sm:not-sr-only text-muted">Model</span>
               <select
-                className="field h-9 w-32"
+                className="field h-9 w-24 sm:w-28"
                 value={activeModel}
+                aria-label="Model"
                 onChange={(event) => {
                   const next = event.target.value as Model;
                   if (thread) void change({ model: next });
@@ -343,91 +415,154 @@ export default function ChatPage() {
             </label>
           </div>
 
-          {activeScope.id ? (
-            <p className="mb-3 text-xs text-muted">Lookups are limited to {activeScope.name ?? `client ${activeScope.id}`}.</p>
-          ) : (
-            <p className="mb-3 text-xs text-muted">Lookups can cover every client. Pick a client to limit them to one.</p>
-          )}
-
-          <div className="card flex min-h-[22rem] flex-col p-4">
-            <div className="max-h-[56vh] min-h-[16rem] flex-1 space-y-4 overflow-y-auto pr-1" aria-live="polite">
-              {selected && !detail && !loadError ? <SkeletonList rows={3} /> : null}
-              {loadError ? <Notice tone="bad">{loadError}</Notice> : null}
-              {!selected ? (
-                <EmptyState title="Ask anything about your warehouse">
-                  <p>Orders, shipments, stock, clients. Ask for a file when you want the full list.</p>
-                  <div className="mt-3 flex flex-wrap justify-center gap-2">
-                    {EXAMPLES.map((example) => (
-                      <button key={example} className="btn btn-sm btn-ghost" type="button" disabled={!ready} onClick={() => setText(example)}>
-                        {example}
-                      </button>
-                    ))}
-                  </div>
-                </EmptyState>
-              ) : null}
-              {detail?.messages.map((message) => (
-                <Bubble
-                  key={message.id}
-                  threadId={detail.thread.id}
-                  message={message}
-                  files={detail.files.filter((file) => file.messageId === message.id)}
-                  isOwner={user?.role === "owner"}
-                  canWrite={Boolean(config.data?.warehanceWrite)}
-                  onSend={(kind, prefill) => setPanel({ messageId: message.id, kind, prefill })}
-                  onFilesChanged={() => void load(detail.thread.id)}
-                />
-              ))}
-              {panel && detail ? (
-                <SendPanel
-                  key={`${panel.messageId}-${panel.kind}`}
-                  threadId={detail.thread.id}
-                  panel={panel}
-                  files={detail.files}
-                  config={config.data}
-                  onClose={() => setPanel(null)}
-                  onDone={() => void load(detail.thread.id)}
-                />
-              ) : null}
-              <div ref={bottom} />
-            </div>
-
-            {error ? (
-              <div className="mt-3">
-                <Notice tone="bad">{error}</Notice>
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4 sm:px-5" aria-live="polite">
+            {selected && !detail && !loadError ? <SkeletonList rows={3} /> : null}
+            {loadError ? <Notice tone="bad">{loadError}</Notice> : null}
+            {!selected ? (
+              <div className="flex min-h-full flex-col items-center justify-center px-2 py-8 text-center">
+                <p className="text-lg font-semibold">Ask about warehouse data</p>
+                <p className="mt-1 max-w-md text-sm leading-6 text-muted">Orders, shipments, stock, clients. Ask for a file when you want the full list.</p>
+                <div className="mt-5 flex max-w-xl flex-wrap justify-center gap-2">
+                  {EXAMPLES.map((example) => (
+                    <button
+                      key={example}
+                      className="rounded-full border border-black/10 bg-white px-3 py-1.5 text-sm text-ink/80 transition-colors hover:border-moss/30 hover:bg-moss/5 hover:text-ink disabled:opacity-50"
+                      type="button"
+                      disabled={!ready}
+                      onClick={() => setText(example)}
+                    >
+                      {example}
+                    </button>
+                  ))}
+                </div>
               </div>
             ) : null}
-
-            <form
-              className="mt-3 flex items-end gap-2 border-t border-black/10 pt-3"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void submit(text);
-              }}
-            >
-              <textarea
-                className="field min-h-[2.75rem] flex-1 resize-y"
-                rows={2}
-                value={text}
-                maxLength={8000}
-                placeholder={ready ? "Ask a question, or ask for a file…" : "Finish setup in Settings first"}
-                disabled={!ready || sending}
-                aria-label="Your message"
-                onChange={(event) => setText(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    void submit(text);
-                  }
-                }}
+            {detail?.messages.map((message, index) => {
+              const previous = detail.messages[index - 1];
+              const showDay = !previous || dayKey(previous.createdAt) !== dayKey(message.createdAt);
+              return (
+                <Fragment key={message.id}>
+                  {showDay ? (
+                    <p className="pt-1 text-center text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">{dayLabel(message.createdAt)}</p>
+                  ) : null}
+                  <Bubble
+                    threadId={detail.thread.id}
+                    message={message}
+                    files={detail.files.filter((file) => file.messageId === message.id)}
+                    isOwner={user?.role === "owner"}
+                    canWrite={Boolean(config.data?.warehanceWrite)}
+                    onSend={(kind, prefill) => setPanel({ messageId: message.id, kind, prefill })}
+                    onFilesChanged={() => void load(detail.thread.id)}
+                    onCancel={message.status === "working" ? () => void cancelFetch() : undefined}
+                  />
+                </Fragment>
+              );
+            })}
+            {panel && detail ? (
+              <SendPanel
+                key={`${panel.messageId}-${panel.kind}`}
+                threadId={detail.thread.id}
+                panel={panel}
+                files={detail.files}
+                config={config.data}
+                onClose={() => setPanel(null)}
+                onDone={() => void load(detail.thread.id)}
               />
-              <button className="btn btn-primary" type="submit" disabled={!ready || sending || working || !text.trim()}>
-                {sending || working ? <Spinner /> : "Send"}
-              </button>
-            </form>
+            ) : null}
+            <div ref={bottom} />
           </div>
+
+          {error ? (
+            <div className="flex-none px-3 sm:px-4">
+              <Notice tone="bad">{error}</Notice>
+            </div>
+          ) : null}
+
+          <Composer
+            value={text}
+            onChange={setText}
+            onSubmit={() => void submit(text)}
+            disabled={!ready || sending}
+            busy={sending || working}
+            onCancel={working ? () => void cancelFetch() : undefined}
+            placeholder={ready ? "Ask a question, or ask for a file…" : "Finish setup in Settings first"}
+            hint={
+              activeScope.id
+                ? `Looking up ${activeScope.name ?? `client ${activeScope.id}`}. Enter to send, Shift+Enter for a new line.`
+                : "All clients. Enter to send, Shift+Enter for a new line."
+            }
+          />
         </section>
       </div>
     </div>
+  );
+}
+
+function Composer({
+  value,
+  onChange,
+  onSubmit,
+  disabled,
+  busy,
+  onCancel,
+  placeholder,
+  hint,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  disabled: boolean;
+  busy: boolean;
+  onCancel?: () => void;
+  placeholder: string;
+  hint?: string;
+}) {
+  const box = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.style.height = "0px";
+    el.style.height = `${Math.min(Math.max(el.scrollHeight, 44), 160)}px`;
+  }, [value]);
+
+  return (
+    <form
+      className="flex-none border-t border-black/10 px-3 py-3 sm:px-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit();
+      }}
+    >
+      <div className="flex items-end gap-2">
+        <textarea
+          ref={box}
+          className="field min-h-[2.75rem] flex-1 resize-none overflow-hidden py-2.5"
+          rows={1}
+          value={value}
+          maxLength={8000}
+          placeholder={placeholder}
+          disabled={disabled}
+          aria-label="Your message"
+          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              onSubmit();
+            }
+          }}
+        />
+        {onCancel ? (
+          <button className="btn" type="button" onClick={onCancel} disabled={disabled}>
+            Cancel
+          </button>
+        ) : (
+          <button className="btn btn-primary" type="submit" disabled={disabled || busy || !value.trim()}>
+            {busy ? <Spinner /> : "Send"}
+          </button>
+        )}
+      </div>
+      {hint ? <p className="mt-1.5 px-0.5 text-[11px] leading-4 text-muted">{hint}</p> : null}
+    </form>
   );
 }
 
@@ -441,6 +576,7 @@ function Bubble({
   canWrite,
   onSend,
   onFilesChanged,
+  onCancel,
 }: {
   threadId: string;
   message: Message;
@@ -449,6 +585,7 @@ function Bubble({
   canWrite: boolean;
   onSend: (kind: "email" | "slack", prefill: Proposal | null) => void;
   onFilesChanged: () => void;
+  onCancel?: () => void;
 }) {
   const [showLookups, setShowLookups] = useState(false);
   const [recovering, setRecovering] = useState(false);
@@ -457,18 +594,19 @@ function Bubble({
 
   if (message.role === "user") {
     return (
-      <div className="flex justify-end">
-        <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-moss px-3.5 py-2.5 text-sm text-paper">{message.content}</p>
+      <div className="flex flex-col items-end gap-1">
+        <p className="max-w-[min(85%,38rem)] whitespace-pre-wrap rounded-2xl rounded-br-md bg-moss px-3.5 py-2.5 text-sm leading-6 text-paper">{message.content}</p>
+        <span className="px-1 text-[11px] text-muted">{clock(message.createdAt)}</span>
       </div>
     );
   }
 
   return (
     <div className="flex">
-      <div className="max-w-[92%] space-y-2">
+      <div className="max-w-[min(92%,42rem)] space-y-2">
         {message.status === "working" ? (
           <div className="rounded-2xl rounded-bl-md bg-black/[0.04] px-3.5 py-2.5 text-sm">
-            <Spinner label={message.lookups.length > 0 ? "Working on it…" : "Looking things up…"} />
+            <Typing label={message.lookups.length > 0 ? "Working on it…" : "Looking things up…"} />
             {message.lookups.length > 0 ? (
               <ul className="mt-2 space-y-0.5 text-xs text-muted">
                 {message.lookups.slice(-4).map((item, index) => (
@@ -477,31 +615,42 @@ function Bubble({
               </ul>
             ) : null}
             {kept > 0 ? <p className="mt-2 text-xs text-muted">Keeping {kept} Warehance record(s) in case this fails.</p> : null}
+            {onCancel ? (
+              <button className="btn btn-sm mt-2" type="button" onClick={onCancel}>
+                Cancel
+              </button>
+            ) : null}
           </div>
         ) : null}
         {message.status === "failed" ? (
-          <Notice tone="bad">
+          <Notice tone={message.error?.startsWith("Stopped.") ? "warn" : "bad"}>
             {message.error ?? "That did not work."}
             {kept > 0 ? ` The Warehance records from this turn were kept (${kept} row(s)), so you can recover them as a file.` : ""}
           </Notice>
         ) : null}
         {message.status === "done" ? (
-          <p className="whitespace-pre-wrap rounded-2xl rounded-bl-md bg-black/[0.04] px-3.5 py-2.5 text-sm leading-6">{message.content}</p>
+          <div className="space-y-1">
+            <p className="whitespace-pre-wrap rounded-2xl rounded-bl-md bg-black/[0.04] px-3.5 py-2.5 text-sm leading-6">{message.content}</p>
+            <p className="px-1 text-[11px] text-muted">{clock(message.createdAt)}</p>
+          </div>
         ) : null}
 
-        {message.status === "done" && (message.links ?? []).length > 0 ? (
-          <div className="rounded-xl border border-black/10 px-3 py-2">
-            <p className="text-xs font-medium text-muted">Open in Warehance</p>
-            <ul className="mt-1.5 flex flex-wrap gap-1.5">
+        {message.role === "assistant" && message.status === "done" && (message.links ?? []).length > 0 ? (
+          <div className="rounded-xl border border-black/10 px-2 py-2">
+            <p className="px-1 text-xs font-medium text-muted">Open in Warehance</p>
+            <ul className="mt-1 grid sm:grid-cols-2">
               {message.links.map((link) => (
                 <li key={link.href}>
                   <a
-                    className="btn btn-sm btn-ghost"
+                    className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-moss/10"
                     href={link.href}
                     target="_blank"
                     rel="noreferrer"
                   >
-                    {link.label}
+                    <span className="min-w-0 flex-1 truncate">{link.label}</span>
+                    <span className="flex-none text-moss">
+                      <WarehanceLinkIcon />
+                    </span>
                   </a>
                 </li>
               ))}
@@ -521,7 +670,7 @@ function Bubble({
         ))}
 
         {message.status === "done" ? (
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             {message.proposal ? (
               <button className="btn btn-sm btn-primary" type="button" onClick={() => onSend(message.proposal!.kind, message.proposal)}>
                 Review {message.proposal.kind === "email" ? "email" : "Slack message"}

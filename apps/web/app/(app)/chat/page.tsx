@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSession } from "@/components/shell";
 import { Badge, Field, Notice, SkeletonList, Spinner, timeAgo, useResource } from "@/components/ui";
 import { api, ApiError, hasSection, post } from "@/lib/api";
@@ -126,73 +126,90 @@ function WarehanceLinkIcon() {
   );
 }
 
-function RecordPeek({ links }: { links: WarehanceLink[] }) {
+function recordId(href: string) {
+  const last = href.replace(/\/+$/, "").split("/").pop() ?? "";
+  return /^\d+$/.test(last) ? last : "";
+}
+
+function hitsFor(content: string, links: WarehanceLink[]) {
+  const hits: { start: number; end: number; link: WarehanceLink }[] = [];
+  const placed = new Set<string>();
+  for (const link of links) {
+    const id = recordId(link.href);
+    const needles = [...(id ? [`(ID: ${id})`, `ID: ${id}`, id] : []), link.label].filter((needle) => needle.trim());
+    let found: { start: number; end: number } | null = null;
+    for (const needle of needles) {
+      const at = content.indexOf(needle);
+      if (at >= 0) {
+        found = { start: at, end: at + needle.length };
+        break;
+      }
+    }
+    if (!found || placed.has(link.href)) continue;
+    placed.add(link.href);
+    hits.push({ ...found, link });
+  }
+  hits.sort((a, b) => a.end - b.end);
+  const out: typeof hits = [];
+  let last = -1;
+  for (const hit of hits) {
+    if (hit.start < last) continue;
+    out.push(hit);
+    last = hit.end;
+  }
+  return out;
+}
+
+function InlinePeek({ link }: { link: WarehanceLink }) {
   const [open, setOpen] = useState(false);
-  const [picked, setPicked] = useState<WarehanceLink | null>(null);
-  const box = useRef<HTMLDivElement | null>(null);
+  const box = useRef<HTMLSpanElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
     function onPointer(event: MouseEvent) {
-      if (!box.current?.contains(event.target as Node)) {
-        setOpen(false);
-        setPicked(null);
-      }
+      if (!box.current?.contains(event.target as Node)) setOpen(false);
     }
     window.addEventListener("mousedown", onPointer);
     return () => window.removeEventListener("mousedown", onPointer);
   }, [open]);
 
   return (
-    <div className="relative" ref={box}>
+    <span className="relative ml-1 inline-flex translate-y-0.5 align-text-bottom" ref={box}>
       <button
-        className="inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-moss hover:bg-moss/10"
+        className="inline-flex rounded-md p-0.5 text-moss hover:bg-moss/10"
         type="button"
-        aria-expanded={open}
-        aria-label={`View ${links.length} Warehance record${links.length === 1 ? "" : "s"}`}
-        title="View in this chat"
-        onClick={() => {
-          setOpen((value) => !value);
-          setPicked(null);
-        }}
+        aria-label={`View ${link.label}`}
+        title={`View ${link.label}`}
+        onClick={() => setOpen((value) => !value)}
       >
         <WarehanceLinkIcon />
-        <span className="text-[11px] font-semibold">{links.length}</span>
       </button>
       {open ? (
-        <div className="absolute left-0 z-20 mt-1 w-[min(22rem,calc(100vw-6rem))] overflow-hidden rounded-xl border border-black/10 bg-surface shadow-md">
-          {picked ? (
-            <div className="flex flex-col">
-              <div className="flex items-center gap-2 border-b border-black/10 px-2.5 py-2">
-                <button className="text-xs text-moss hover:underline" type="button" onClick={() => setPicked(null)}>
-                  Back
-                </button>
-                <p className="min-w-0 flex-1 truncate text-sm font-medium">{picked.label}</p>
-              </div>
-              <iframe title={picked.label} src={picked.href} className="h-64 w-full bg-white" />
-            </div>
-          ) : (
-            <ul className="max-h-72 overflow-y-auto py-1">
-              {links.map((link) => (
-                <li key={link.href}>
-                  <button
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-moss/10"
-                    type="button"
-                    onClick={() => setPicked(link)}
-                  >
-                    <span className="min-w-0 flex-1 truncate">{link.label}</span>
-                    <span className="flex-none text-moss">
-                      <WarehanceLinkIcon />
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        <span className="absolute left-0 top-full z-20 mt-1 block w-[min(22rem,calc(100vw-6rem))] overflow-hidden rounded-xl border border-black/10 bg-surface shadow-md">
+          <span className="block truncate border-b border-black/10 px-2.5 py-2 text-sm font-medium">{link.label}</span>
+          <iframe title={link.label} src={link.href} className="h-64 w-full bg-white" />
+        </span>
       ) : null}
-    </div>
+    </span>
   );
+}
+
+function LinkedReply({ content, links }: { content: string; links: WarehanceLink[] }) {
+  const hits = hitsFor(content, links);
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  hits.forEach((hit, index) => {
+    if (hit.start > cursor) nodes.push(content.slice(cursor, hit.start));
+    nodes.push(
+      <span key={`${hit.link.href}-${index}`}>
+        {content.slice(hit.start, hit.end)}
+        <InlinePeek link={hit.link} />
+      </span>,
+    );
+    cursor = hit.end;
+  });
+  if (cursor < content.length) nodes.push(content.slice(cursor));
+  return <p className="whitespace-pre-wrap rounded-2xl rounded-bl-md bg-black/[0.04] px-3.5 py-2.5 text-sm leading-6">{nodes.length ? nodes : content}</p>;
 }
 
 export default function ChatPage() {
@@ -699,11 +716,8 @@ function Bubble({
         ) : null}
         {message.status === "done" ? (
           <div className="space-y-1">
-            <p className="whitespace-pre-wrap rounded-2xl rounded-bl-md bg-black/[0.04] px-3.5 py-2.5 text-sm leading-6">{message.content}</p>
-            <div className="flex items-center gap-2 px-1">
-              <span className="text-[11px] text-muted">{clock(message.createdAt)}</span>
-              {(message.links ?? []).length > 0 ? <RecordPeek links={message.links} /> : null}
-            </div>
+            <LinkedReply content={message.content} links={message.links ?? []} />
+            <p className="px-1 text-[11px] text-muted">{clock(message.createdAt)}</p>
           </div>
         ) : null}
 

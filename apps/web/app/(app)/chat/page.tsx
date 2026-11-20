@@ -126,6 +126,75 @@ function WarehanceLinkIcon() {
   );
 }
 
+function RecordPeek({ links }: { links: WarehanceLink[] }) {
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<WarehanceLink | null>(null);
+  const box = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointer(event: MouseEvent) {
+      if (!box.current?.contains(event.target as Node)) {
+        setOpen(false);
+        setPicked(null);
+      }
+    }
+    window.addEventListener("mousedown", onPointer);
+    return () => window.removeEventListener("mousedown", onPointer);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={box}>
+      <button
+        className="inline-flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-moss hover:bg-moss/10"
+        type="button"
+        aria-expanded={open}
+        aria-label={`View ${links.length} Warehance record${links.length === 1 ? "" : "s"}`}
+        title="View in this chat"
+        onClick={() => {
+          setOpen((value) => !value);
+          setPicked(null);
+        }}
+      >
+        <WarehanceLinkIcon />
+        <span className="text-[11px] font-semibold">{links.length}</span>
+      </button>
+      {open ? (
+        <div className="absolute left-0 z-20 mt-1 w-[min(22rem,calc(100vw-6rem))] overflow-hidden rounded-xl border border-black/10 bg-surface shadow-md">
+          {picked ? (
+            <div className="flex flex-col">
+              <div className="flex items-center gap-2 border-b border-black/10 px-2.5 py-2">
+                <button className="text-xs text-moss hover:underline" type="button" onClick={() => setPicked(null)}>
+                  Back
+                </button>
+                <p className="min-w-0 flex-1 truncate text-sm font-medium">{picked.label}</p>
+              </div>
+              <iframe title={picked.label} src={picked.href} className="h-64 w-full bg-white" />
+            </div>
+          ) : (
+            <ul className="max-h-72 overflow-y-auto py-1">
+              {links.map((link) => (
+                <li key={link.href}>
+                  <button
+                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-moss/10"
+                    type="button"
+                    onClick={() => setPicked(link)}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{link.label}</span>
+                    <span className="flex-none text-moss">
+                      <WarehanceLinkIcon />
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function ChatPage() {
   const user = useSession();
   const allowed = hasSection(user, "chat");
@@ -631,30 +700,10 @@ function Bubble({
         {message.status === "done" ? (
           <div className="space-y-1">
             <p className="whitespace-pre-wrap rounded-2xl rounded-bl-md bg-black/[0.04] px-3.5 py-2.5 text-sm leading-6">{message.content}</p>
-            <p className="px-1 text-[11px] text-muted">{clock(message.createdAt)}</p>
-          </div>
-        ) : null}
-
-        {message.role === "assistant" && message.status === "done" && (message.links ?? []).length > 0 ? (
-          <div className="rounded-xl border border-black/10 px-2 py-2">
-            <p className="px-1 text-xs font-medium text-muted">Open in Warehance</p>
-            <ul className="mt-1 grid sm:grid-cols-2">
-              {message.links.map((link) => (
-                <li key={link.href}>
-                  <a
-                    className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-moss/10"
-                    href={link.href}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <span className="min-w-0 flex-1 truncate">{link.label}</span>
-                    <span className="flex-none text-moss">
-                      <WarehanceLinkIcon />
-                    </span>
-                  </a>
-                </li>
-              ))}
-            </ul>
+            <div className="flex items-center gap-2 px-1">
+              <span className="text-[11px] text-muted">{clock(message.createdAt)}</span>
+              {(message.links ?? []).length > 0 ? <RecordPeek links={message.links} /> : null}
+            </div>
           </div>
         ) : null}
 

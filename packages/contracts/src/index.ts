@@ -192,8 +192,7 @@ export const claimStationSchema = z.object({
 
 export const completePackSchema = z.object({
   orderNumber: z.string().trim().min(1).max(80),
-  deviceCode: code,
-  badge: optionalText,
+  badge: code,
   units: z.number().int().min(1).max(10000).default(1),
   clientId: z.string().uuid().optional(),
 });

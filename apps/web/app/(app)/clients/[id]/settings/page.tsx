@@ -12,7 +12,7 @@ const SERVICE_HINT: Record<string, string> = {
   jobs: "Billable project. Open a job, then receive and unload on those boards picking that job.",
   receiving: "Inbound counts. Turn on, then work on the Receiving page.",
   unloading: "Trailers. Turn on, then work on the Unloading page.",
-  packing: "Who packed which order. Assigned or shared packing computers.",
+  packing: "Who packed which order, recorded by badge.",
   picking: "Scanner or handheld picks. Work on the Picking page.",
   sorting: "Scan packages into a carrier bin. Work on the Sorting page.",
   people: "Badges and which departments each person may work.",
@@ -119,7 +119,7 @@ export default function ClientSettingsPage() {
             badge and which departments they may work. Not unloading-only unless you pick that.
           </li>
           <li>
-            Devices for packing, picking, and sorting are warehouse-wide: packing computers assigned or shared, scanners personal or checked out.
+            Packing is recorded by badge. Scanners for picking and sorting are warehouse-wide, personal or checked out.
           </li>
           <li>
             Prices below — hourly per department, then optional pallet, carton, SKU, or pack counts.

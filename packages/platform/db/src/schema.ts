@@ -603,7 +603,8 @@ export const packEvents = tracking.table("pack_events", {
   orderNumber: text("order_number").notNull().unique(),
   clientId: uuid("client_id"),
   employeeId: uuid("employee_id").notNull(),
-  deviceId: uuid("device_id").notNull(),
+  // Packs are recorded by badge. Only older packs name a computer.
+  deviceId: uuid("device_id"),
   attribution: text("attribution").notNull(),
   loginMismatch: boolean("login_mismatch").notNull().default(false),
   units: integer("units").notNull().default(1),

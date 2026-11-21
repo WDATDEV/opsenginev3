@@ -620,7 +620,7 @@ export default function WarehousePage() {
           {panel ? (
             <section>
               <p className="mb-2 text-sm font-semibold text-muted">Record your work</p>
-              {panel === "packing" ? <PackPanel context={context} badge={badge} run={run} /> : null}
+              {panel === "packing" ? <PackPanel badge={badge} run={run} /> : null}
               {panel === "picking" ? <PickPanel context={context} badge={badge} run={run} /> : null}
               {panel === "receiving" ? (
                 <ReceivePanel context={context} badge={badge} run={run} jobId={currentJobId} />
@@ -704,20 +704,13 @@ export default function WarehousePage() {
 }
 
 function PackPanel({
-  context,
   badge,
   run,
 }: {
-  context: Context;
   badge: string;
   run: (path: string, body: unknown) => Promise<boolean>;
 }) {
-  const [deviceCode, setDeviceCode] = useState(context.station ?? context.stations[0]?.code ?? "");
   const [orderNumber, setOrderNumber] = useState("");
-  const station = context.stations.find((item) => item.code === deviceCode);
-  if (context.stations.length === 0) {
-    return <p className="card p-4 text-sm text-muted">No packing computer is on the floor yet.</p>;
-  }
   return (
     <form
       className="card space-y-3 p-4"
@@ -725,37 +718,13 @@ function PackPanel({
         event.preventDefault();
         void run("/tracking/packing", {
           orderNumber,
-          deviceCode,
           badge,
           units: 1,
         });
       }}
     >
-      <Field label="Packing computer">
-        <select className="field" value={deviceCode} onChange={(event) => setDeviceCode(event.target.value)}>
-          {context.stations.map((item) => (
-            <option key={item.code} value={item.code}>
-              {item.code} · {item.stationMode === "shared" ? "shared" : item.assignedTo ?? "assigned"}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <p className="text-sm text-muted">
-        {station?.stationMode === "shared"
-          ? station.claimedBy
-            ? `${station.claimedBy} currently holds this shared computer.`
-            : "Shared computer. Claim it with your badge before the pack counts."
-          : "This computer is assigned to one person."}
-      </p>
-      <button
-        className="btn btn-ghost tap w-full"
-        type="button"
-        onClick={() => run("/tracking/stations/claim", { badge, deviceCode })}
-      >
-        Claim this computer
-      </button>
       <Field label="Order you just packed">
-        <input className="field" value={orderNumber} onChange={(event) => setOrderNumber(event.target.value)} placeholder="PK-10021" />
+        <input className="field" required value={orderNumber} onChange={(event) => setOrderNumber(event.target.value)} placeholder="PK-10021" />
       </Field>
       <button className="btn btn-primary tap w-full" type="submit">
         I finished this order

@@ -6,14 +6,6 @@ import { Field, Notice, PageTitle, useResource } from "@/components/ui";
 import { ApiError, canManage, post, when } from "@/lib/api";
 
 type Board = {
-  stations: {
-    code: string;
-    label: string;
-    location: string;
-    stationMode: string;
-    assignedTo: string | null;
-    claimedBy: string | null;
-  }[];
   events: {
     id: string;
     sentence: string;
@@ -26,9 +18,8 @@ type Board = {
 export function PackingBoard({ client }: { client?: { id: string; name: string } }) {
   const board = useResource<Board>("/tracking/packing");
   const user = useSession();
-  const [orderNumber, setOrderNumber] = useState("PK-10021");
-  const [deviceCode, setDeviceCode] = useState("PC-PACK-2");
-  const [badge, setBadge] = useState("B-10442");
+  const [orderNumber, setOrderNumber] = useState("");
+  const [badge, setBadge] = useState("");
   const [units, setUnits] = useState(1);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +31,6 @@ export function PackingBoard({ client }: { client?: { id: string; name: string }
     try {
       const result = await post<{ message: string }>("/tracking/packing", {
         orderNumber,
-        deviceCode,
         badge,
         units,
         ...(client ? { clientId: client.id } : {}),
@@ -60,8 +50,8 @@ export function PackingBoard({ client }: { client?: { id: string; name: string }
         title={client ? `Packing for ${client.name}` : "Who packed the order"}
         detail={
           client
-            ? `Who packed which order for ${client.name}. Assigned computers count as that person. Shared computers need a badge.`
-            : "Record packs on a packing computer. Assigned computers count as that person. Shared computers need a badge."
+            ? `Who packed which order for ${client.name}. Scan the packer's badge when the order is done.`
+            : "Scan the packer's badge when the order is done."
         }
       />
       {board.error ? <Notice tone="bad">{board.error}</Notice> : null}
@@ -72,19 +62,10 @@ export function PackingBoard({ client }: { client?: { id: string; name: string }
             {message ? <Notice tone="ok">{message}</Notice> : null}
             {error ? <Notice tone="bad">{error}</Notice> : null}
             <Field label="Order">
-              <input className="field" value={orderNumber} onChange={(event) => setOrderNumber(event.target.value)} />
+              <input className="field" required value={orderNumber} onChange={(event) => setOrderNumber(event.target.value)} />
             </Field>
-            <Field label="Packing computer">
-              <select className="field" value={deviceCode} onChange={(event) => setDeviceCode(event.target.value)}>
-                {board.data?.stations.map((station) => (
-                  <option key={station.code} value={station.code}>
-                    {station.code} · {station.stationMode === "shared" ? "shared" : "assigned"}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Badge">
-              <input className="field font-mono" value={badge} onChange={(event) => setBadge(event.target.value)} />
+            <Field label="Packer's badge">
+              <input className="field font-mono" required value={badge} onChange={(event) => setBadge(event.target.value)} />
             </Field>
             <Field label="Units">
               <input
@@ -101,22 +82,6 @@ export function PackingBoard({ client }: { client?: { id: string; name: string }
           </form>
         ) : null}
         <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            {board.data?.stations.map((station) => (
-              <article key={station.code} className="card p-4">
-                <p className="font-mono text-sm">{station.code}</p>
-                <h3 className="text-lg font-semibold">{station.label}</h3>
-                <p className="mt-2 text-sm">
-                  {station.stationMode === "shared"
-                    ? "Shared computer — badge in"
-                    : `Assigned${station.assignedTo ? ` · ${station.assignedTo}` : ""}`}
-                </p>
-                <p className="mt-1 text-sm text-muted">
-                  {station.claimedBy ? `${station.claimedBy} is at this bench` : "Nobody badged in"}
-                </p>
-              </article>
-            ))}
-          </div>
           <div className="card p-4">
             <h2 className="font-semibold">Packed orders</h2>
             <ul className="mt-3 space-y-3">

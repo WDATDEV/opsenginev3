@@ -40,14 +40,12 @@ import {
   normalizeDevice,
   planPause,
   planTaskSwitch,
-  resolvePacker,
   resolvePicker,
   stationModeFromStored,
   taskFor,
   trackingPolicy,
   type Department,
   type DeviceKind,
-  type LoginMode,
   type Ownership,
 } from "@opsengine/tracking";
 import type { ClientService, GateMode } from "@opsengine/contracts";
@@ -111,10 +109,6 @@ function asKind(value: string): DeviceKind {
   throw new TrackingError("That device type is not registered.");
 }
 
-function asMode(value: string): LoginMode {
-  return stationModeFromStored(value);
-}
-
 function asOwnership(value: string): Ownership {
   return value === "personal" ? "personal" : "shared_pool";
 }
@@ -125,6 +119,9 @@ function packSentence(input: {
   attribution: string;
   loginMismatch: boolean;
 }) {
+  if (input.attribution === "badge") {
+    return `${input.name} packed ${input.orderNumber}.`;
+  }
   if (input.loginMismatch) {
     return `${input.name} packed ${input.orderNumber}. The badge did not match who is assigned to this computer, so the badge is the packer of record.`;
   }
@@ -1096,18 +1093,13 @@ export class TrackingService {
   async completePack(
     input: {
       orderNumber: string;
-      deviceCode: string;
-      badge?: string;
+      badge: string;
       units: number;
       clientId?: string;
     },
     principal: Principal | null,
   ) {
     return this.inTx(async (tx) => {
-      const device = await this.deviceByCode(tx, input.deviceCode);
-      if (device.kind !== "packing_computer") {
-        throw new TrackingError("Finish packing on a packing computer.");
-      }
       const orderNumber = clean(input.orderNumber);
       const [existing] = await tx
         .select()
@@ -1119,24 +1111,13 @@ export class TrackingService {
         throw new TrackingError(`${orderNumber} was already packed by ${packer.name}.`);
       }
 
-      const badgeEmployee = input.badge ? await this.employeeByBadge(tx, input.badge) : null;
-      const session = await this.openSessionForDevice(tx, device.id);
-
-      const resolved = resolvePacker({
-        loginMode: asMode(device.stationMode),
-        assignedEmployeeId: device.assignedEmployeeId,
-        badgeEmployeeId: badgeEmployee?.id,
-        stationSessionEmployeeId: session?.employeeId,
-      });
-      if (!resolved.ok) throw new TrackingError(resolved.reason);
-
-      const employee = await this.employeeById(tx, resolved.employeeId);
+      const employee = await this.employeeByBadge(tx, input.badge);
       if (principal && !can(principal, "tracking.manage") && !can(principal, "tracking.record")) {
         throw new TrackingError("You cannot record packing.");
       }
       if (input.clientId) await assertClientService(this.db.db, input.clientId, "packing");
       const shift = await this.requireReady(tx, employee);
-      const segmentId = await this.touchSegment(tx, employee, shift.id, "packing", device.id);
+      const segmentId = await this.touchSegment(tx, employee, shift.id, "packing", null);
       const now = new Date();
       const [created] = await tx
         .insert(packEvents)
@@ -1144,9 +1125,9 @@ export class TrackingService {
           orderNumber,
           clientId: input.clientId ?? null,
           employeeId: employee.id,
-          deviceId: device.id,
-          attribution: resolved.attribution,
-          loginMismatch: resolved.loginMismatch,
+          deviceId: null,
+          attribution: "badge",
+          loginMismatch: false,
           units: input.units,
           packedAt: now,
           segmentId,
@@ -1157,8 +1138,8 @@ export class TrackingService {
       const message = packSentence({
         name: employee.name,
         orderNumber,
-        attribution: resolved.attribution,
-        loginMismatch: resolved.loginMismatch,
+        attribution: "badge",
+        loginMismatch: false,
       });
       await this.audit(tx, principal?.id ?? employee.id, "tracking.pack_recorded", "pack_event", created.id, message);
       return { message, orderNumber, employeeName: employee.name };
@@ -1278,27 +1259,13 @@ export class TrackingService {
 
   async packingBoard() {
     const orm = this.db.db;
-    const [deviceRows, people, sessions, events] = await Promise.all([
+    const [deviceRows, people, events] = await Promise.all([
       orm.select().from(devices),
       orm.select().from(employees),
-      orm.select().from(stationSessions).where(isNull(stationSessions.endedAt)),
       orm.select().from(packEvents),
     ]);
     const names = new Map(people.map((person) => [person.id, person.name]));
     return {
-      stations: deviceRows
-        .filter((row) => row.kind === "packing_computer")
-        .map((row) => {
-          const session = sessions.find((item) => item.deviceId === row.id);
-          return {
-            code: row.code,
-            label: row.label,
-            location: row.location,
-            stationMode: stationModeFromStored(row.stationMode),
-            assignedTo: row.assignedEmployeeId ? names.get(row.assignedEmployeeId) ?? null : null,
-            claimedBy: session ? names.get(session.employeeId) ?? null : null,
-          };
-        }),
       events: events
         .sort((a, b) => b.packedAt.getTime() - a.packedAt.getTime())
         .map((row) => ({
@@ -2102,15 +2069,6 @@ export class TrackingService {
     const meal = await this.openBreak(tx, shift.id);
     if (meal) throw new TrackingError(`${employee.name} is on a meal break. End it before starting work.`);
     return shift;
-  }
-
-  private async openSessionForDevice(tx: Conn, deviceId: string) {
-    const [row] = await tx
-      .select()
-      .from(stationSessions)
-      .where(and(eq(stationSessions.deviceId, deviceId), isNull(stationSessions.endedAt)))
-      .limit(1);
-    return row ?? null;
   }
 
   private async openSessionForEmployee(tx: Conn, employeeId: string) {

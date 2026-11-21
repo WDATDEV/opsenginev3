@@ -214,8 +214,7 @@ export class TrackingController {
     @Body(new ZodPipe(completePackSchema))
     body: {
       orderNumber: string;
-      deviceCode: string;
-      badge?: string;
+      badge: string;
       units: number;
       clientId?: string;
     },

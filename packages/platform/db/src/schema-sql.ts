@@ -546,6 +546,7 @@ CREATE TABLE IF NOT EXISTS tracking.pack_events (
 
 ALTER TABLE tracking.pack_events DROP COLUMN IF EXISTS warehance_user_id;
 ALTER TABLE tracking.pack_events DROP COLUMN IF EXISTS warehance_recorded;
+ALTER TABLE tracking.pack_events ALTER COLUMN device_id DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS tracking.pick_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

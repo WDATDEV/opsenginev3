@@ -43,14 +43,14 @@ export const trackingPolicy = [
     area: "Packing",
     question: "Does each packer have their own station, or do employees share computers?",
     answer:
-      "Both happen on this floor. A packing computer is assigned to one person, or it is shared and the packer badges in. Time tracking records who packed.",
+      "Either works. Packing is recorded by the packer's badge, so it does not matter which computer they use.",
   },
   {
     id: "packing-attribution",
     area: "Packing",
     question: "When an employee finishes packing, who is recorded as the packer?",
     answer:
-      "Ops Engine stores the packer. On an assigned computer, that person is the packer unless someone else badges in. On a shared computer, the badge or the open station session is the record.",
+      "The person whose badge is scanned when the order is finished is the packer of record.",
   },
   {
     id: "picking-devices",

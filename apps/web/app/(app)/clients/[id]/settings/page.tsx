@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { useReloadClientNav, useSession } from "@/components/shell";
-import { Field, Notice, PageTitle, SkeletonList, Spinner, Switch, useResource } from "@/components/ui";
+import { Field, Flash, Notice, PageTitle, SkeletonList, Spinner, Switch, useResource } from "@/components/ui";
 import { ApiError, CLIENT_SERVICES, canManage, canManageJobs, money, post } from "@/lib/api";
 import type { ClientRecord } from "@/components/client-dashboard";
 
@@ -76,27 +76,24 @@ export default function ClientSettingsPage() {
   };
 
   return (
-    <div className="max-w-3xl space-y-5">
+    <div className="max-w-5xl space-y-5">
       <PageTitle
         kicker={client.name}
         title="Client settings"
         detail={`${client.code}: turn on receiving, packing, picking, and sorting here, then set people and prices.`}
       />
-      <div className="space-y-3 empty:hidden">
-        {message ? <Notice tone="ok">{message}</Notice> : null}
-        {error ? <Notice tone="bad">{error}</Notice> : null}
-      </div>
+      <Flash message={message} error={error} />
 
       <section className="card p-5 sm:p-6">
         <h2 className="font-semibold">1. Services</h2>
         <p className="mt-1 text-sm text-muted">
           A service that is on shows in this client’s menu. Receiving and unloading need an open job. Packing, picking, and sorting run on their own pages.
         </p>
-        <ul className="mt-3 divide-y divide-black/5">
+        <ul className="mt-3 grid gap-x-8 md:grid-cols-2">
           {CLIENT_SERVICES.map(([service, label]) => {
             const on = client.enabledServices.includes(service);
             return (
-              <li key={service} className="flex items-center justify-between gap-3 py-3">
+              <li key={service} className="flex items-center justify-between gap-3 border-t border-black/5 py-3">
                 <div>
                   <p className="font-medium">{label}</p>
                   <p className="text-sm text-muted">{SERVICE_HINT[service] ?? (on ? "In the menu" : "Off")}</p>
@@ -252,11 +249,14 @@ function OtherPrices({
   return (
     <details className="card p-5 sm:p-6" open={others.length > 0}>
       <summary className="cursor-pointer select-none font-semibold">Other prices (per pallet, carton, unit, SKU, or a flat fee)</summary>
-      <ul className="mt-3 space-y-1 text-sm">
+      <ul className="mt-3 divide-y divide-black/5 text-sm">
         {others.length === 0 ? <li className="text-muted">None yet.</li> : null}
         {others.map((rate) => (
-          <li key={rate.id}>
-            {rate.label} · {rate.unit} · {money(rate.rateCents)}
+          <li key={rate.id} className="flex items-center justify-between gap-3 py-2">
+            <span className="min-w-0">
+              {rate.label} <span className="text-muted">· per {rate.unit}</span>
+            </span>
+            <span className="flex-none font-mono tabular-nums">{money(rate.rateCents)}</span>
           </li>
         ))}
       </ul>

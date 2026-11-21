@@ -131,9 +131,13 @@ export function money(cents: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
 }
 
+// Today shows only the time. Any other day also shows the date, so old records are not mistaken for today.
 export function when(value: string) {
+  const date = new Date(value);
+  const today = date.toDateString() === new Date().toDateString();
   return new Intl.DateTimeFormat("en", {
+    ...(today ? {} : { month: "short", day: "numeric" }),
     hour: "numeric",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(date);
 }

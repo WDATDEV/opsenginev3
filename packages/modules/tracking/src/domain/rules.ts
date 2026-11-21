@@ -11,7 +11,7 @@ export type Department =
 
 export type PackAttribution = "assigned" | "station_badge" | "manual";
 
-/** Stored `warehance_login_mode` still uses `individual` for an assigned packing PC. */
+/** Maps stored station_mode (and leftover individual) to assigned | shared | none. */
 export function stationModeFromStored(value: string): LoginMode {
   if (value === "shared") return "shared";
   if (value === "assigned" || value === "individual") return "assigned";
@@ -43,7 +43,7 @@ export const trackingPolicy = [
     area: "Packing",
     question: "Does each packer have their own station, or do employees share computers?",
     answer:
-      "Both happen on this floor. A packing computer is assigned to one person, or it is shared and the packer badges in. Time tracking records who packed. Warehance is not involved.",
+      "Both happen on this floor. A packing computer is assigned to one person, or it is shared and the packer badges in. Time tracking records who packed.",
   },
   {
     id: "packing-attribution",
@@ -76,9 +76,9 @@ export const trackingPolicy = [
   {
     id: "sorting-scan",
     area: "Sorting",
-    question: "Are packages scanned when placed into USPS, UPS, or other carrier gaylords?",
+    question: "Are packages scanned when placed into USPS, UPS, or other carrier bins?",
     answer:
-      "Yes. A package is scanned into an open gaylord for USPS, UPS, FedEx, DHL, or another carrier. Placing one without a scan requires a reason.",
+      "Yes. A package is scanned into an open carrier bin for USPS, UPS, FedEx, DHL, or another carrier. Placing one without a scan requires a reason.",
   },
   {
     id: "task-changes",
@@ -234,7 +234,7 @@ export function assertSortPlacement(input: {
   gaylordStatus: "open" | "closed";
   duplicateGaylordCode?: string | null;
 }): { ok: true } | RuleFailure {
-  if (input.gaylordStatus !== "open") return fail("That gaylord is closed.");
+  if (input.gaylordStatus !== "open") return fail("That carrier bin is closed.");
   if (input.duplicateGaylordCode) {
     return fail(`Already scanned into ${input.duplicateGaylordCode}.`);
   }

@@ -506,7 +506,7 @@ export const devices = tracking.table("devices", {
   assignedEmployeeId: uuid("assigned_employee_id"),
   location: text("location").notNull(),
   status: text("status").notNull().default("available"),
-  warehanceLoginMode: text("warehance_login_mode").notNull().default("none"),
+  stationMode: text("station_mode").notNull().default("none"),
   clientId: uuid("client_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -605,8 +605,6 @@ export const packEvents = tracking.table("pack_events", {
   employeeId: uuid("employee_id").notNull(),
   deviceId: uuid("device_id").notNull(),
   attribution: text("attribution").notNull(),
-  warehanceUserId: text("warehance_user_id"),
-  warehanceRecorded: boolean("warehance_recorded").notNull().default(false),
   loginMismatch: boolean("login_mismatch").notNull().default(false),
   units: integer("units").notNull().default(1),
   packedAt: timestamp("packed_at", { withTimezone: true }).notNull(),

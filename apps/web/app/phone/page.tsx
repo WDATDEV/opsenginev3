@@ -755,7 +755,7 @@ function PackPanel({
         Claim this computer
       </button>
       <Field label="Order you just packed">
-        <input className="field" value={orderNumber} onChange={(event) => setOrderNumber(event.target.value)} placeholder="WH-10021" />
+        <input className="field" value={orderNumber} onChange={(event) => setOrderNumber(event.target.value)} placeholder="PK-10021" />
       </Field>
       <button className="btn btn-primary tap w-full" type="submit">
         I finished this order
@@ -968,7 +968,7 @@ function SortPanel({
   const [method, setMethod] = useState<"scan" | "manual_place">("scan");
   const [reason, setReason] = useState("");
   if (context.gaylords.length === 0) {
-    return <p className="card p-4 text-sm text-muted">No open gaylord.</p>;
+    return <p className="card p-4 text-sm text-muted">No open carrier bin.</p>;
   }
   return (
     <form
@@ -984,7 +984,7 @@ function SortPanel({
         });
       }}
     >
-      <Field label="Gaylord">
+      <Field label="Carrier bin">
         <select className="field" value={gaylordCode} onChange={(event) => setGaylordCode(event.target.value)}>
           {context.gaylords.map((item) => (
             <option key={item.id} value={item.code}>
@@ -1008,7 +1008,7 @@ function SortPanel({
         </Field>
       ) : null}
       <button className="btn btn-primary tap w-full" type="submit">
-        Put it in the gaylord
+        Put it in the bin
       </button>
     </form>
   );

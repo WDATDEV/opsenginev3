@@ -283,7 +283,6 @@ export class TrackingController {
       departmentHome?: "packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect";
       departments?: ("packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect")[];
       employmentType: "employee" | "temp";
-      warehanceUserId?: string;
       clientId?: string;
     },
   ) {

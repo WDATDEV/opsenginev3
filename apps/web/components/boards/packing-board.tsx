@@ -26,7 +26,7 @@ type Board = {
 export function PackingBoard({ client }: { client?: { id: string; name: string } }) {
   const board = useResource<Board>("/tracking/packing");
   const user = useSession();
-  const [orderNumber, setOrderNumber] = useState("WH-10021");
+  const [orderNumber, setOrderNumber] = useState("PK-10021");
   const [deviceCode, setDeviceCode] = useState("PC-PACK-2");
   const [badge, setBadge] = useState("B-10442");
   const [units, setUnits] = useState(1);
@@ -60,7 +60,7 @@ export function PackingBoard({ client }: { client?: { id: string; name: string }
         title={client ? `Packing for ${client.name}` : "Who packed the order"}
         detail={
           client
-            ? `Who packed which order for ${client.name}. Assigned computers count as that person. Shared computers need a badge. Warehance is not used here.`
+            ? `Who packed which order for ${client.name}. Assigned computers count as that person. Shared computers need a badge.`
             : "Record packs on a packing computer. Assigned computers count as that person. Shared computers need a badge."
         }
       />

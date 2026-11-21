@@ -863,7 +863,7 @@ function TaskForm({
       ) : null}
       {kind === "sorting" ? (
         <>
-          <Field label="Gaylord code">
+          <Field label="Bin code">
             <input className="field font-mono" value={reference} onChange={(event) => setReference(event.target.value)} />
           </Field>
           <Field label="Carrier">

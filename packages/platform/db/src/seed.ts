@@ -188,7 +188,7 @@ async function upsertOwnedDevice(clientId: string, code: string, label: string, 
     label,
     kind: "barcode_scanner",
     ownership: "shared_pool",
-    warehanceLoginMode: "none",
+    stationMode: "none",
     location,
     clientId,
     status: "available",
@@ -314,7 +314,7 @@ const id = (badge: string) => {
 };
 
 const deviceRows = [
-  ["PC-PACK-1", "packing_computer", "Bench 1", "personal", "individual", "Bench 1", id("B-10441")],
+  ["PC-PACK-1", "packing_computer", "Bench 1", "personal", "assigned", "Bench 1", id("B-10441")],
   ["PC-PACK-2", "packing_computer", "Bench 2", "shared_pool", "shared", "Bench 2", null],
   ["SCN-04", "barcode_scanner", "Priya scanner", "personal", "none", "Pick aisle", id("B-10443")],
   ["HH-02", "handheld", "Pool handheld 2", "shared_pool", "none", "Pick aisle", null],
@@ -322,7 +322,7 @@ const deviceRows = [
 ] as const;
 
 const deviceIds = new Map<string, string>();
-for (const [code, kind, label, ownership, warehanceLoginMode, location, assignedEmployeeId] of deviceRows) {
+for (const [code, kind, label, ownership, stationMode, location, assignedEmployeeId] of deviceRows) {
   const [row] = await db
     .insert(devices)
     .values({
@@ -330,7 +330,7 @@ for (const [code, kind, label, ownership, warehanceLoginMode, location, assigned
       kind,
       label,
       ownership,
-      warehanceLoginMode,
+      stationMode,
       location,
       assignedEmployeeId,
       status: "available",
@@ -470,26 +470,22 @@ await db.insert(deviceCheckouts).values({
 
 await db.insert(packEvents).values([
   {
-    orderNumber: "WH-10001",
+    orderNumber: "PK-10001",
     clientId: northwind.id,
     employeeId: id("B-10441"),
     deviceId: device("PC-PACK-1"),
     attribution: "assigned",
-    warehanceUserId: null,
-    warehanceRecorded: false,
     loginMismatch: false,
     units: 3,
     packedAt: ago(90),
     segmentId: aminaPast?.id,
   },
   {
-    orderNumber: "WH-10002",
+    orderNumber: "PK-10002",
     clientId: brightline.id,
     employeeId: id("B-10442"),
     deviceId: device("PC-PACK-2"),
     attribution: "station_badge",
-    warehanceUserId: null,
-    warehanceRecorded: false,
     loginMismatch: false,
     units: 2,
     packedAt: ago(70),
@@ -500,7 +496,7 @@ await db.insert(packEvents).values([
 await db.insert(pickEvents).values([
   {
     batchCode: "BATCH-17",
-    orderNumber: "WH-10008",
+    orderNumber: "PI-10008",
     sku: "SKU-TEE",
     qty: 2,
     employeeId: id("B-10443"),
@@ -510,7 +506,7 @@ await db.insert(pickEvents).values([
   },
   {
     batchCode: "BATCH-18",
-    orderNumber: "WH-10009",
+    orderNumber: "PI-10009",
     sku: "SKU-MUG",
     qty: 1,
     employeeId: id("B-10444"),
@@ -627,10 +623,10 @@ await db.insert(activity).values({
   action: "tracking.pack_recorded",
   module: "tracking",
   entityType: "pack_event",
-  entityId: "WH-10002",
+  entityId: "PK-10002",
   after: {
     summary:
-      "Luis Ortega packed WH-10002 by badging onto a shared station.",
+      "Luis Ortega packed PK-10002 by badging onto a shared computer.",
   },
 });
 

@@ -40,7 +40,7 @@ export function FloorBoard() {
       <PageTitle
         kicker="Live floor"
         title="Who is doing what"
-        detail="Every pack, pick, receipt, unload, and gaylord scan is tied to a person, a device, and the task they were on."
+        detail="Every pack, pick, receipt, unload, and carrier-bin scan is tied to a person, a device, and the task they were on."
       />
       {!user || (loading && !data) ? <p className="text-muted">Loading the floor…</p> : null}
       {error ? <Notice tone="bad">{error}</Notice> : null}
@@ -59,7 +59,7 @@ export function FloorBoard() {
             <Mini label="Orders packed" value={data.totals.packed} />
             <Mini label="Pick lines" value={data.totals.picks} />
             <Mini label="Open shipments" value={data.totals.openShipments} />
-            <Mini label="Open gaylords" value={data.totals.openGaylords} />
+            <Mini label="Open carrier bins" value={data.totals.openGaylords} />
           </section>
           <section className="card overflow-hidden">
             <table className="w-full text-left text-sm">

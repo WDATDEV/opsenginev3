@@ -50,11 +50,11 @@ export function SortingBoard({ client }: { client?: { id: string; name: string }
     <div>
       <PageTitle
         kicker="Sorting"
-        title={client ? `Sorting for ${client.name}` : "Scan into the gaylord"}
+        title={client ? `Sorting for ${client.name}` : "Scan into the carrier bin"}
         detail={
           client
-            ? `Open gaylords here for ${client.name} and scan packages in. A package placed without a scan still needs a reason.`
-            : "Open a gaylord on this board, then scan packages in. Placing one without a scan needs a reason."
+            ? `Open a carrier bin here for ${client.name} and scan packages in. A package placed without a scan still needs a reason.`
+            : "Open a carrier bin on this board, then scan packages in. Placing one without a scan needs a reason."
         }
       />
       {board.error ? <Notice tone="bad">{board.error}</Notice> : null}
@@ -69,7 +69,7 @@ export function SortingBoard({ client }: { client?: { id: string; name: string }
               void act("/tracking/sorting/gaylords", { code, carrier, ...(client ? { clientId: client.id } : {}) });
             }}
           >
-            <h2 className="font-semibold">Open a gaylord</h2>
+            <h2 className="font-semibold">Open a carrier bin</h2>
             <Field label="Code">
               <input className="field" value={code} onChange={(event) => setCode(event.target.value)} placeholder="GL-FEDEX-1" />
             </Field>
@@ -83,7 +83,7 @@ export function SortingBoard({ client }: { client?: { id: string; name: string }
               </select>
             </Field>
             <button className="btn btn-primary" type="submit">
-              Open gaylord
+              Open bin
             </button>
           </form>
           <form
@@ -100,7 +100,7 @@ export function SortingBoard({ client }: { client?: { id: string; name: string }
             }}
           >
             <h2 className="font-semibold">Place a package</h2>
-            <Field label="Gaylord">
+            <Field label="Carrier bin">
               <select className="field" value={gaylordCode} onChange={(event) => setGaylordCode(event.target.value)}>
                 {board.data?.filter((item) => item.status === "open" && (!client || item.clientId === client.id)).map((item) => (
                   <option key={item.id} value={item.code}>
@@ -117,7 +117,7 @@ export function SortingBoard({ client }: { client?: { id: string; name: string }
             </Field>
             <Field label="Method">
               <select className="field" value={method} onChange={(event) => setMethod(event.target.value as typeof method)}>
-                <option value="scan">Scanned into the gaylord</option>
+                <option value="scan">Scanned into the bin</option>
                 <option value="manual_place">Placed without a scan</option>
               </select>
             </Field>

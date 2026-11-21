@@ -117,9 +117,8 @@ export type DeviceKind = (typeof deviceKinds)[number];
 
 export const stationModes = ["assigned", "shared", "none"] as const;
 export type StationMode = (typeof stationModes)[number];
-/** @deprecated Use stationModes. Stored packing PCs may still say individual. */
-export const loginModes = ["assigned", "shared", "none", "individual"] as const;
-export type LoginMode = (typeof loginModes)[number];
+export const loginModes = stationModes;
+export type LoginMode = StationMode;
 
 export const ownerships = ["personal", "shared_pool"] as const;
 export type Ownership = (typeof ownerships)[number];
@@ -220,7 +219,6 @@ export const createEmployeeSchema = z.object({
   departmentHome: z.enum(departments).optional(),
   departments: z.array(z.enum(departments)).max(departments.length).optional(),
   employmentType: z.enum(["employee", "temp"]).default("employee"),
-  warehanceUserId: optionalText,
   clientId: z.string().uuid().optional(),
 });
 
@@ -407,7 +405,7 @@ export const createJobWorkSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("sorting"),
-    reference: z.string().trim().min(1, "Enter the gaylord code.").max(40),
+    reference: z.string().trim().min(1, "Enter the bin code.").max(40),
     carrier: z.enum(carriers),
     ...jobWorkBase,
   }),

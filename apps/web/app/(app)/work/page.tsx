@@ -31,7 +31,7 @@ export default function WorkPage() {
       <PageTitle
         kicker="Work"
         title="Follow-ups from the floor"
-        detail="A short count, a missing crew, or a gaylord problem becomes a task. The work module holds it. Tracking does not keep a second copy."
+        detail="A short count, a missing crew, or a carrier-bin problem becomes a task. The work module holds it. Tracking does not keep a second copy."
       />
       {board.error ? <Notice tone="bad">{board.error}</Notice> : null}
       <div className="space-y-3">

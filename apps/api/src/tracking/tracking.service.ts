@@ -40,13 +40,10 @@ import {
   normalizeDevice,
   planPause,
   planTaskSwitch,
-  resolvePicker,
   stationModeFromStored,
   taskFor,
   trackingPolicy,
   type Department,
-  type DeviceKind,
-  type Ownership,
 } from "@opsengine/tracking";
 import type { ClientService, GateMode } from "@opsengine/contracts";
 import { assertClientService, enabledServiceList } from "../clients/access.js";
@@ -96,21 +93,6 @@ function asDepartment(value: string): Department {
     return value;
   }
   return "indirect";
-}
-
-function asKind(value: string): DeviceKind {
-  if (
-    value === "packing_computer" ||
-    value === "barcode_scanner" ||
-    value === "handheld"
-  ) {
-    return value;
-  }
-  throw new TrackingError("That device type is not registered.");
-}
-
-function asOwnership(value: string): Ownership {
-  return value === "personal" ? "personal" : "shared_pool";
 }
 
 function packSentence(input: {
@@ -278,7 +260,7 @@ export class TrackingService {
       })),
       ...picks.map((row) => ({
         at: row.pickedAt,
-        text: `${name(row.employeeId)} picked ${row.qty} × ${row.sku} on ${deviceById.get(row.deviceId)?.code ?? "a scanner"}.`,
+        text: `${name(row.employeeId)} picked ${row.qty} × ${row.sku}${row.deviceId ? ` on ${deviceById.get(row.deviceId)?.code ?? "a scanner"}` : ""}.`,
       })),
       ...lines.map((row) => ({
         at: row.recordedAt,
@@ -1203,8 +1185,7 @@ export class TrackingService {
 
   async recordPick(
     input: {
-      deviceCode: string;
-      badge?: string;
+      badge: string;
       batchCode: string;
       sku: string;
       qty: number;
@@ -1214,24 +1195,13 @@ export class TrackingService {
     principal: Principal | null,
   ) {
     return this.inTx(async (tx) => {
-      const device = await this.deviceByCode(tx, input.deviceCode);
-      const badgeEmployee = input.badge ? await this.employeeByBadge(tx, input.badge) : null;
-      const checkout = await this.openCheckoutForDevice(tx, device.id);
-      const resolved = resolvePicker({
-        kind: asKind(device.kind),
-        ownership: asOwnership(device.ownership),
-        assignedEmployeeId: device.assignedEmployeeId,
-        checkoutEmployeeId: checkout?.employeeId,
-        badgeEmployeeId: badgeEmployee?.id,
-      });
-      if (!resolved.ok) throw new TrackingError(resolved.reason);
-      const employee = await this.employeeById(tx, resolved.employeeId);
+      const employee = await this.employeeByBadge(tx, input.badge);
       if (principal && !can(principal, "tracking.record") && !can(principal, "tracking.manage")) {
         throw new TrackingError("You cannot record picks.");
       }
       if (input.clientId) await assertClientService(this.db.db, input.clientId, "picking");
       const shift = await this.requireReady(tx, employee);
-      const segmentId = await this.touchSegment(tx, employee, shift.id, "picking", device.id);
+      const segmentId = await this.touchSegment(tx, employee, shift.id, "picking", null);
       const now = new Date();
       const [created] = await tx
         .insert(pickEvents)
@@ -1242,16 +1212,14 @@ export class TrackingService {
           qty: input.qty,
           clientId: input.clientId ?? null,
           employeeId: employee.id,
-          deviceId: device.id,
-          via: resolved.via,
+          deviceId: null,
+          via: "badge",
           pickedAt: now,
           segmentId,
         })
         .returning();
       if (!created) throw new TrackingError("Could not record that pick.");
-      const via =
-        resolved.via === "personal_device" ? "personal scanner" : "shared handheld";
-      const message = `${employee.name} picked ${input.qty} × ${clean(input.sku)} on ${device.code} (${via}).`;
+      const message = `${employee.name} picked ${input.qty} × ${clean(input.sku)}.`;
       await this.audit(tx, principal?.id ?? employee.id, "tracking.pick_recorded", "pick_event", created.id, message);
       return { message };
     });
@@ -1290,28 +1258,13 @@ export class TrackingService {
 
   async pickingBoard() {
     const orm = this.db.db;
-    const [deviceRows, people, checkouts, events] = await Promise.all([
+    const [deviceRows, people, events] = await Promise.all([
       orm.select().from(devices),
       orm.select().from(employees),
-      orm.select().from(deviceCheckouts).where(isNull(deviceCheckouts.endedAt)),
       orm.select().from(pickEvents),
     ]);
     const names = new Map(people.map((person) => [person.id, person.name]));
     return {
-      devices: deviceRows
-        .filter((row) => row.kind === "barcode_scanner" || row.kind === "handheld")
-        .map((row) => {
-          const held = checkouts.find((item) => item.deviceId === row.id);
-          return {
-            code: row.code,
-            label: row.label,
-            kind: row.kind,
-            ownership: row.ownership,
-            location: row.location,
-            assignedTo: row.assignedEmployeeId ? names.get(row.assignedEmployeeId) ?? null : null,
-            checkedOutTo: held ? names.get(held.employeeId) ?? null : null,
-          };
-        }),
       events: events
         .sort((a, b) => b.pickedAt.getTime() - a.pickedAt.getTime())
         .map((row) => ({
@@ -2076,15 +2029,6 @@ export class TrackingService {
       .select()
       .from(stationSessions)
       .where(and(eq(stationSessions.employeeId, employeeId), isNull(stationSessions.endedAt)))
-      .limit(1);
-    return row ?? null;
-  }
-
-  private async openCheckoutForDevice(tx: Conn, deviceId: string) {
-    const [row] = await tx
-      .select()
-      .from(deviceCheckouts)
-      .where(and(eq(deviceCheckouts.deviceId, deviceId), isNull(deviceCheckouts.endedAt)))
       .limit(1);
     return row ?? null;
   }

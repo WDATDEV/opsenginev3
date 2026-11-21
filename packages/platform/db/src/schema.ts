@@ -620,7 +620,8 @@ export const pickEvents = tracking.table("pick_events", {
   qty: integer("qty").notNull(),
   clientId: uuid("client_id"),
   employeeId: uuid("employee_id").notNull(),
-  deviceId: uuid("device_id").notNull(),
+  // Picks are recorded by badge. Only older picks name a device.
+  deviceId: uuid("device_id"),
   via: text("via").notNull(),
   pickedAt: timestamp("picked_at", { withTimezone: true }).notNull(),
   segmentId: uuid("segment_id"),

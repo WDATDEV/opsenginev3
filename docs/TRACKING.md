@@ -17,7 +17,7 @@ A job belongs to one client. IceCartel and Jacob each have their own jobs, rates
 
 1. **Packing.** A pack needs the order and the packer's badge. Ops Engine does not track which computer was used.
 2. **Who packed it.** The badge is the packer of record. The packer must be clocked in.
-3. **Picking devices.** A personal scanner is assigned to one picker. A shared handheld must be checked out, or the picker badges at the scan.
+3. **Picking.** A pick needs the picker's badge, batch, SKU, and quantity. Ops Engine does not track which scanner was used.
 4. **Receiving together.** Several employees can be active on one shipment. Each count is stored against the person who entered it.
 5. **Unloading crew.** Someone badges onto the truck, a lead adds a name, or a supervisor enters the paper list. Each person has a start and an end.
 6. **Carrier-bin scans.** A package is scanned into an open USPS, UPS, FedEx, DHL, or other carrier bin. A placement without a scan requires a reason.

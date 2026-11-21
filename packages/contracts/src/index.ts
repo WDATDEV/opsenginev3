@@ -198,8 +198,7 @@ export const completePackSchema = z.object({
 });
 
 export const recordPickSchema = z.object({
-  deviceCode: code,
-  badge: optionalText,
+  badge: code,
   batchCode: z.string().trim().min(1).max(80),
   sku: z.string().trim().min(1).max(80),
   qty: z.number().int().min(1).max(100000).default(1),

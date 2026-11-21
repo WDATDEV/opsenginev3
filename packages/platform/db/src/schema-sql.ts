@@ -563,6 +563,7 @@ CREATE TABLE IF NOT EXISTS tracking.pick_events (
 );
 
 ALTER TABLE tracking.pick_events ADD COLUMN IF NOT EXISTS client_id uuid;
+ALTER TABLE tracking.pick_events ALTER COLUMN device_id DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS tracking.inbound_shipments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

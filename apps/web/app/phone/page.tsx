@@ -621,7 +621,7 @@ export default function WarehousePage() {
             <section>
               <p className="mb-2 text-sm font-semibold text-muted">Record your work</p>
               {panel === "packing" ? <PackPanel badge={badge} run={run} /> : null}
-              {panel === "picking" ? <PickPanel context={context} badge={badge} run={run} /> : null}
+              {panel === "picking" ? <PickPanel badge={badge} run={run} /> : null}
               {panel === "receiving" ? (
                 <ReceivePanel context={context} badge={badge} run={run} jobId={currentJobId} />
               ) : null}
@@ -734,54 +734,27 @@ function PackPanel({
 }
 
 function PickPanel({
-  context,
   badge,
   run,
 }: {
-  context: Context;
   badge: string;
   run: (path: string, body: unknown) => Promise<boolean>;
 }) {
-  const [deviceCode, setDeviceCode] = useState(context.checkout ?? context.scanners[0]?.code ?? "");
   const [sku, setSku] = useState("");
   const [batchCode, setBatchCode] = useState("");
-  const device = context.scanners.find((item) => item.code === deviceCode);
-  if (context.scanners.length === 0) {
-    return <p className="card p-4 text-sm text-muted">No scanner or handheld is on the floor yet.</p>;
-  }
   return (
     <form
       className="card space-y-3 p-4"
       onSubmit={(event) => {
         event.preventDefault();
-        void run("/tracking/picking", { deviceCode, badge, batchCode, sku, qty: 1 });
+        void run("/tracking/picking", { badge, batchCode, sku, qty: 1 });
       }}
     >
-      <Field label="Scanner or handheld">
-        <select className="field" value={deviceCode} onChange={(event) => setDeviceCode(event.target.value)}>
-          {context.scanners.map((item) => (
-            <option key={item.code} value={item.code}>
-              {item.code} · {item.ownership === "personal" ? item.assignedTo : "shared"}
-            </option>
-          ))}
-        </select>
-      </Field>
-      {device?.ownership === "shared_pool" ? (
-        <button
-          className="btn btn-ghost tap w-full"
-          type="button"
-          onClick={() => run("/tracking/devices/checkout", { badge, deviceCode })}
-        >
-          Check out {deviceCode}
-        </button>
-      ) : (
-        <p className="text-sm text-muted">Personal scanner. The pick counts for {device?.assignedTo}.</p>
-      )}
       <Field label="Batch">
-        <input className="field" value={batchCode} onChange={(event) => setBatchCode(event.target.value)} />
+        <input className="field" required value={batchCode} onChange={(event) => setBatchCode(event.target.value)} />
       </Field>
       <Field label="SKU">
-        <input className="field" value={sku} onChange={(event) => setSku(event.target.value)} placeholder="SKU-TEE" />
+        <input className="field" required value={sku} onChange={(event) => setSku(event.target.value)} placeholder="SKU-TEE" />
       </Field>
       <button className="btn btn-primary tap w-full" type="submit">
         Scan pick

@@ -235,8 +235,7 @@ export class TrackingController {
     @CurrentPrincipal() principal: Principal | null,
     @Body(new ZodPipe(recordPickSchema))
     body: {
-      deviceCode: string;
-      badge?: string;
+      badge: string;
       batchCode: string;
       sku: string;
       qty: number;

@@ -13,7 +13,7 @@ const SERVICE_HINT: Record<string, string> = {
   receiving: "Inbound counts. Turn on, then work on the Receiving page.",
   unloading: "Trailers. Turn on, then work on the Unloading page.",
   packing: "Who packed which order, recorded by badge.",
-  picking: "Scanner or handheld picks. Work on the Picking page.",
+  picking: "Who picked what, recorded by badge.",
   sorting: "Scan packages into a carrier bin. Work on the Sorting page.",
   people: "Badges and which departments each person may work.",
   checkin: "Clock in at the gate or floor phone.",
@@ -80,7 +80,7 @@ export default function ClientSettingsPage() {
       <PageTitle
         kicker={client.name}
         title="Client settings"
-        detail={`${client.code}: turn on receiving, packing, picking, and sorting here, then set people, devices, and prices.`}
+        detail={`${client.code}: turn on receiving, packing, picking, and sorting here, then set people and prices.`}
       />
       <div className="space-y-3 empty:hidden">
         {message ? <Notice tone="ok">{message}</Notice> : null}
@@ -119,7 +119,7 @@ export default function ClientSettingsPage() {
             badge and which departments they may work. Not unloading-only unless you pick that.
           </li>
           <li>
-            Packing is recorded by badge. Scanners for picking and sorting are warehouse-wide, personal or checked out.
+            Packing and picking are recorded by each person's badge.
           </li>
           <li>
             Prices below — hourly per department, then optional pallet, carton, SKU, or pack counts.

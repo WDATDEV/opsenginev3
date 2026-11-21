@@ -57,7 +57,7 @@ export const trackingPolicy = [
     area: "Picking",
     question: "Does each picker use their own barcode scanner or handheld device?",
     answer:
-      "Both. A personal scanner is assigned to one picker. A shared handheld must be checked out, or the picker badges at the moment of the scan.",
+      "Either works. Picks are recorded by the picker's badge, so it does not matter which device they use.",
   },
   {
     id: "receiving-concurrent",

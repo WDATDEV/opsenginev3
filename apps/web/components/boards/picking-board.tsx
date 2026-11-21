@@ -6,15 +6,6 @@ import { Field, Notice, PageTitle, useResource } from "@/components/ui";
 import { ApiError, canManage, post, when } from "@/lib/api";
 
 type Board = {
-  devices: {
-    code: string;
-    label: string;
-    kind: string;
-    ownership: string;
-    location: string;
-    assignedTo: string | null;
-    checkedOutTo: string | null;
-  }[];
   events: {
     id: string;
     batchCode: string;
@@ -31,10 +22,9 @@ type Board = {
 export function PickingBoard({ client }: { client?: { id: string; name: string } }) {
   const board = useResource<Board>("/tracking/picking");
   const user = useSession();
-  const [deviceCode, setDeviceCode] = useState("SCN-04");
-  const [badge, setBadge] = useState("B-10443");
-  const [batchCode, setBatchCode] = useState("BATCH-19");
-  const [sku, setSku] = useState("SKU-TEE");
+  const [badge, setBadge] = useState("");
+  const [batchCode, setBatchCode] = useState("");
+  const [sku, setSku] = useState("");
   const [qty, setQty] = useState(1);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -42,9 +32,9 @@ export function PickingBoard({ client }: { client?: { id: string; name: string }
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
+    setMessage(null);
     try {
       const result = await post<{ message: string }>("/tracking/picking", {
-        deviceCode,
         badge,
         batchCode,
         sku,
@@ -52,6 +42,8 @@ export function PickingBoard({ client }: { client?: { id: string; name: string }
         ...(client ? { clientId: client.id } : {}),
       });
       setMessage(result.message);
+      setSku("");
+      setQty(1);
       board.reload();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not record that pick.");
@@ -62,11 +54,11 @@ export function PickingBoard({ client }: { client?: { id: string; name: string }
     <div>
       <PageTitle
         kicker="Picking"
-        title={client ? `Picking for ${client.name}` : "Scanner or handheld"}
+        title={client ? `Picking for ${client.name}` : "Who picked what"}
         detail={
           client
-            ? `Record picks here for ${client.name}. A personal scanner belongs to one picker. A shared handheld needs a checkout or a badge.`
-            : "Record picks on this board. A personal scanner belongs to one picker. A shared handheld has to be checked out, or the picker badges at the scan."
+            ? `Who picked what for ${client.name}. Scan the picker's badge with each pick.`
+            : "Scan the picker's badge with each pick."
         }
       />
       {board.error ? <Notice tone="bad">{board.error}</Notice> : null}
@@ -76,23 +68,14 @@ export function PickingBoard({ client }: { client?: { id: string; name: string }
             <h2 className="font-semibold">Record a pick</h2>
             {message ? <Notice tone="ok">{message}</Notice> : null}
             {error ? <Notice tone="bad">{error}</Notice> : null}
-            <Field label="Device">
-              <select className="field" value={deviceCode} onChange={(event) => setDeviceCode(event.target.value)}>
-                {board.data?.devices.map((device) => (
-                  <option key={device.code} value={device.code}>
-                    {device.code}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Badge, if this device is shared">
-              <input className="field font-mono" value={badge} onChange={(event) => setBadge(event.target.value)} />
+            <Field label="Picker's badge">
+              <input className="field font-mono" required value={badge} onChange={(event) => setBadge(event.target.value)} />
             </Field>
             <Field label="Batch">
-              <input className="field" value={batchCode} onChange={(event) => setBatchCode(event.target.value)} />
+              <input className="field" required value={batchCode} onChange={(event) => setBatchCode(event.target.value)} />
             </Field>
             <Field label="SKU">
-              <input className="field" value={sku} onChange={(event) => setSku(event.target.value)} />
+              <input className="field" required value={sku} onChange={(event) => setSku(event.target.value)} />
             </Field>
             <Field label="Qty">
               <input className="field" type="number" min={1} value={qty} onChange={(event) => setQty(Number(event.target.value))} />
@@ -103,24 +86,6 @@ export function PickingBoard({ client }: { client?: { id: string; name: string }
           </form>
         ) : null}
         <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            {board.data?.devices.map((device) => (
-              <article key={device.code} className="card p-4">
-                <p className="font-mono text-sm">{device.code}</p>
-                <h3 className="font-semibold">{device.label}</h3>
-                <p className="mt-2 text-sm capitalize">
-                  {device.ownership === "personal" ? "Personal" : "Shared pool"} · {device.kind.replaceAll("_", " ")}
-                </p>
-                <p className="text-sm text-muted">
-                  {device.assignedTo
-                    ? `Assigned to ${device.assignedTo}`
-                    : device.checkedOutTo
-                      ? `Checked out to ${device.checkedOutTo}`
-                      : "In the pool"}
-                </p>
-              </article>
-            ))}
-          </div>
           <div className="card p-4">
             <h2 className="font-semibold">Picks</h2>
             <ul className="mt-3 space-y-3">
@@ -129,11 +94,11 @@ export function PickingBoard({ client }: { client?: { id: string; name: string }
                 .map((item) => (
                 <li key={item.id} className="border-b border-black/5 pb-3 last:border-0">
                   <p>
-                    {item.employeeName} picked {item.qty} × {item.sku} on {item.deviceCode}
+                    {item.employeeName} picked {item.qty} × {item.sku}
+                    {item.deviceCode ? ` on ${item.deviceCode}` : ""}
                   </p>
                   <p className="mt-1 text-xs text-muted">
-                    {item.batchCode} · {item.via === "personal_device" ? "personal scanner" : "shared device"} ·{" "}
-                    {when(item.pickedAt)}
+                    {item.batchCode} · {when(item.pickedAt)}
                   </p>
                 </li>
               ))}

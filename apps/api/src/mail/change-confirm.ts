@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { APPROVAL_TTL_SECONDS, canonicalChange, signChangeApproval } from "./approval.js";
 import { parseChangeArgs, type ChangeKind } from "./change-args.js";
-import { allowedStockClient, liveBinFromRecords, pickLocationLookupTool, argsForLocationLookup, STOCK_JOB } from "./stock-change.js";
+import { liveBinFromRecords, pickLocationLookupTool, argsForLocationLookup, STOCK_JOB } from "./stock-change.js";
 import { callFailure, connectorRefusal, redactSensitive, SETUP_ERROR, writeSetup } from "./stock-confirm.js";
+import { hasClientLabel, labelledForAnotherClient, TEST_CLIENT_ERROR, toolFiltersByClient } from "./test-client.js";
 import type { WarehanceClient } from "./warehance-client.js";
 
 export const CHANGE_TTL_MS = STOCK_JOB.ttlMs;
@@ -37,39 +38,27 @@ export function recordsOf(data: unknown): Record<string, unknown>[] {
   return [];
 }
 
-function clientOf(record: Record<string, unknown>) {
-  const nested = asObj(record.client);
-  const id = Number(nested.id ?? record.client_id);
-  const name = typeof nested.name === "string" ? nested.name : typeof record.client_name === "string" ? record.client_name : "";
-  return { id: Number.isInteger(id) && id > 0 ? id : null, name };
-}
-
-export function clientAllowed(record: Record<string, unknown>, thread: ThreadScope) {
-  const owner = clientOf(record);
-  if (thread.warehanceClientId != null && owner.id != null && owner.id !== thread.warehanceClientId) return false;
-  const name = owner.name || thread.warehanceClientName || "";
-  return allowedStockClient(name);
-}
-
 function snapshotJson(value: unknown) {
   return JSON.stringify(value ?? null);
+}
+
+function isInventoryKind(kind: ChangeKind) {
+  return kind === "adjust_inventory" || kind === "move_inventory";
 }
 
 export async function prepareChangeCard(
   input: { kind?: string; args?: unknown; summary?: string },
   thread: ThreadScope,
   write: WarehanceClient,
+  testClientId: number,
 ): Promise<{ ok: true; card: ChatChange } | { ok: false; error: string }> {
-  if (thread.warehanceClientName && !allowedStockClient(thread.warehanceClientName)) {
-    return { ok: false, error: "Stock changes are only allowed for AI Testing Client." };
-  }
+  if (thread.warehanceClientId !== testClientId) return { ok: false, error: TEST_CLIENT_ERROR };
   const parsed = parseChangeArgs(String(input.kind ?? ""), input.args ?? {});
   if (!parsed.ok) return parsed;
   const args = { ...parsed.args };
-  if ((parsed.kind === "adjust_inventory" || parsed.kind === "move_inventory") && thread.warehanceClientId != null && args.client_id == null) {
-    args.client_id = thread.warehanceClientId;
-  }
-  const snapped = await snapshotTarget(parsed.kind, args, thread, write);
+  if (args.client_id != null && args.client_id !== testClientId) return { ok: false, error: TEST_CLIENT_ERROR };
+  if (isInventoryKind(parsed.kind)) args.client_id = testClientId;
+  const snapped = await snapshotTarget(parsed.kind, args, testClientId, write);
   if (!snapped.ok) return snapped;
   const now = new Date();
   return {
@@ -91,25 +80,25 @@ export async function prepareChangeCard(
 async function snapshotTarget(
   kind: ChangeKind,
   args: Record<string, unknown>,
-  thread: ThreadScope,
+  clientId: number,
   write: WarehanceClient,
 ): Promise<{ ok: true; before: Record<string, unknown> } | { ok: false; error: string }> {
-  if (kind === "adjust_inventory" || kind === "move_inventory") return snapshotInventory(kind, args, thread, write);
-  if (kind === "update_product") return snapshotProduct(args, thread, write);
-  return snapshotOrder(kind, args, thread, write);
+  if (isInventoryKind(kind)) return snapshotInventory(kind, args, clientId, write);
+  if (kind === "update_product") return snapshotProduct(args, clientId, write);
+  return snapshotOrder(kind, args, clientId, write);
 }
 
 async function snapshotInventory(
   kind: ChangeKind,
   args: Record<string, unknown>,
-  thread: ThreadScope,
+  clientId: number,
   write: WarehanceClient,
 ) {
   const sku = String(args.sku);
-  const clientId = typeof args.client_id === "number" ? args.client_id : thread.warehanceClientId;
   const tools = await write.listTools();
   const tool = pickLocationLookupTool(tools);
   if (!tool) return { ok: false as const, error: "The write key cannot search inventory locations." };
+  if (!toolFiltersByClient(tools, tool.name)) return { ok: false as const, error: TEST_CLIENT_ERROR };
   const locations =
     kind === "move_inventory"
       ? [String(args.from_location_name), String(args.to_location_name)]
@@ -122,9 +111,8 @@ async function snapshotInventory(
     const { data, failed } = await write.call(tool.name, lookupArgs);
     if (failed) return { ok: false as const, error: typeof data === "string" ? data : "Could not read that bin." };
     const records = recordsOf(data);
-    const first = records[0] ?? {};
-    if (!clientAllowed(productClient(first), thread) && !clientAllowed(first, thread)) {
-      return { ok: false as const, error: "Stock changes are only allowed for AI Testing Client." };
+    if (records.some((record) => labelledForAnotherClient(record, clientId))) {
+      return { ok: false as const, error: TEST_CLIENT_ERROR };
     }
     const live = liveBinFromRecords(records, {
       sku,
@@ -141,38 +129,39 @@ async function snapshotInventory(
   return { ok: true as const, before: { sku, warehouse: args.warehouse, bins } };
 }
 
-function productClient(record: Record<string, unknown>) {
-  const product = asObj(record.product);
-  return { client: asObj(product.client).id != null ? product.client : record.client, client_id: record.client_id, client_name: record.client_name };
-}
-
-async function snapshotProduct(args: Record<string, unknown>, thread: ThreadScope, write: WarehanceClient) {
+async function snapshotProduct(args: Record<string, unknown>, clientId: number, write: WarehanceClient) {
   const productId = Number(args.product_id);
-  const { data, failed } = await write.call("search_products", { limit: 50, ...(thread.warehanceClientId ? { client_id: thread.warehanceClientId } : {}) });
+  if (!toolFiltersByClient(await write.listTools(), "search_products")) return { ok: false as const, error: TEST_CLIENT_ERROR };
+  const { data, failed } = await write.call("search_products", { limit: 50, client_id: clientId });
   if (failed) return { ok: false as const, error: typeof data === "string" ? data : "Could not read that product." };
   const record = recordsOf(data).find((item) => Number(item.id) === productId);
   if (!record) return { ok: false as const, error: "That product was not found." };
-  if (!clientAllowed(record, thread)) return { ok: false as const, error: "Stock changes are only allowed for AI Testing Client." };
+  if (labelledForAnotherClient(record, clientId)) return { ok: false as const, error: TEST_CLIENT_ERROR };
   return {
     ok: true as const,
     before: pick(record, ["id", "name", "barcode", "product_note", "pack_note", "return_note", "weight", "length", "width", "height", "reserve_amount", "replenishment_level", "archived", "tags"]),
   };
 }
 
-async function snapshotOrder(kind: ChangeKind, args: Record<string, unknown>, thread: ThreadScope, write: WarehanceClient) {
+async function snapshotOrder(kind: ChangeKind, args: Record<string, unknown>, clientId: number, write: WarehanceClient) {
   if (kind === "update_order" || kind === "cancel_order") {
     const orderId = Number(args.order_id);
     const { data, failed } = await write.call("get_order", { order_id: orderId });
     if (failed) return { ok: false as const, error: typeof data === "string" ? data : "Could not read that order." };
     const record = recordsOf(data)[0];
     if (!record) return { ok: false as const, error: "That order was not found." };
-    if (!clientAllowed(record, thread)) return { ok: false as const, error: "Stock changes are only allowed for AI Testing Client." };
+    if (labelledForAnotherClient(record, clientId)) return { ok: false as const, error: TEST_CLIENT_ERROR };
+    // get_order has no client filter, so an unlabelled order must also appear in this client's search.
+    if (!hasClientLabel(record)) {
+      const owned = await orderInClientSearch(write, orderId, clientId);
+      if (!owned.ok) return owned;
+    }
     return { ok: true as const, before: orderBefore(record) };
   }
   const itemId = Number(args.order_item_id);
-  const found = await findOrderItem(write, itemId, thread);
+  const found = await findOrderItem(write, itemId, clientId);
   if (!found.ok) return found;
-  if (!clientAllowed(found.order, thread)) return { ok: false as const, error: "Stock changes are only allowed for AI Testing Client." };
+  if (labelledForAnotherClient(found.order, clientId)) return { ok: false as const, error: TEST_CLIENT_ERROR };
   return {
     ok: true as const,
     before: {
@@ -183,9 +172,26 @@ async function snapshotOrder(kind: ChangeKind, args: Record<string, unknown>, th
   };
 }
 
-async function findOrderItem(write: WarehanceClient, itemId: number, thread: ThreadScope) {
-  const args: Record<string, unknown> = { limit: 50 };
-  if (thread.warehanceClientId) args.client_id = thread.warehanceClientId;
+async function orderInClientSearch(write: WarehanceClient, orderId: number, clientId: number) {
+  if (!toolFiltersByClient(await write.listTools(), "search_orders")) return { ok: false as const, error: TEST_CLIENT_ERROR };
+  const args: Record<string, unknown> = { limit: 50, client_id: clientId };
+  let cursor: string | undefined;
+  for (let page = 0; page < 10; page += 1) {
+    if (cursor) args.cursor = cursor;
+    const { data, failed } = await write.call("search_orders", args);
+    if (failed) return { ok: false as const, error: typeof data === "string" ? data : "Could not read that order." };
+    const records = recordsOf(data);
+    if (records.some((order) => Number(order.id) === orderId && !labelledForAnotherClient(order, clientId))) return { ok: true as const };
+    const next = asObj(data).next_cursor;
+    cursor = typeof next === "string" ? next : undefined;
+    if (!cursor) break;
+  }
+  return { ok: false as const, error: TEST_CLIENT_ERROR };
+}
+
+async function findOrderItem(write: WarehanceClient, itemId: number, clientId: number) {
+  if (!toolFiltersByClient(await write.listTools(), "search_orders")) return { ok: false as const, error: TEST_CLIENT_ERROR };
+  const args: Record<string, unknown> = { limit: 50, client_id: clientId };
   let cursor: string | undefined;
   for (let page = 0; page < 10; page += 1) {
     if (cursor) args.cursor = cursor;
@@ -234,8 +240,12 @@ function pick(record: Record<string, unknown>, keys: string[]) {
   return out;
 }
 
-export async function rereadMatches(card: ChatChange, thread: ThreadScope, write: WarehanceClient) {
-  const now = await snapshotTarget(card.kind, card.args, thread, write);
+export async function rereadMatches(card: ChatChange, thread: ThreadScope, write: WarehanceClient, testClientId: number) {
+  if (thread.warehanceClientId !== testClientId) return { ok: false as const, error: TEST_CLIENT_ERROR };
+  if (isInventoryKind(card.kind) ? card.args.client_id !== testClientId : card.args.client_id != null) {
+    return { ok: false as const, error: TEST_CLIENT_ERROR };
+  }
+  const now = await snapshotTarget(card.kind, card.args, testClientId, write);
   if (!now.ok) return { ok: false as const, error: now.error };
   if (snapshotJson(now.before) !== snapshotJson(card.before)) return { ok: false as const, error: STALE_CARD };
   return { ok: true as const };

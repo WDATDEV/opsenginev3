@@ -234,6 +234,7 @@ export type ChatJobChange = {
   billBasis: string | null;
   people: ChatJobPerson[];
   summary: string;
+  notSaved?: string[];
   status: "proposed" | "applying" | "applied" | "rejected";
   proposedAt: string;
   expiresAt: string;
@@ -506,7 +507,7 @@ export const devices = tracking.table("devices", {
   assignedEmployeeId: uuid("assigned_employee_id"),
   location: text("location").notNull(),
   status: text("status").notNull().default("available"),
-  warehanceLoginMode: text("warehance_login_mode").notNull().default("none"),
+  stationMode: text("station_mode").notNull().default("none"),
   clientId: uuid("client_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -603,10 +604,9 @@ export const packEvents = tracking.table("pack_events", {
   orderNumber: text("order_number").notNull().unique(),
   clientId: uuid("client_id"),
   employeeId: uuid("employee_id").notNull(),
-  deviceId: uuid("device_id").notNull(),
+  // Packs are recorded by badge. Only older packs name a computer.
+  deviceId: uuid("device_id"),
   attribution: text("attribution").notNull(),
-  warehanceUserId: text("warehance_user_id"),
-  warehanceRecorded: boolean("warehance_recorded").notNull().default(false),
   loginMismatch: boolean("login_mismatch").notNull().default(false),
   units: integer("units").notNull().default(1),
   packedAt: timestamp("packed_at", { withTimezone: true }).notNull(),
@@ -621,7 +621,8 @@ export const pickEvents = tracking.table("pick_events", {
   qty: integer("qty").notNull(),
   clientId: uuid("client_id"),
   employeeId: uuid("employee_id").notNull(),
-  deviceId: uuid("device_id").notNull(),
+  // Picks are recorded by badge. Only older picks name a device.
+  deviceId: uuid("device_id"),
   via: text("via").notNull(),
   pickedAt: timestamp("picked_at", { withTimezone: true }).notNull(),
   segmentId: uuid("segment_id"),

@@ -40,14 +40,10 @@ import {
   normalizeDevice,
   planPause,
   planTaskSwitch,
-  resolvePacker,
-  resolvePicker,
+  stationModeFromStored,
   taskFor,
   trackingPolicy,
   type Department,
-  type DeviceKind,
-  type LoginMode,
-  type Ownership,
 } from "@opsengine/tracking";
 import type { ClientService, GateMode } from "@opsengine/contracts";
 import { assertClientService, enabledServiceList } from "../clients/access.js";
@@ -99,42 +95,25 @@ function asDepartment(value: string): Department {
   return "indirect";
 }
 
-function asKind(value: string): DeviceKind {
-  if (
-    value === "packing_computer" ||
-    value === "barcode_scanner" ||
-    value === "handheld"
-  ) {
-    return value;
-  }
-  throw new TrackingError("That device type is not registered.");
-}
-
-function asMode(value: string): LoginMode {
-  if (value === "individual" || value === "shared" || value === "none") return value;
-  return "none";
-}
-
-function asOwnership(value: string): Ownership {
-  return value === "personal" ? "personal" : "shared_pool";
-}
-
 function packSentence(input: {
   name: string;
   orderNumber: string;
   attribution: string;
   loginMismatch: boolean;
 }) {
-  if (input.loginMismatch) {
-    return `${input.name} packed ${input.orderNumber}. The badge did not match the station login, so the badge is the packer of record.`;
+  if (input.attribution === "badge") {
+    return `${input.name} packed ${input.orderNumber}.`;
   }
-  if (input.attribution === "warehance_user") {
-    return `${input.name} packed ${input.orderNumber} on their own station.`;
+  if (input.loginMismatch) {
+    return `${input.name} packed ${input.orderNumber}. The badge did not match who is assigned to this computer, so the badge is the packer of record.`;
+  }
+  if (input.attribution === "assigned") {
+    return `${input.name} packed ${input.orderNumber} on their assigned computer.`;
   }
   if (input.attribution === "manual") {
     return `${input.name} was entered as the packer of ${input.orderNumber} by a supervisor.`;
   }
-  return `${input.name} packed ${input.orderNumber} by badging onto a shared station.`;
+  return `${input.name} packed ${input.orderNumber} by badging onto a shared computer.`;
 }
 
 @Injectable()
@@ -248,7 +227,6 @@ export class TrackingService {
           name: person.name,
           badgeCode: person.badgeCode,
           departmentHome: person.departmentHome,
-          warehanceUserId: person.warehanceUserId,
           clockedIn: Boolean(shift),
           onMeal,
           entry: shift?.source ?? null,
@@ -282,7 +260,7 @@ export class TrackingService {
       })),
       ...picks.map((row) => ({
         at: row.pickedAt,
-        text: `${name(row.employeeId)} picked ${row.qty} × ${row.sku} on ${deviceById.get(row.deviceId)?.code ?? "a scanner"}.`,
+        text: `${name(row.employeeId)} picked ${row.qty} × ${row.sku}${row.deviceId ? ` on ${deviceById.get(row.deviceId)?.code ?? "a scanner"}` : ""}.`,
       })),
       ...lines.map((row) => ({
         at: row.recordedAt,
@@ -294,7 +272,7 @@ export class TrackingService {
       })),
       ...scans.map((row) => ({
         at: row.scannedAt,
-        text: `${name(row.employeeId)} ${row.method === "scan" ? "scanned" : "placed"} ${row.trackingNumber} into ${gaylordById.get(row.gaylordId)?.code ?? "a gaylord"}.`,
+        text: `${name(row.employeeId)} ${row.method === "scan" ? "scanned" : "placed"} ${row.trackingNumber} into ${gaylordById.get(row.gaylordId)?.code ?? "a carrier bin"}.`,
       })),
     ]
       .sort((a, b) => b.at.getTime() - a.at.getTime())
@@ -406,7 +384,6 @@ export class TrackingService {
           departmentHome: employee.departmentHome,
           departments: employee.departments?.length ? employee.departments : null,
           clientId: employee.clientId,
-          warehanceUserId: employee.warehanceUserId,
           clockedIn: Boolean(shift),
           onMeal: Boolean(meal),
         },
@@ -470,7 +447,7 @@ export class TrackingService {
             return {
               code: row.code,
               label: row.label,
-              loginMode: row.warehanceLoginMode,
+              stationMode: stationModeFromStored(row.stationMode),
               claimedBy: claimed ? nameById.get(claimed.employeeId) ?? null : null,
               assignedTo: row.assignedEmployeeId
                 ? nameById.get(row.assignedEmployeeId) ?? null
@@ -1037,7 +1014,7 @@ export class TrackingService {
         throw new TrackingError("Badge onto a packing computer.");
       }
       if (
-        device.warehanceLoginMode === "individual" &&
+        stationModeFromStored(device.stationMode) === "assigned" &&
         device.assignedEmployeeId &&
         device.assignedEmployeeId !== employee.id
       ) {
@@ -1071,11 +1048,11 @@ export class TrackingService {
       }
 
       await this.touchSegment(tx, employee, shift.id, "packing", device.id);
-      const shared = device.warehanceLoginMode === "shared";
+      const shared = stationModeFromStored(device.stationMode) === "shared";
       return {
         message: shared
-          ? `${employee.name} claimed ${device.code}. This station is shared, so this badge is the packer.`
-          : `${employee.name} is at ${device.code} on their own station.`,
+          ? `${employee.name} claimed ${device.code}. This computer is shared, so this badge is the packer.`
+          : `${employee.name} is at ${device.code} on their assigned computer.`,
       };
     });
   }
@@ -1098,20 +1075,13 @@ export class TrackingService {
   async completePack(
     input: {
       orderNumber: string;
-      deviceCode: string;
-      badge?: string;
+      badge: string;
       units: number;
-      warehanceRecorded?: boolean;
-      warehanceUserId?: string;
       clientId?: string;
     },
     principal: Principal | null,
   ) {
     return this.inTx(async (tx) => {
-      const device = await this.deviceByCode(tx, input.deviceCode);
-      if (device.kind !== "packing_computer") {
-        throw new TrackingError("Finish packing on a packing computer.");
-      }
       const orderNumber = clean(input.orderNumber);
       const [existing] = await tx
         .select()
@@ -1123,33 +1093,13 @@ export class TrackingService {
         throw new TrackingError(`${orderNumber} was already packed by ${packer.name}.`);
       }
 
-      const badgeEmployee = input.badge ? await this.employeeByBadge(tx, input.badge) : null;
-      const session = await this.openSessionForDevice(tx, device.id);
-      let mapped: Employee | null = null;
-      if (device.warehanceLoginMode === "individual") {
-        if (input.warehanceUserId) {
-          mapped = await this.employeeByWarehance(tx, input.warehanceUserId);
-        } else if (device.assignedEmployeeId) {
-          mapped = await this.employeeById(tx, device.assignedEmployeeId);
-        }
-      }
-
-      const resolved = resolvePacker({
-        loginMode: asMode(device.warehanceLoginMode),
-        badgeEmployeeId: badgeEmployee?.id,
-        stationSessionEmployeeId: session?.employeeId,
-        warehanceMappedEmployeeId: mapped?.id,
-      });
-      if (!resolved.ok) throw new TrackingError(resolved.reason);
-
-      const employee = await this.employeeById(tx, resolved.employeeId);
+      const employee = await this.employeeByBadge(tx, input.badge);
       if (principal && !can(principal, "tracking.manage") && !can(principal, "tracking.record")) {
         throw new TrackingError("You cannot record packing.");
       }
       if (input.clientId) await assertClientService(this.db.db, input.clientId, "packing");
       const shift = await this.requireReady(tx, employee);
-      const segmentId = await this.touchSegment(tx, employee, shift.id, "packing", device.id);
-      const warehanceRecorded = input.warehanceRecorded ?? false;
+      const segmentId = await this.touchSegment(tx, employee, shift.id, "packing", null);
       const now = new Date();
       const [created] = await tx
         .insert(packEvents)
@@ -1157,11 +1107,9 @@ export class TrackingService {
           orderNumber,
           clientId: input.clientId ?? null,
           employeeId: employee.id,
-          deviceId: device.id,
-          attribution: resolved.attribution,
-          warehanceUserId: mapped?.warehanceUserId ?? input.warehanceUserId ?? null,
-          warehanceRecorded,
-          loginMismatch: resolved.loginMismatch,
+          deviceId: null,
+          attribution: "badge",
+          loginMismatch: false,
           units: input.units,
           packedAt: now,
           segmentId,
@@ -1172,11 +1120,11 @@ export class TrackingService {
       const message = packSentence({
         name: employee.name,
         orderNumber,
-        attribution: resolved.attribution,
-        loginMismatch: resolved.loginMismatch,
+        attribution: "badge",
+        loginMismatch: false,
       });
       await this.audit(tx, principal?.id ?? employee.id, "tracking.pack_recorded", "pack_event", created.id, message);
-      return { message, orderNumber, employeeName: employee.name, warehanceRecorded };
+      return { message, orderNumber, employeeName: employee.name };
     });
   }
 
@@ -1237,8 +1185,7 @@ export class TrackingService {
 
   async recordPick(
     input: {
-      deviceCode: string;
-      badge?: string;
+      badge: string;
       batchCode: string;
       sku: string;
       qty: number;
@@ -1248,24 +1195,13 @@ export class TrackingService {
     principal: Principal | null,
   ) {
     return this.inTx(async (tx) => {
-      const device = await this.deviceByCode(tx, input.deviceCode);
-      const badgeEmployee = input.badge ? await this.employeeByBadge(tx, input.badge) : null;
-      const checkout = await this.openCheckoutForDevice(tx, device.id);
-      const resolved = resolvePicker({
-        kind: asKind(device.kind),
-        ownership: asOwnership(device.ownership),
-        assignedEmployeeId: device.assignedEmployeeId,
-        checkoutEmployeeId: checkout?.employeeId,
-        badgeEmployeeId: badgeEmployee?.id,
-      });
-      if (!resolved.ok) throw new TrackingError(resolved.reason);
-      const employee = await this.employeeById(tx, resolved.employeeId);
+      const employee = await this.employeeByBadge(tx, input.badge);
       if (principal && !can(principal, "tracking.record") && !can(principal, "tracking.manage")) {
         throw new TrackingError("You cannot record picks.");
       }
       if (input.clientId) await assertClientService(this.db.db, input.clientId, "picking");
       const shift = await this.requireReady(tx, employee);
-      const segmentId = await this.touchSegment(tx, employee, shift.id, "picking", device.id);
+      const segmentId = await this.touchSegment(tx, employee, shift.id, "picking", null);
       const now = new Date();
       const [created] = await tx
         .insert(pickEvents)
@@ -1276,16 +1212,14 @@ export class TrackingService {
           qty: input.qty,
           clientId: input.clientId ?? null,
           employeeId: employee.id,
-          deviceId: device.id,
-          via: resolved.via,
+          deviceId: null,
+          via: "badge",
           pickedAt: now,
           segmentId,
         })
         .returning();
       if (!created) throw new TrackingError("Could not record that pick.");
-      const via =
-        resolved.via === "personal_device" ? "personal scanner" : "shared handheld";
-      const message = `${employee.name} picked ${input.qty} × ${clean(input.sku)} on ${device.code} (${via}).`;
+      const message = `${employee.name} picked ${input.qty} × ${clean(input.sku)}.`;
       await this.audit(tx, principal?.id ?? employee.id, "tracking.pick_recorded", "pick_event", created.id, message);
       return { message };
     });
@@ -1293,27 +1227,13 @@ export class TrackingService {
 
   async packingBoard() {
     const orm = this.db.db;
-    const [deviceRows, people, sessions, events] = await Promise.all([
+    const [deviceRows, people, events] = await Promise.all([
       orm.select().from(devices),
       orm.select().from(employees),
-      orm.select().from(stationSessions).where(isNull(stationSessions.endedAt)),
       orm.select().from(packEvents),
     ]);
     const names = new Map(people.map((person) => [person.id, person.name]));
     return {
-      stations: deviceRows
-        .filter((row) => row.kind === "packing_computer")
-        .map((row) => {
-          const session = sessions.find((item) => item.deviceId === row.id);
-          return {
-            code: row.code,
-            label: row.label,
-            location: row.location,
-            loginMode: row.warehanceLoginMode,
-            assignedTo: row.assignedEmployeeId ? names.get(row.assignedEmployeeId) ?? null : null,
-            claimedBy: session ? names.get(session.employeeId) ?? null : null,
-          };
-        }),
       events: events
         .sort((a, b) => b.packedAt.getTime() - a.packedAt.getTime())
         .map((row) => ({
@@ -1322,7 +1242,6 @@ export class TrackingService {
           employeeName: names.get(row.employeeId) ?? "Someone",
           deviceCode: deviceRows.find((device) => device.id === row.deviceId)?.code ?? "",
           attribution: row.attribution,
-          warehanceRecorded: row.warehanceRecorded,
           loginMismatch: row.loginMismatch,
           units: row.units,
           clientId: row.clientId,
@@ -1339,28 +1258,13 @@ export class TrackingService {
 
   async pickingBoard() {
     const orm = this.db.db;
-    const [deviceRows, people, checkouts, events] = await Promise.all([
+    const [deviceRows, people, events] = await Promise.all([
       orm.select().from(devices),
       orm.select().from(employees),
-      orm.select().from(deviceCheckouts).where(isNull(deviceCheckouts.endedAt)),
       orm.select().from(pickEvents),
     ]);
     const names = new Map(people.map((person) => [person.id, person.name]));
     return {
-      devices: deviceRows
-        .filter((row) => row.kind === "barcode_scanner" || row.kind === "handheld")
-        .map((row) => {
-          const held = checkouts.find((item) => item.deviceId === row.id);
-          return {
-            code: row.code,
-            label: row.label,
-            kind: row.kind,
-            ownership: row.ownership,
-            location: row.location,
-            assignedTo: row.assignedEmployeeId ? names.get(row.assignedEmployeeId) ?? null : null,
-            checkedOutTo: held ? names.get(held.employeeId) ?? null : null,
-          };
-        }),
       events: events
         .sort((a, b) => b.pickedAt.getTime() - a.pickedAt.getTime())
         .map((row) => ({
@@ -1379,7 +1283,8 @@ export class TrackingService {
   }
 
   async listEmployees() {
-    return this.db.db.select().from(employees);
+    const rows = await this.db.db.select().from(employees);
+    return rows.map(({ warehanceUserId: _ignored, ...row }) => row);
   }
 
   async createEmployee(input: {
@@ -1388,7 +1293,6 @@ export class TrackingService {
     departmentHome?: Department;
     departments?: Department[];
     employmentType: "employee" | "temp";
-    warehanceUserId?: string;
     clientId?: string;
   }) {
     const owner = input.clientId ? await assertClientService(this.db.db, input.clientId, "people") : null;
@@ -1408,7 +1312,6 @@ export class TrackingService {
           departmentHome: allowed[0] ?? "packing",
           departments: allowed,
           employmentType: input.employmentType,
-          warehanceUserId: input.warehanceUserId ? clean(input.warehanceUserId) : null,
           clientId: owner?.id ?? null,
         })
         .returning();
@@ -1791,7 +1694,7 @@ export class TrackingService {
           openedAt: new Date(),
         })
         .returning();
-      if (!created) throw new TrackingError("Could not open that gaylord.");
+      if (!created) throw new TrackingError("Could not open that carrier bin.");
       return created;
     });
   }
@@ -1809,7 +1712,7 @@ export class TrackingService {
       const shift = await this.requireReady(tx, employee);
       const code = clean(input.gaylordCode);
       const [gaylord] = await tx.select().from(gaylords).where(eq(gaylords.code, code)).limit(1);
-      if (!gaylord) throw new TrackingError("That gaylord is not open on the floor.");
+      if (!gaylord) throw new TrackingError("That carrier bin is not open on the floor.");
       const trackingNumber = clean(input.trackingNumber);
       const [duplicate] = await tx
         .select()
@@ -1823,7 +1726,7 @@ export class TrackingService {
           .from(gaylords)
           .where(eq(gaylords.id, duplicate.gaylordId))
           .limit(1);
-        duplicateCode = previous?.code ?? "another gaylord";
+        duplicateCode = previous?.code ?? "another carrier bin";
       }
       const check = assertSortPlacement({
         method: input.method,
@@ -1868,8 +1771,8 @@ export class TrackingService {
   async closeGaylord(gaylordId: string) {
     return this.inTx(async (tx) => {
       const [gaylord] = await tx.select().from(gaylords).where(eq(gaylords.id, gaylordId)).limit(1);
-      if (!gaylord) throw new TrackingError("That gaylord is not on the floor.");
-      if (gaylord.status !== "open") throw new TrackingError("That gaylord is already closed.");
+      if (!gaylord) throw new TrackingError("That carrier bin is not on the floor.");
+      if (gaylord.status !== "open") throw new TrackingError("That carrier bin is already closed.");
       await tx
         .update(gaylords)
         .set({ status: "closed", closedAt: new Date() })
@@ -2056,16 +1959,6 @@ export class TrackingService {
     return employee;
   }
 
-  private async employeeByWarehance(tx: Conn, warehanceUserId: string) {
-    const [employee] = await tx
-      .select()
-      .from(employees)
-      .where(eq(employees.warehanceUserId, clean(warehanceUserId)))
-      .limit(1);
-    if (!employee) throw new TrackingError("That station login is not linked to an employee.");
-    return employee;
-  }
-
   private async deviceByCode(tx: Conn, code: string) {
     const [device] = await tx.select().from(devices).where(eq(devices.code, clean(code))).limit(1);
     if (!device) throw new TrackingError("That device is not on file.");
@@ -2131,29 +2024,11 @@ export class TrackingService {
     return shift;
   }
 
-  private async openSessionForDevice(tx: Conn, deviceId: string) {
-    const [row] = await tx
-      .select()
-      .from(stationSessions)
-      .where(and(eq(stationSessions.deviceId, deviceId), isNull(stationSessions.endedAt)))
-      .limit(1);
-    return row ?? null;
-  }
-
   private async openSessionForEmployee(tx: Conn, employeeId: string) {
     const [row] = await tx
       .select()
       .from(stationSessions)
       .where(and(eq(stationSessions.employeeId, employeeId), isNull(stationSessions.endedAt)))
-      .limit(1);
-    return row ?? null;
-  }
-
-  private async openCheckoutForDevice(tx: Conn, deviceId: string) {
-    const [row] = await tx
-      .select()
-      .from(deviceCheckouts)
-      .where(and(eq(deviceCheckouts.deviceId, deviceId), isNull(deviceCheckouts.endedAt)))
       .limit(1);
     return row ?? null;
   }

@@ -1,11 +1,25 @@
 "use client";
 
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { useReloadClientNav, useSession } from "@/components/shell";
-import { Field, Notice, PageTitle, SkeletonList, Spinner, Switch, useResource } from "@/components/ui";
+import { Field, Flash, Notice, PageTitle, SkeletonList, Spinner, Switch, useResource } from "@/components/ui";
 import { ApiError, CLIENT_SERVICES, canManage, canManageJobs, money, post } from "@/lib/api";
 import type { ClientRecord } from "@/components/client-dashboard";
+
+const SERVICE_HINT: Record<string, string> = {
+  jobs: "Billable project. Open a job, then receive and unload on those boards picking that job.",
+  receiving: "Inbound counts. Turn on, then work on the Receiving page.",
+  unloading: "Trailers. Turn on, then work on the Unloading page.",
+  packing: "Who packed which order, recorded by badge.",
+  picking: "Who picked what, recorded by badge.",
+  sorting: "Scan packages into a carrier bin. Work on the Sorting page.",
+  people: "Badges and which departments each person may work.",
+  checkin: "Clock in at the gate or floor phone.",
+  reports: "Hours and charges rolled up by job.",
+  invoices: "Approved charges billed to this client.",
+};
 
 // The services a client is billed hourly for.
 const HOURLY: [string, string][] = [
@@ -62,18 +76,61 @@ export default function ClientSettingsPage() {
   };
 
   return (
-    <div className="max-w-3xl space-y-5">
+    <div className="max-w-5xl space-y-5">
       <PageTitle
         kicker={client.name}
         title="Client settings"
-        detail={`${client.code}: set what each hour of work costs, and turn services on or off.`}
+        detail={`${client.code}: turn on receiving, packing, picking, and sorting here, then set people and prices.`}
       />
-      <div className="space-y-3 empty:hidden">
-        {message ? <Notice tone="ok">{message}</Notice> : null}
-        {error ? <Notice tone="bad">{error}</Notice> : null}
-      </div>
+      <Flash message={message} error={error} />
 
-      {/* Prices come first, since they are what people come here to set */}
+      <section className="card p-5 sm:p-6">
+        <h2 className="font-semibold">1. Services</h2>
+        <p className="mt-1 text-sm text-muted">
+          A service that is on shows in this client’s menu. Receiving and unloading need an open job. Packing, picking, and sorting run on their own pages.
+        </p>
+        <ul className="mt-3 grid gap-x-8 md:grid-cols-2">
+          {CLIENT_SERVICES.map(([service, label]) => {
+            const on = client.enabledServices.includes(service);
+            return (
+              <li key={service} className="flex items-center justify-between gap-3 border-t border-black/5 py-3">
+                <div>
+                  <p className="font-medium">{label}</p>
+                  <p className="text-sm text-muted">{SERVICE_HINT[service] ?? (on ? "In the menu" : "Off")}</p>
+                </div>
+                <Switch label={on ? "On" : "Off"} checked={on} disabled={!canManage(user?.role)} onChange={(next) => void toggle(service, next)} />
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
+      <section className="card p-5 sm:p-6">
+        <h2 className="font-semibold">2. Then set up the floor</h2>
+        <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm">
+          <li>
+            <Link className="font-medium text-moss underline" href={`/clients/${client.id}/people`}>
+              People
+            </Link>
+            {" — "}
+            badge and which departments they may work. Not unloading-only unless you pick that.
+          </li>
+          <li>
+            Packing and picking are recorded by each person's badge.
+          </li>
+          <li>
+            Prices below — hourly per department, then optional pallet, carton, SKU, or pack counts.
+          </li>
+          <li>
+            <Link className="font-medium text-moss underline" href={`/clients/${client.id}/jobs`}>
+              Jobs
+            </Link>
+            {" — "}
+            open a job when you bill a project. Receive and unload from those boards, picking the job.
+          </li>
+        </ol>
+      </section>
+
       <HourlyPrices
         key={client.rates.map((rate) => `${rate.id}:${rate.rateCents}`).join("|")}
         client={client}
@@ -82,25 +139,6 @@ export default function ClientSettingsPage() {
         onError={setError}
       />
       <OtherPrices client={client} manage={canManageJobs(user?.role)} onSaved={saved} onError={setError} />
-
-      <section className="card p-5 sm:p-6">
-        <h2 className="font-semibold">Services</h2>
-        <p className="mt-1 text-sm text-muted">A service that is on shows in this client’s menu.</p>
-        <ul className="mt-3 divide-y divide-black/5">
-          {CLIENT_SERVICES.map(([service, label]) => {
-            const on = client.enabledServices.includes(service);
-            return (
-              <li key={service} className="flex items-center justify-between gap-3 py-3">
-                <div>
-                  <p className="font-medium">{label}</p>
-                  <p className="text-sm text-muted">{on ? "In the menu" : "Off"}</p>
-                </div>
-                <Switch label={on ? "On" : "Off"} checked={on} disabled={!canManage(user?.role)} onChange={(next) => void toggle(service, next)} />
-              </li>
-            );
-          })}
-        </ul>
-      </section>
     </div>
   );
 }
@@ -152,7 +190,7 @@ function HourlyPrices({
 
   return (
     <section className="card p-5 sm:p-6">
-      <h2 className="font-semibold">Prices</h2>
+      <h2 className="font-semibold">3. Hourly prices</h2>
       <p className="mt-1 text-sm text-muted">What {client.name} pays for each hour of work. Leave a service empty if it is not billed by the hour.</p>
       <div className="mt-4 divide-y divide-black/5">
         {HOURLY.map(([service, label]) => (
@@ -211,11 +249,14 @@ function OtherPrices({
   return (
     <details className="card p-5 sm:p-6" open={others.length > 0}>
       <summary className="cursor-pointer select-none font-semibold">Other prices (per pallet, carton, unit, SKU, or a flat fee)</summary>
-      <ul className="mt-3 space-y-1 text-sm">
+      <ul className="mt-3 divide-y divide-black/5 text-sm">
         {others.length === 0 ? <li className="text-muted">None yet.</li> : null}
         {others.map((rate) => (
-          <li key={rate.id}>
-            {rate.label} · {rate.unit} · {money(rate.rateCents)}
+          <li key={rate.id} className="flex items-center justify-between gap-3 py-2">
+            <span className="min-w-0">
+              {rate.label} <span className="text-muted">· per {rate.unit}</span>
+            </span>
+            <span className="flex-none font-mono tabular-nums">{money(rate.rateCents)}</span>
           </li>
         ))}
       </ul>

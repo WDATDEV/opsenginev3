@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSession } from "@/components/shell";
 import { Badge, Field, Notice, SkeletonList, Spinner, timeAgo, useResource } from "@/components/ui";
 import { api, ApiError, hasSection, post } from "@/lib/api";
@@ -124,6 +124,92 @@ function WarehanceLinkIcon() {
       <path d="M8 5H5.5A1.5 1.5 0 0 0 4 6.5v8A1.5 1.5 0 0 0 5.5 16h8a1.5 1.5 0 0 0 1.5-1.5V12" />
     </svg>
   );
+}
+
+function recordId(href: string) {
+  const last = href.replace(/\/+$/, "").split("/").pop() ?? "";
+  return /^\d+$/.test(last) ? last : "";
+}
+
+function hitsFor(content: string, links: WarehanceLink[]) {
+  const hits: { start: number; end: number; link: WarehanceLink }[] = [];
+  const placed = new Set<string>();
+  for (const link of links) {
+    const id = recordId(link.href);
+    const needles = [...(id ? [`(ID: ${id})`, `ID: ${id}`, id] : []), link.label].filter((needle) => needle.trim());
+    let found: { start: number; end: number } | null = null;
+    for (const needle of needles) {
+      const at = content.indexOf(needle);
+      if (at >= 0) {
+        found = { start: at, end: at + needle.length };
+        break;
+      }
+    }
+    if (!found || placed.has(link.href)) continue;
+    placed.add(link.href);
+    hits.push({ ...found, link });
+  }
+  hits.sort((a, b) => a.end - b.end);
+  const out: typeof hits = [];
+  let last = -1;
+  for (const hit of hits) {
+    if (hit.start < last) continue;
+    out.push(hit);
+    last = hit.end;
+  }
+  return out;
+}
+
+function InlinePeek({ link }: { link: WarehanceLink }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointer(event: MouseEvent) {
+      if (!box.current?.contains(event.target as Node)) setOpen(false);
+    }
+    window.addEventListener("mousedown", onPointer);
+    return () => window.removeEventListener("mousedown", onPointer);
+  }, [open]);
+
+  return (
+    <span className="relative ml-1 inline-flex translate-y-0.5 align-text-bottom" ref={box}>
+      <button
+        className="inline-flex rounded-md p-0.5 text-moss hover:bg-moss/10"
+        type="button"
+        aria-label={`View ${link.label}`}
+        title={`View ${link.label}`}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <WarehanceLinkIcon />
+      </button>
+      {open ? (
+        <span className="absolute left-0 top-full z-20 mt-1 block w-[min(22rem,calc(100vw-6rem))] overflow-hidden rounded-xl border border-black/10 bg-surface shadow-md">
+          <span className="block truncate border-b border-black/10 px-2.5 py-2 text-sm font-medium">{link.label}</span>
+          <iframe title={link.label} src={link.href} className="h-64 w-full bg-white" />
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function LinkedReply({ content, links }: { content: string; links: WarehanceLink[] }) {
+  const hits = hitsFor(content, links);
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  hits.forEach((hit, index) => {
+    if (hit.start > cursor) nodes.push(content.slice(cursor, hit.start));
+    nodes.push(
+      <span key={`${hit.link.href}-${index}`}>
+        {content.slice(hit.start, hit.end)}
+        <InlinePeek link={hit.link} />
+      </span>,
+    );
+    cursor = hit.end;
+  });
+  if (cursor < content.length) nodes.push(content.slice(cursor));
+  return <p className="whitespace-pre-wrap rounded-2xl rounded-bl-md bg-black/[0.04] px-3.5 py-2.5 text-sm leading-6">{nodes.length ? nodes : content}</p>;
 }
 
 export default function ChatPage() {
@@ -630,31 +716,8 @@ function Bubble({
         ) : null}
         {message.status === "done" ? (
           <div className="space-y-1">
-            <p className="whitespace-pre-wrap rounded-2xl rounded-bl-md bg-black/[0.04] px-3.5 py-2.5 text-sm leading-6">{message.content}</p>
+            <LinkedReply content={message.content} links={message.links ?? []} />
             <p className="px-1 text-[11px] text-muted">{clock(message.createdAt)}</p>
-          </div>
-        ) : null}
-
-        {message.role === "assistant" && message.status === "done" && (message.links ?? []).length > 0 ? (
-          <div className="rounded-xl border border-black/10 px-2 py-2">
-            <p className="px-1 text-xs font-medium text-muted">Open in Warehance</p>
-            <ul className="mt-1 grid sm:grid-cols-2">
-              {message.links.map((link) => (
-                <li key={link.href}>
-                  <a
-                    className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-moss/10"
-                    href={link.href}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <span className="min-w-0 flex-1 truncate">{link.label}</span>
-                    <span className="flex-none text-moss">
-                      <WarehanceLinkIcon />
-                    </span>
-                  </a>
-                </li>
-              ))}
-            </ul>
           </div>
         ) : null}
 

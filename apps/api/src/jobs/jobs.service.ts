@@ -459,10 +459,10 @@ export class JobsService {
             .insert(gaylords)
             .values({ code, carrier: input.carrier, clientId: job.clientId, status: "open" })
             .returning();
-          if (!created) throw new ConflictException("Could not add that gaylord.");
+          if (!created) throw new ConflictException("Could not add that carrier bin.");
           related = { type: "gaylord", id: created.id };
         }
-        title = `Sort into gaylord ${code}`;
+        title = `Sort into bin ${code}`;
         details = `Carrier ${input.carrier.toUpperCase()}.`;
       } else if (input.kind === "packing") {
         title = `Pack ${input.orders} ${input.orders === 1 ? "order" : "orders"}`;

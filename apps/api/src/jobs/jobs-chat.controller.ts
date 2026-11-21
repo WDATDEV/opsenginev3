@@ -45,8 +45,8 @@ export class JobsChatController {
 
   @Post("messages/:messageId/confirm")
   @UseGuards(BrowserConfirmGuard)
-  confirm(@CurrentUser() ctx: RequestContext, @Param("messageId") messageId: string) {
+  confirm(@CurrentUser() ctx: RequestContext, @Param("messageId") messageId: string, @Query("clientId") clientId?: string) {
     authorize(ctx, "job.manage");
-    return this.chat.confirm(ctx.principal, messageId);
+    return this.chat.confirm(ctx.principal, messageId, clientId || null);
   }
 }

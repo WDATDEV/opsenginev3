@@ -1,6 +1,7 @@
 import { connectors } from "@opsengine/db";
 import { APPROVAL_TTL_SECONDS, readApprovalSecret, signApproval } from "./approval.js";
 import { argsForLocationLookup, liveBinFromRecords, pickLocationLookupTool, type StockRow } from "./stock-change.js";
+import { labelledForAnotherClient, TEST_CLIENT_ERROR, toolFiltersByClient } from "./test-client.js";
 import { WarehanceClient } from "./warehance-client.js";
 
 export const SETUP_ERROR = "Stock changes are not set up.";
@@ -210,18 +211,20 @@ export async function lookupLiveBin(staff: WarehanceClient, row: StockRow, clien
   const tools = await staff.listTools();
   const tool = pickLocationLookupTool(tools);
   if (!tool) throw new Error("The write key cannot search inventory locations.");
+  if (clientId == null || !toolFiltersByClient(tools, tool.name)) throw new Error(TEST_CLIENT_ERROR);
   const args = argsForLocationLookup(tool, row.sku, clientId);
   args.location_name = row.location;
   args.warehouse = row.warehouse;
   const { data, failed } = await staff.call(tool.name, args);
   if (failed) throw new Error(typeof data === "string" ? data : "Could not re-read that bin.");
-  if (Array.isArray(data)) return data;
-  if (data && typeof data === "object") {
-    const row = data as Record<string, unknown>;
-    if (Array.isArray(row.records)) return row.records;
-    return [row];
+  let records: unknown[] = [];
+  if (Array.isArray(data)) records = data;
+  else if (data && typeof data === "object") {
+    const body = data as Record<string, unknown>;
+    records = Array.isArray(body.records) ? body.records : [body];
   }
-  return [];
+  if (records.some((record) => labelledForAnotherClient(asObj(record), clientId))) throw new Error(TEST_CLIENT_ERROR);
+  return records;
 }
 
 // Reason text from a connector tool error. Anything the connector refuses with is a clear

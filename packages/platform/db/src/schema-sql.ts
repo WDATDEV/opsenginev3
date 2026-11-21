@@ -395,12 +395,30 @@ CREATE TABLE IF NOT EXISTS tracking.devices (
   assigned_employee_id uuid REFERENCES tracking.employees(id),
   location text NOT NULL,
   status text NOT NULL DEFAULT 'available',
-  warehance_login_mode text NOT NULL DEFAULT 'none',
+  station_mode text NOT NULL DEFAULT 'none',
   client_id uuid,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
 ALTER TABLE tracking.devices ADD COLUMN IF NOT EXISTS client_id uuid;
+ALTER TABLE tracking.devices ADD COLUMN IF NOT EXISTS station_mode text;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'tracking' AND table_name = 'devices' AND column_name = 'warehance_login_mode'
+  ) THEN
+    UPDATE tracking.devices SET station_mode = CASE
+      WHEN warehance_login_mode = 'individual' THEN 'assigned'
+      WHEN warehance_login_mode IN ('assigned', 'shared', 'none') THEN warehance_login_mode
+      ELSE COALESCE(station_mode, 'none')
+    END
+    WHERE station_mode IS NULL;
+  END IF;
+END $$;
+UPDATE tracking.devices SET station_mode = 'none' WHERE station_mode IS NULL;
+ALTER TABLE tracking.devices ALTER COLUMN station_mode SET DEFAULT 'none';
+ALTER TABLE tracking.devices ALTER COLUMN station_mode SET NOT NULL;
 
 CREATE TABLE IF NOT EXISTS tracking.shifts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -520,13 +538,15 @@ CREATE TABLE IF NOT EXISTS tracking.pack_events (
   employee_id uuid NOT NULL REFERENCES tracking.employees(id),
   device_id uuid NOT NULL REFERENCES tracking.devices(id),
   attribution text NOT NULL,
-  warehance_user_id text,
-  warehance_recorded boolean NOT NULL DEFAULT false,
   login_mismatch boolean NOT NULL DEFAULT false,
   units integer NOT NULL DEFAULT 1,
   packed_at timestamptz NOT NULL,
   segment_id uuid
 );
+
+ALTER TABLE tracking.pack_events DROP COLUMN IF EXISTS warehance_user_id;
+ALTER TABLE tracking.pack_events DROP COLUMN IF EXISTS warehance_recorded;
+ALTER TABLE tracking.pack_events ALTER COLUMN device_id DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS tracking.pick_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -543,6 +563,7 @@ CREATE TABLE IF NOT EXISTS tracking.pick_events (
 );
 
 ALTER TABLE tracking.pick_events ADD COLUMN IF NOT EXISTS client_id uuid;
+ALTER TABLE tracking.pick_events ALTER COLUMN device_id DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS tracking.inbound_shipments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

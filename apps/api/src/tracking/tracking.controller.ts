@@ -214,11 +214,8 @@ export class TrackingController {
     @Body(new ZodPipe(completePackSchema))
     body: {
       orderNumber: string;
-      deviceCode: string;
-      badge?: string;
+      badge: string;
       units: number;
-      warehanceRecorded?: boolean;
-      warehanceUserId?: string;
       clientId?: string;
     },
   ) {
@@ -238,8 +235,7 @@ export class TrackingController {
     @CurrentPrincipal() principal: Principal | null,
     @Body(new ZodPipe(recordPickSchema))
     body: {
-      deviceCode: string;
-      badge?: string;
+      badge: string;
       batchCode: string;
       sku: string;
       qty: number;
@@ -285,7 +281,6 @@ export class TrackingController {
       departmentHome?: "packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect";
       departments?: ("packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect")[];
       employmentType: "employee" | "temp";
-      warehanceUserId?: string;
       clientId?: string;
     },
   ) {

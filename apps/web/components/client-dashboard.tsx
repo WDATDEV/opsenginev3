@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useSession } from "@/components/shell";
-import { Field, Notice, PageTitle, SkeletonList, Spinner, useResource } from "@/components/ui";
+import { EmptyRow, Field, Flash, Notice, PageTitle, SearchBox, SkeletonList, Spinner, useResource } from "@/components/ui";
 import { ApiError, CLIENT_SERVICES, api, canManage, post } from "@/lib/api";
 
 export type ClientRecord = {
@@ -14,33 +14,78 @@ export type ClientRecord = {
   rates: { id: string; activityCode: string | null; department: string | null; unit: string; rateCents: number; label: string }[];
 };
 
+const DEFAULT_SERVICES = ["jobs", "unloading", "people", "reports", "invoices"];
+
 export function ClientDashboard() {
   const clients = useResource<ClientRecord[]>("/clients");
   const user = useSession();
+  const manage = canManage(user?.role);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
-  const [services, setServices] = useState<string[]>(["jobs", "unloading", "people", "reports", "invoices"]);
+  const [services, setServices] = useState<string[]>(DEFAULT_SERVICES);
   const [syncing, setSyncing] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [search, setSearch] = useState("");
 
   function toggleDraft(service: string) {
     setServices((current) => (current.includes(service) ? current.filter((item) => item !== service) : [...current, service]));
   }
 
+  function sync() {
+    setError(null);
+    setMessage(null);
+    setSyncing(true);
+    void post<{ message?: string }>("/clients/warehance", {})
+      .then((result) => {
+        setMessage(result.message ?? "Warehance clients are up to date.");
+        clients.reload();
+      })
+      .catch((err: unknown) => setError(err instanceof ApiError ? err.message : "Could not load Warehance clients."))
+      .finally(() => setSyncing(false));
+  }
+
+  function remove(client: ClientRecord) {
+    if (!window.confirm(`Remove ${client.name} from Time tracking? They will leave this list. Sync from Warehance will not add them back.`)) return;
+    setError(null);
+    setMessage(null);
+    void api<{ message?: string }>(`/clients/${client.id}`, { method: "DELETE" })
+      .then((result) => {
+        setMessage(result.message ?? "Removed.");
+        clients.reload();
+      })
+      .catch((err: unknown) => setError(err instanceof ApiError ? err.message : "Could not remove that client."));
+  }
+
+  const query = search.trim().toLowerCase();
+  const list = (clients.data ?? []).filter((client) => !query || `${client.name} ${client.code}`.toLowerCase().includes(query));
+
   return (
     <div>
       <PageTitle
-        kicker="Ops Engine"
+        kicker="Time tracking"
         title="Clients"
-        detail="This list is saved in Ops Engine. Sync from Warehance pulls brands and people once and writes them here. After that, opening Clients only reads the database. Removed clients stay off even after Sync."
+        detail="Open a client to run their jobs, floor work, people, reports, and invoices."
+        actions={
+          manage ? (
+            <>
+              <button className="btn" type="button" disabled={syncing} onClick={sync}>
+                {syncing ? <Spinner label="Syncing" /> : "Sync from Warehance"}
+              </button>
+              <button className="btn btn-primary" type="button" aria-expanded={adding} onClick={() => setAdding((open) => !open)}>
+                {adding ? "Close" : "Add client"}
+              </button>
+            </>
+          ) : null
+        }
       />
-      {clients.error ? <Notice tone="bad">{clients.error}</Notice> : null}
-      {message ? <Notice tone="ok">{message}</Notice> : null}
-      {error ? <Notice tone="bad">{error}</Notice> : null}
-      {canManage(user?.role) ? (
+      {clients.error ? <div className="mb-4"><Notice tone="bad">{clients.error}</Notice></div> : null}
+      <Flash message={message} error={error} />
+
+      {manage && adding ? (
         <form
-          className="card mb-6 grid gap-3 p-4 md:grid-cols-3"
+          className="card page-enter mb-5 space-y-4 p-4 sm:p-5"
           onSubmit={(event) => {
             event.preventDefault();
             setError(null);
@@ -50,112 +95,107 @@ export function ClientDashboard() {
                 setMessage(result.message ?? "Saved.");
                 setName("");
                 setCode("");
-                setServices(["jobs", "unloading", "people", "reports", "invoices"]);
+                setServices(DEFAULT_SERVICES);
+                setAdding(false);
                 clients.reload();
               })
               .catch((err: unknown) => setError(err instanceof ApiError ? err.message : "Could not add that client."));
           }}
         >
-          <Field label="Name">
-            <input className="field" value={name} onChange={(event) => setName(event.target.value)} placeholder="Harbor Goods" />
-          </Field>
-          <Field label="Code">
-            <input className="field font-mono" value={code} onChange={(event) => setCode(event.target.value)} placeholder="HB" />
-          </Field>
-          <div className="md:col-span-3">
-            <p className="mb-2 text-sm text-muted">Services</p>
-            <div className="flex flex-wrap gap-3">
-              {CLIENT_SERVICES.map(([service, label]) => (
-                <label key={service} className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={services.includes(service)} onChange={() => toggleDraft(service)} />
-                  {label}
-                </label>
-              ))}
+          <h2 className="font-semibold">New client</h2>
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
+            <Field label="Name">
+              <input className="field" required value={name} onChange={(event) => setName(event.target.value)} placeholder="Harbor Goods" />
+            </Field>
+            <Field label="Code">
+              <input className="field font-mono" required value={code} onChange={(event) => setCode(event.target.value)} placeholder="HB" />
+            </Field>
+          </div>
+          <fieldset>
+            <legend className="mb-2 text-sm font-medium text-ink/80">Services</legend>
+            <div className="flex flex-wrap gap-2">
+              {CLIENT_SERVICES.map(([service, label]) => {
+                const on = services.includes(service);
+                return (
+                  <label
+                    key={service}
+                    className={`inline-flex min-h-10 cursor-pointer select-none items-center rounded-full border px-4 text-sm font-medium transition-colors focus-within:ring-2 focus-within:ring-moss/40 ${
+                      on ? "border-moss bg-moss text-paper" : "border-black/15 bg-white hover:border-moss"
+                    }`}
+                  >
+                    <input className="sr-only" type="checkbox" checked={on} onChange={() => toggleDraft(service)} />
+                    {label}
+                  </label>
+                );
+              })}
             </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button className="btn btn-primary" type="submit">
-              Add client
-            </button>
-            <button
-              className="btn"
-              type="button"
-              disabled={syncing}
-              onClick={() => {
-                setError(null);
-                setMessage(null);
-                setSyncing(true);
-                void post<{ message?: string }>("/clients/warehance", {})
-                  .then((result) => {
-                    setMessage(result.message ?? "Warehance clients are up to date.");
-                    clients.reload();
-                  })
-                  .catch((err: unknown) => setError(err instanceof ApiError ? err.message : "Could not load Warehance clients."))
-                  .finally(() => setSyncing(false));
-              }}
-            >
-              {syncing ? <Spinner /> : "Sync from Warehance"}
-            </button>
-          </div>
+          </fieldset>
+          <button className="btn btn-primary" type="submit">
+            Save client
+          </button>
         </form>
       ) : null}
-      <div className="grid gap-4 md:grid-cols-2">
-        {clients.loading && !(clients.data && clients.data.length > 0) ? (
-          <div className="md:col-span-2">
-            <SkeletonList rows={4} />
-            <p className="mt-3">
-              <Spinner label="Loading clients" />
-            </p>
-          </div>
-        ) : null}
-        {!clients.loading && clients.data?.length === 0 ? (
-          <div className="card p-6 text-muted">No clients yet. Press Sync from Warehance if the list should fill from Warehance.</div>
-        ) : null}
-        {clients.data?.map((client) => (
-            <article key={client.id} className="card p-4">
-              <p className="font-mono text-xs uppercase tracking-[0.14em] text-muted">{client.code}</p>
-              <h2 className="text-xl font-semibold">{client.name}</h2>
-              <p className="mt-2 text-sm text-muted">
-                {client.enabledServices.length === 0
-                  ? "No services turned on"
-                  : CLIENT_SERVICES.filter(([service]) => client.enabledServices.includes(service))
-                      .map(([, label]) => label)
-                      .join(" · ")}
-              </p>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Link className="btn btn-ghost" href={`/clients/${client.id}`}>
+
+      {clients.loading && !clients.data ? <SkeletonList rows={4} /> : null}
+
+      {clients.data?.length ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted">
+            {list.length} of {clients.data.length} {clients.data.length === 1 ? "client" : "clients"}
+          </p>
+          <SearchBox value={search} onChange={setSearch} label="Search clients" placeholder="Search name or code" />
+        </div>
+      ) : null}
+
+      {clients.data?.length === 0 ? (
+        <div className="card">
+          <EmptyRow title="No clients yet">Add a client, or press Sync from Warehance to bring yours in.</EmptyRow>
+        </div>
+      ) : null}
+      {clients.data?.length && list.length === 0 ? (
+        <div className="card">
+          <EmptyRow title="No client matches that search" />
+        </div>
+      ) : null}
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {list.map((client) => {
+          const on = CLIENT_SERVICES.filter(([service]) => client.enabledServices.includes(service));
+          return (
+            <article key={client.id} className="card card-hover flex flex-col p-4 sm:p-5">
+              <div className="flex items-start gap-3">
+                <span className="grid h-11 w-11 flex-none place-items-center rounded-xl bg-moss/10 font-mono text-xs font-semibold text-moss" aria-hidden="true">
+                  {client.code.slice(0, 4)}
+                </span>
+                <div className="min-w-0">
+                  <h2 className="truncate text-lg font-semibold">{client.name}</h2>
+                  <p className="text-sm text-muted">
+                    {on.length} {on.length === 1 ? "service" : "services"} on
+                  </p>
+                </div>
+              </div>
+              <div className="mt-3 flex min-h-7 flex-1 flex-wrap content-start gap-1.5">
+                {on.length === 0 ? <span className="text-sm text-muted">No services turned on</span> : null}
+                {on.slice(0, 5).map(([service, label]) => (
+                  <span key={service} className="badge">
+                    {label}
+                  </span>
+                ))}
+                {on.length > 5 ? <span className="badge">+{on.length - 5}</span> : null}
+              </div>
+              <div className="mt-4 flex gap-2 border-t border-black/5 pt-3">
+                <Link className="btn btn-primary btn-sm flex-1" href={`/clients/${client.id}`}>
                   Open
                 </Link>
-                {canManage(user?.role) ? (
-                  <button
-                    className="btn btn-danger"
-                    type="button"
-                    onClick={() => {
-                      if (
-                        !window.confirm(
-                          `Remove ${client.name} from Time tracking? They will leave this list. Sync from Warehance will not add them back.`,
-                        )
-                      ) {
-                        return;
-                      }
-                      setError(null);
-                      setMessage(null);
-                      void api<{ message?: string }>(`/clients/${client.id}`, { method: "DELETE" })
-                        .then((result) => {
-                          setMessage(result.message ?? "Removed.");
-                          clients.reload();
-                        })
-                        .catch((err: unknown) =>
-                          setError(err instanceof ApiError ? err.message : "Could not remove that client."),
-                        );
-                    }}
-                  >
+                {manage ? (
+                  <button className="btn btn-ghost btn-danger btn-sm" type="button" aria-label={`Remove ${client.name}`} onClick={() => remove(client)}>
                     Remove
                   </button>
                 ) : null}
               </div>
             </article>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

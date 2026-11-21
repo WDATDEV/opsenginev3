@@ -13,6 +13,7 @@ type JobChange = {
   billBasis: string | null;
   people: { employeeId: string; name: string }[];
   summary: string;
+  notSaved?: string[];
   status: "proposed" | "applying" | "applied" | "rejected";
   expiresAt: string;
   result: string | null;
@@ -175,7 +176,7 @@ export function JobsChat({ clientId, onChanged }: { clientId?: string; onChanged
               )}
               {message.error ? <p className="text-xs text-clay">{message.error}</p> : null}
               {message.jobChange ? (
-                <JobCard change={message.jobChange} messageId={message.id} canConfirm={manage} onDone={() => void load().then(onChanged)} />
+                <JobCard change={message.jobChange} messageId={message.id} clientId={clientId} canConfirm={manage} onDone={() => void load().then(onChanged)} />
               ) : null}
             </div>
           ),
@@ -229,11 +230,13 @@ export function JobsChat({ clientId, onChanged }: { clientId?: string; onChanged
 function JobCard({
   change,
   messageId,
+  clientId,
   canConfirm,
   onDone,
 }: {
   change: JobChange;
   messageId: string;
+  clientId?: string;
   canConfirm: boolean;
   onDone: () => void;
 }) {
@@ -245,7 +248,10 @@ function JobCard({
     setBusy(true);
     setError(null);
     try {
-      await post(`/jobs/chat/messages/${messageId}/confirm`, {});
+      await post(
+        clientId ? `/jobs/chat/messages/${messageId}/confirm?clientId=${encodeURIComponent(clientId)}` : `/jobs/chat/messages/${messageId}/confirm`,
+        {},
+      );
       onDone();
     } catch (err) {
       setError(reason(err, "Could not save that job."));
@@ -274,6 +280,16 @@ function JobCard({
         <dt className="text-muted">People</dt>
         <dd>{change.people.length ? change.people.map((person) => person.name).join(", ") : "Nobody yet"}</dd>
       </dl>
+      {change.notSaved?.length ? (
+        <div className="rounded-lg bg-clay/10 px-2.5 py-2 text-xs">
+          <p className="font-medium text-clay">Not saved on this job</p>
+          <ul className="mt-1 list-disc pl-4">
+            {change.notSaved.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {change.status === "applied" ? <p className="text-xs text-moss">{change.result ?? "Saved."}</p> : null}
       {change.status === "rejected" || change.error ? <p className="text-xs text-clay">{change.error}</p> : null}
       {change.status === "applying" ? <p className="text-xs text-muted">Saving…</p> : null}

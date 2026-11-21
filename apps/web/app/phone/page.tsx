@@ -64,7 +64,7 @@ type Context = {
   stations: {
     code: string;
     label: string;
-    loginMode: string;
+    stationMode: string;
     claimedBy: string | null;
     assignedTo: string | null;
   }[];
@@ -620,8 +620,8 @@ export default function WarehousePage() {
           {panel ? (
             <section>
               <p className="mb-2 text-sm font-semibold text-muted">Record your work</p>
-              {panel === "packing" ? <PackPanel context={context} badge={badge} run={run} /> : null}
-              {panel === "picking" ? <PickPanel context={context} badge={badge} run={run} /> : null}
+              {panel === "packing" ? <PackPanel badge={badge} run={run} /> : null}
+              {panel === "picking" ? <PickPanel badge={badge} run={run} /> : null}
               {panel === "receiving" ? (
                 <ReceivePanel context={context} badge={badge} run={run} jobId={currentJobId} />
               ) : null}
@@ -704,20 +704,13 @@ export default function WarehousePage() {
 }
 
 function PackPanel({
-  context,
   badge,
   run,
 }: {
-  context: Context;
   badge: string;
   run: (path: string, body: unknown) => Promise<boolean>;
 }) {
-  const [deviceCode, setDeviceCode] = useState(context.station ?? context.stations[0]?.code ?? "");
   const [orderNumber, setOrderNumber] = useState("");
-  const station = context.stations.find((item) => item.code === deviceCode);
-  if (context.stations.length === 0) {
-    return <p className="card p-4 text-sm text-muted">No packing computer is on the floor yet.</p>;
-  }
   return (
     <form
       className="card space-y-3 p-4"
@@ -725,37 +718,13 @@ function PackPanel({
         event.preventDefault();
         void run("/tracking/packing", {
           orderNumber,
-          deviceCode,
           badge,
           units: 1,
         });
       }}
     >
-      <Field label="Packing computer">
-        <select className="field" value={deviceCode} onChange={(event) => setDeviceCode(event.target.value)}>
-          {context.stations.map((item) => (
-            <option key={item.code} value={item.code}>
-              {item.code} · {item.loginMode === "shared" ? "shared login" : item.assignedTo ?? "individual"}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <p className="text-sm text-muted">
-        {station?.loginMode === "shared"
-          ? station.claimedBy
-            ? `${station.claimedBy} currently holds this shared login.`
-            : "Shared station login. Claim it with your badge before the pack counts."
-          : "This computer is an individual station."}
-      </p>
-      <button
-        className="btn btn-ghost tap w-full"
-        type="button"
-        onClick={() => run("/tracking/stations/claim", { badge, deviceCode })}
-      >
-        Claim this computer
-      </button>
       <Field label="Order you just packed">
-        <input className="field" value={orderNumber} onChange={(event) => setOrderNumber(event.target.value)} placeholder="WH-10021" />
+        <input className="field" required value={orderNumber} onChange={(event) => setOrderNumber(event.target.value)} placeholder="PK-10021" />
       </Field>
       <button className="btn btn-primary tap w-full" type="submit">
         I finished this order
@@ -765,54 +734,27 @@ function PackPanel({
 }
 
 function PickPanel({
-  context,
   badge,
   run,
 }: {
-  context: Context;
   badge: string;
   run: (path: string, body: unknown) => Promise<boolean>;
 }) {
-  const [deviceCode, setDeviceCode] = useState(context.checkout ?? context.scanners[0]?.code ?? "");
   const [sku, setSku] = useState("");
   const [batchCode, setBatchCode] = useState("");
-  const device = context.scanners.find((item) => item.code === deviceCode);
-  if (context.scanners.length === 0) {
-    return <p className="card p-4 text-sm text-muted">No scanner or handheld is on the floor yet.</p>;
-  }
   return (
     <form
       className="card space-y-3 p-4"
       onSubmit={(event) => {
         event.preventDefault();
-        void run("/tracking/picking", { deviceCode, badge, batchCode, sku, qty: 1 });
+        void run("/tracking/picking", { badge, batchCode, sku, qty: 1 });
       }}
     >
-      <Field label="Scanner or handheld">
-        <select className="field" value={deviceCode} onChange={(event) => setDeviceCode(event.target.value)}>
-          {context.scanners.map((item) => (
-            <option key={item.code} value={item.code}>
-              {item.code} · {item.ownership === "personal" ? item.assignedTo : "shared"}
-            </option>
-          ))}
-        </select>
-      </Field>
-      {device?.ownership === "shared_pool" ? (
-        <button
-          className="btn btn-ghost tap w-full"
-          type="button"
-          onClick={() => run("/tracking/devices/checkout", { badge, deviceCode })}
-        >
-          Check out {deviceCode}
-        </button>
-      ) : (
-        <p className="text-sm text-muted">Personal scanner. The pick counts for {device?.assignedTo}.</p>
-      )}
       <Field label="Batch">
-        <input className="field" value={batchCode} onChange={(event) => setBatchCode(event.target.value)} />
+        <input className="field" required value={batchCode} onChange={(event) => setBatchCode(event.target.value)} />
       </Field>
       <Field label="SKU">
-        <input className="field" value={sku} onChange={(event) => setSku(event.target.value)} placeholder="SKU-TEE" />
+        <input className="field" required value={sku} onChange={(event) => setSku(event.target.value)} placeholder="SKU-TEE" />
       </Field>
       <button className="btn btn-primary tap w-full" type="submit">
         Scan pick
@@ -968,7 +910,7 @@ function SortPanel({
   const [method, setMethod] = useState<"scan" | "manual_place">("scan");
   const [reason, setReason] = useState("");
   if (context.gaylords.length === 0) {
-    return <p className="card p-4 text-sm text-muted">No open gaylord.</p>;
+    return <p className="card p-4 text-sm text-muted">No open carrier bin.</p>;
   }
   return (
     <form
@@ -984,7 +926,7 @@ function SortPanel({
         });
       }}
     >
-      <Field label="Gaylord">
+      <Field label="Carrier bin">
         <select className="field" value={gaylordCode} onChange={(event) => setGaylordCode(event.target.value)}>
           {context.gaylords.map((item) => (
             <option key={item.id} value={item.code}>
@@ -1008,7 +950,7 @@ function SortPanel({
         </Field>
       ) : null}
       <button className="btn btn-primary tap w-full" type="submit">
-        Put it in the gaylord
+        Put it in the bin
       </button>
     </form>
   );

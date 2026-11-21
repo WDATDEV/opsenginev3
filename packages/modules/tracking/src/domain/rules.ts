@@ -1,4 +1,4 @@
-export type LoginMode = "individual" | "shared" | "none";
+export type LoginMode = "assigned" | "shared" | "none";
 export type DeviceKind = "packing_computer" | "barcode_scanner" | "handheld";
 export type Ownership = "personal" | "shared_pool";
 export type Department =
@@ -9,7 +9,19 @@ export type Department =
   | "sorting"
   | "indirect";
 
-export type PackAttribution = "warehance_user" | "station_badge" | "manual";
+export type PackAttribution = "assigned" | "station_badge" | "manual";
+
+/** Maps stored station_mode (and leftover individual) to assigned | shared | none. */
+export function stationModeFromStored(value: string): LoginMode {
+  if (value === "shared") return "shared";
+  if (value === "assigned" || value === "individual") return "assigned";
+  return "none";
+}
+
+export function storedStationMode(mode: LoginMode): string {
+  if (mode === "assigned") return "individual";
+  return mode;
+}
 
 export type RuleFailure = { ok: false; reason: string };
 export type RuleSuccess<T> = { ok: true } & T;
@@ -31,21 +43,21 @@ export const trackingPolicy = [
     area: "Packing",
     question: "Does each packer have their own station, or do employees share computers?",
     answer:
-      "Both happen on this floor. Each packing computer is marked individual or shared. An individual computer belongs to one person. A shared computer stays on a station login, and the packer badges in.",
+      "Either works. Packing is recorded by the packer's badge, so it does not matter which computer they use.",
   },
   {
     id: "packing-attribution",
     area: "Packing",
     question: "When an employee finishes packing, who is recorded as the packer?",
     answer:
-      "Ops Engine stores the packer. On an individual computer, that person is the packer. On a shared computer, the badge or the open station session is the record.",
+      "The person whose badge is scanned when the order is finished is the packer of record.",
   },
   {
     id: "picking-devices",
     area: "Picking",
     question: "Does each picker use their own barcode scanner or handheld device?",
     answer:
-      "Both. A personal scanner is assigned to one picker. A shared handheld must be checked out, or the picker badges at the moment of the scan.",
+      "Either works. Picks are recorded by the picker's badge, so it does not matter which device they use.",
   },
   {
     id: "receiving-concurrent",
@@ -64,9 +76,9 @@ export const trackingPolicy = [
   {
     id: "sorting-scan",
     area: "Sorting",
-    question: "Are packages scanned when placed into USPS, UPS, or other carrier gaylords?",
+    question: "Are packages scanned when placed into USPS, UPS, or other carrier bins?",
     answer:
-      "Yes. A package is scanned into an open gaylord for USPS, UPS, FedEx, DHL, or another carrier. Placing one without a scan requires a reason.",
+      "Yes. A package is scanned into an open carrier bin for USPS, UPS, FedEx, DHL, or another carrier. Placing one without a scan requires a reason.",
   },
   {
     id: "task-changes",
@@ -79,9 +91,9 @@ export const trackingPolicy = [
 
 export function resolvePacker(input: {
   loginMode: LoginMode;
+  assignedEmployeeId?: string | null;
   badgeEmployeeId?: string | null;
   stationSessionEmployeeId?: string | null;
-  warehanceMappedEmployeeId?: string | null;
   manualEmployeeId?: string | null;
 }): RuleSuccess<{
   employeeId: string;
@@ -90,14 +102,14 @@ export function resolvePacker(input: {
 }> | RuleFailure {
   const badge = input.badgeEmployeeId ?? null;
   const session = input.stationSessionEmployeeId ?? null;
-  const mapped = input.warehanceMappedEmployeeId ?? null;
+  const assigned = input.assignedEmployeeId ?? null;
   const manual = input.manualEmployeeId ?? null;
 
   if (input.loginMode === "shared") {
     const employeeId = badge ?? session ?? manual;
     if (!employeeId) {
       return fail(
-        "This packing computer uses a shared station login. Scan the packer's badge so we record who packed the order.",
+        "This packing computer is shared. Scan the packer's badge so we record who packed the order.",
       );
     }
     return {
@@ -108,11 +120,11 @@ export function resolvePacker(input: {
     };
   }
 
-  if (input.loginMode !== "individual") {
-    return fail("Packing is recorded on a packing computer.");
+  if (input.loginMode !== "assigned") {
+    return fail("Set this packing computer as assigned to one person or shared.");
   }
 
-  if (badge && mapped && badge !== mapped) {
+  if (badge && assigned && badge !== assigned) {
     return {
       ok: true,
       employeeId: badge,
@@ -125,7 +137,7 @@ export function resolvePacker(input: {
     return {
       ok: true,
       employeeId: badge,
-      attribution: mapped === badge ? "warehance_user" : "station_badge",
+      attribution: assigned === badge ? "assigned" : "station_badge",
       loginMismatch: false,
     };
   }
@@ -134,16 +146,16 @@ export function resolvePacker(input: {
     return {
       ok: true,
       employeeId: session,
-      attribution: mapped === session ? "warehance_user" : "station_badge",
-      loginMismatch: Boolean(mapped && mapped !== session),
+      attribution: assigned === session ? "assigned" : "station_badge",
+      loginMismatch: Boolean(assigned && assigned !== session),
     };
   }
 
-  if (mapped) {
+  if (assigned) {
     return {
       ok: true,
-      employeeId: mapped,
-      attribution: "warehance_user",
+      employeeId: assigned,
+      attribution: "assigned",
       loginMismatch: false,
     };
   }
@@ -222,7 +234,7 @@ export function assertSortPlacement(input: {
   gaylordStatus: "open" | "closed";
   duplicateGaylordCode?: string | null;
 }): { ok: true } | RuleFailure {
-  if (input.gaylordStatus !== "open") return fail("That gaylord is closed.");
+  if (input.gaylordStatus !== "open") return fail("That carrier bin is closed.");
   if (input.duplicateGaylordCode) {
     return fail(`Already scanned into ${input.duplicateGaylordCode}.`);
   }
@@ -284,29 +296,28 @@ export function taskFor(department: Department): string {
 export function normalizeDevice(input: {
   kind: DeviceKind;
   ownership: Ownership;
-  warehanceLoginMode: LoginMode;
+  stationMode: LoginMode;
   assignedEmployeeId?: string | null;
 }): { ok: true } | RuleFailure {
   const assigned = input.assignedEmployeeId ?? null;
+  const mode = stationModeFromStored(input.stationMode);
 
-  if (input.warehanceLoginMode === "shared" && input.ownership === "personal") {
-    return fail("A shared station login is a station device, not a personal one.");
+  if (mode === "shared" && input.ownership === "personal") {
+    return fail("A shared packing computer is a station device, not a personal one.");
   }
 
   if (input.kind === "packing_computer") {
-    if (input.warehanceLoginMode === "none") {
-      return fail(
-        "A packing computer is either an individual login or a shared station login.",
-      );
+    if (mode === "none") {
+      return fail("A packing computer is assigned to one person, or it is shared and people badge in.");
     }
-    if (input.warehanceLoginMode === "individual" && !assigned) {
-      return fail("An individual packing computer has to be assigned to that person.");
+    if (mode === "assigned" && !assigned) {
+      return fail("An assigned packing computer has to be assigned to that person.");
     }
     return { ok: true };
   }
 
-  if (input.warehanceLoginMode !== "none") {
-    return fail("Only packing computers carry a station login.");
+  if (mode !== "none") {
+    return fail("Only packing computers are assigned or shared stations.");
   }
 
   if (input.ownership === "personal" && !assigned) {

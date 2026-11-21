@@ -15,12 +15,12 @@ A job belongs to one client. IceCartel and Jacob each have their own jobs, rates
 
 ## The seven floor questions
 
-1. **Packing logins.** Each packing computer is `individual` or `shared`. An individual computer belongs to one person. A shared computer keeps a station login, and the packer badges in.
-2. **Who packed it.** Ops Engine always stores the employee. On an individual computer, that person is the packer. On a shared computer, the badge or the open station session is the record.
-3. **Picking devices.** A personal scanner is assigned to one picker. A shared handheld must be checked out, or the picker badges at the scan.
+1. **Packing.** A pack needs the order and the packer's badge. Ops Engine does not track which computer was used.
+2. **Who packed it.** The badge is the packer of record. The packer must be clocked in.
+3. **Picking.** A pick needs the picker's badge, batch, SKU, and quantity. Ops Engine does not track which scanner was used.
 4. **Receiving together.** Several employees can be active on one shipment. Each count is stored against the person who entered it.
 5. **Unloading crew.** Someone badges onto the truck, a lead adds a name, or a supervisor enters the paper list. Each person has a start and an end.
-6. **Gaylord scans.** A package is scanned into an open USPS, UPS, FedEx, DHL, or other gaylord. A placement without a scan requires a reason.
+6. **Carrier-bin scans.** A package is scanned into an open USPS, UPS, FedEx, DHL, or other carrier bin. A placement without a scan requires a reason.
 7. **Task changes.** Starting a new task closes the previous one immediately. Home department is not a lock. There is no minimum time on a task.
 
 ## Experiences

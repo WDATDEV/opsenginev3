@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useSession } from "@/components/shell";
-import { asCount, CountInput, Field, Notice, PageTitle, useResource } from "@/components/ui";
+import { asCount, Avatar, Badge, CountInput, EmptyRow, Field, Flash, MoreButton, Notice, PageTitle, SearchBox, Segmented, SkeletonList, Stat, StatGrid, usePaged, useResource } from "@/components/ui";
 import { ApiError, BILL_BASES, billBasisLabel, canApproveCharges, canManageJobs, money, post } from "@/lib/api";
 import { JobsChat } from "@/components/boards/jobs-chat";
 
@@ -58,6 +58,14 @@ type JobBoard = {
 };
 
 const SERVICE_FOR_DEPARTMENT = ["receiving", "unloading", "packing", "picking", "sorting"];
+const JOB_VIEWS = [
+  ["open", "Open"],
+  ["done", "Closed"],
+  ["all", "All"],
+] as const;
+
+type JobView = (typeof JOB_VIEWS)[number][0];
+type JobTab = "crew" | "tasks" | "charges";
 
 function stamp(value: string) {
   return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(
@@ -105,6 +113,10 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
   const [title, setTitle] = useState("");
   const [billBasis, setBillBasis] = useState("mixed");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [jobTabs, setJobTabs] = useState<Record<string, JobTab>>({});
+  const [view, setView] = useState<JobView>("open");
+  const [search, setSearch] = useState("");
+  const [creating, setCreating] = useState(false);
 
   async function act(path: string, body: unknown) {
     setError(null);
@@ -134,25 +146,48 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
     setExpanded((current) => ({ ...current, [id]: next }));
   }
 
+  const manageJobs = canManageJobs(user?.role);
+  const approve = canApproveCharges(user?.role);
+  const openList = jobs.filter((job) => job.status !== "done");
+  const query = search.trim().toLowerCase();
+  const list = jobs.filter(
+    (job) =>
+      (view === "all" || (view === "open") === (job.status !== "done")) &&
+      (!query || `${job.reference} ${job.title} ${job.clientName} ${job.clientCode}`.toLowerCase().includes(query)),
+  );
+  const paged = usePaged(list, 15);
+  const draftCents = jobs.reduce((sum, job) => sum + job.charges.filter((charge) => charge.status === "draft").reduce((total, charge) => total + charge.amountCents, 0), 0);
+
   return (
     <div>
       <PageTitle
         kicker="Jobs"
-        title={client ? `Jobs for ${client.name}` : "One job per client"}
-        detail={
-          client
-            ? `${client.name} is already selected. Each job is a project. Say whether the bill uses time, a count, or both, then assign the crew.`
-            : "Each job is a project for one client. Say whether the bill uses time, a count, or both, then assign the crew."
+        title={client ? `Jobs for ${client.name}` : "Jobs"}
+        detail="A job is the billable project. Build the crew and tasks here, and record the work on each department's board."
+        actions={
+          manageJobs ? (
+            <button className="btn btn-primary" type="button" aria-expanded={creating} onClick={() => setCreating((value) => !value)}>
+              {creating ? "Close" : "New job"}
+            </button>
+          ) : null
         }
       />
-      {board.error ? <Notice tone="bad">{board.error}</Notice> : null}
-      {message ? <Notice tone="ok">{message}</Notice> : null}
-      {error ? <Notice tone="bad">{error}</Notice> : null}
-      <div className="mb-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
-      <div>
-      {canManageJobs(user?.role) ? (
+      {board.error ? <div className="mb-4"><Notice tone="bad">{board.error}</Notice></div> : null}
+      <Flash message={message} error={error} />
+      <StatGrid>
+        <Stat label="Open jobs" value={openList.length} tone="ok" />
+        <Stat label="Working now" value={openList.reduce((sum, job) => sum + job.openWorkerCount, 0)} />
+        <Stat label="Labor on open jobs" value={hours(openList.reduce((sum, job) => sum + job.laborMinutes, 0))} />
+        {manageJobs || approve ? (
+          <Stat label="Charges to approve" value={money(draftCents)} tone={draftCents > 0 ? "warn" : undefined} />
+        ) : (
+          <Stat label="Closed jobs" value={jobs.length - openList.length} />
+        )}
+      </StatGrid>
+
+      {manageJobs && creating ? (
         <form
-          className="card mb-6 grid gap-3 p-4 md:grid-cols-4"
+          className="card page-enter mb-5 p-4 sm:p-5"
           onSubmit={(event) => {
             event.preventDefault();
             const chosen = client?.id || clientId;
@@ -169,234 +204,279 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
               if (!ok) return;
               setReference("");
               setTitle("");
+              setCreating(false);
             });
           }}
         >
-          {client ? null : (
-            <Field label="Client">
-              <select className="field" value={clientId} onChange={(event) => setClientId(event.target.value)}>
-                <option value="">Choose a client</option>
-                {clients.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
+          <h2 className="mb-3 font-semibold">New job</h2>
+          <div className={`grid gap-3 sm:grid-cols-2 ${client ? "xl:grid-cols-[10rem_1fr_12rem_auto]" : "xl:grid-cols-[1fr_10rem_1fr_12rem_auto]"}`}>
+            {client ? null : (
+              <Field label="Client">
+                <select className="field" required value={clientId} onChange={(event) => setClientId(event.target.value)}>
+                  <option value="">Choose a client</option>
+                  {clients.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+            <Field label="Reference">
+              <input className="field font-mono" required value={reference} onChange={(event) => setReference(event.target.value)} placeholder="IC-1002" />
+            </Field>
+            <Field label="Title">
+              <input className="field" required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Five pallets inbound" />
+            </Field>
+            <Field label="Bill by">
+              <select className="field" value={billBasis} onChange={(event) => setBillBasis(event.target.value)}>
+                {BILL_BASES.map(([code, label]) => (
+                  <option key={code} value={code}>
+                    {label}
                   </option>
                 ))}
               </select>
             </Field>
-          )}
-          <Field label="Reference">
-            <input className="field font-mono" value={reference} onChange={(event) => setReference(event.target.value)} placeholder="IC-1002" />
-          </Field>
-          <Field label="Title">
-            <input className="field" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Five pallets inbound" />
-          </Field>
-          <Field label="Bill by">
-            <select className="field" value={billBasis} onChange={(event) => setBillBasis(event.target.value)}>
-              {BILL_BASES.map(([code, label]) => (
-                <option key={code} value={code}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <div className="flex items-end">
-            <button className="btn btn-primary w-full" type="submit">
-              Open job
-            </button>
+            <div className="flex items-end">
+              <button className="btn btn-primary w-full" type="submit">
+                Open job
+              </button>
+            </div>
           </div>
         </form>
       ) : null}
-      <div className="space-y-4">
-        {jobs.map((job) => {
-          const drafted = job.charges.reduce((sum, charge) => sum + charge.amountCents, 0);
-          const open = jobOpen(job);
-          return (
-            <article key={job.id} className="card p-4">
-              <button
-                type="button"
-                className="flex w-full flex-wrap items-start justify-between gap-3 text-left"
-                aria-expanded={open}
-                onClick={() => toggleJob(job.id, !open)}
-              >
-                <div>
-                  <p className="text-xs uppercase tracking-[0.14em] text-muted">
-                    {job.clientName} · {job.clientCode}
-                  </p>
-                  <h2 className="text-xl font-semibold">{job.title}</h2>
-                  <p className="font-mono text-sm text-muted">
-                    {job.reference} · {job.status}
-                  </p>
-                  <p className="mt-1 text-sm">{billNote(job.billBasis)}</p>
-                </div>
-                <div className="text-right text-sm">
-                  <p className="font-medium">{hours(job.laborMinutes)} of labor</p>
-                  <p className="text-muted">
-                    {job.openWorkerCount === 0
-                      ? "Nobody is on it now"
-                      : user?.role === "external_customer"
-                        ? `${job.openWorkerCount} working now`
-                        : job.openWorkers.join(", ")}
-                  </p>
-                  <p className="mt-2 text-xs font-semibold text-moss">{open ? "Hide" : "Show"}</p>
-                </div>
-              </button>
-              {open ? (
-              <>
-              <div className="mt-3 flex flex-wrap gap-2 text-sm">
-                {job.shipments.map((shipment) => (
-                  <span key={shipment.id} className="rounded-full bg-black/5 px-3 py-1">
-                    Shipment {shipment.reference} · {shipment.status}
-                  </span>
-                ))}
-                {job.loads.map((load) => (
-                  <span key={load.id} className="rounded-full bg-black/5 px-3 py-1">
-                    Load {load.reference} · {load.status}
-                    {load.palletCount != null ? ` · ${load.palletCount} pallets` : ""}
-                  </span>
-                ))}
-              </div>
-              <div className="mt-4 border-t border-black/5 pt-3">
-                <h3 className="mb-2 font-medium">Crew</h3>
-                {job.assignees.length === 0 ? <p className="text-sm text-muted">Nobody is assigned.</p> : null}
-                <ul className="space-y-2 text-sm">
-                  {job.assignees.map((person) => (
-                    <li key={person.employeeId}>
-                      <div className="flex items-center justify-between gap-2">
-                        <span>
-                          {person.name}
-                          <span className="block text-xs text-muted">{startNote(person)}</span>
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-start">
+        <div className="min-w-0">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <Segmented label="Show jobs" options={JOB_VIEWS} value={view} onChange={setView} />
+            <SearchBox value={search} onChange={setSearch} label="Search jobs" placeholder="Search job or client" />
+          </div>
+          {board.loading && !board.data ? <SkeletonList rows={3} /> : null}
+          {board.data && list.length === 0 ? (
+            <div className="card">
+              <EmptyRow title={query ? "No job matches that search" : view === "done" ? "No closed jobs" : "No open jobs"}>
+                {query ? null : "Press New job, or ask the Jobs chat to open one."}
+              </EmptyRow>
+            </div>
+          ) : null}
+          <div className="space-y-3">
+            {paged.shown.map((job) => {
+              const drafted = job.charges.reduce((sum, charge) => sum + charge.amountCents, 0);
+              const open = jobOpen(job);
+              const closed = job.status === "done";
+              const tab = jobTabs[job.id] ?? "crew";
+              const openTasks = job.tasks.filter((task) => task.status !== "done").length;
+              const pendingCharges = job.charges.filter((charge) => charge.status === "draft").length;
+              const tabOptions = [
+                ["crew", `Crew (${job.assignees.length})`],
+                ["tasks", `Tasks (${openTasks})`],
+                ["charges", pendingCharges ? `Charges (${pendingCharges} to approve)` : "Charges"],
+              ] as const;
+              const choices = startChoices(board.data?.activities ?? [], job.enabledServices);
+              const available = people.filter((person) => !job.assignees.some((assigned) => assigned.employeeId === person.id));
+              return (
+                <article key={job.id} className="card overflow-hidden">
+                  <button
+                    type="button"
+                    className="flex w-full items-start justify-between gap-3 p-4 text-left transition-colors hover:bg-black/[0.015] sm:px-5"
+                    aria-expanded={open}
+                    onClick={() => toggleJob(job.id, !open)}
+                  >
+                    <span className="min-w-0">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="text-lg font-semibold">{job.title}</span>
+                        <Badge tone={closed ? "neutral" : job.openWorkerCount ? "ok" : "warn"} dot>
+                          {closed ? "Closed" : job.openWorkerCount ? "In progress" : "Open"}
+                        </Badge>
+                      </span>
+                      <span className="mt-0.5 block truncate text-sm text-muted">
+                        <span className="font-mono">{job.reference}</span> · {job.clientName} · {billBasisLabel(job.billBasis)}
+                      </span>
+                    </span>
+                    <span className="flex flex-none items-start gap-3">
+                      <span className="hidden text-right text-sm sm:block">
+                        <span className="block font-medium tabular-nums">{hours(job.laborMinutes)}</span>
+                        <span className="block max-w-[11rem] truncate text-xs text-muted">
+                          {job.openWorkerCount === 0
+                            ? "Nobody on it now"
+                            : user?.role === "external_customer"
+                              ? `${job.openWorkerCount} working now`
+                              : job.openWorkers.join(", ")}
                         </span>
-                        {canManageJobs(user?.role) ? (
-                          <button
-                            className="btn btn-ghost"
-                            type="button"
-                            onClick={() => void act(`/jobs/${job.id}/assignees/remove`, { employeeId: person.employeeId })}
-                          >
-                            Remove
-                          </button>
+                      </span>
+                      <svg aria-hidden="true" viewBox="0 0 20 20" className={`mt-1 h-4 w-4 flex-none text-muted transition-transform ${open ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="m5 8 5 5 5-5" />
+                      </svg>
+                    </span>
+                  </button>
+                  {open ? (
+                    <div className="border-t border-black/5 p-4 sm:px-5">
+                      <p className="text-sm text-muted">{billNote(job.billBasis)}</p>
+                      {job.shipments.length || job.loads.length ? (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {job.shipments.map((shipment) => (
+                            <span key={shipment.id} className="badge">
+                              Shipment {shipment.reference} · {shipment.status}
+                            </span>
+                          ))}
+                          {job.loads.map((load) => (
+                            <span key={load.id} className="badge">
+                              Load {load.reference} · {load.status}
+                              {load.palletCount != null ? ` · ${load.palletCount} pallets` : ""}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      <div className="mt-3">
+                        <Segmented label={`${job.reference} details`} options={tabOptions} value={tab} onChange={(next) => setJobTabs((current) => ({ ...current, [job.id]: next }))} />
+                      </div>
+
+                      {/* Tabs stay mounted so a half-filled form survives switching tabs. */}
+                      <div className={`mt-3 ${tab === "crew" ? "" : "hidden"}`}>
+                        {job.assignees.length === 0 ? <p className="text-sm text-muted">Nobody is assigned.</p> : null}
+                        <ul className="divide-y divide-black/5">
+                          {job.assignees.map((person) => (
+                            <li key={person.employeeId} className="flex items-center gap-3 py-2">
+                              <Avatar name={person.name} active={job.openWorkers.includes(person.name)} />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-medium">{person.name}</span>
+                                <span className="block truncate text-xs text-muted">{startNote(person)}</span>
+                              </span>
+                              {manageJobs ? (
+                                <button className="btn btn-ghost btn-sm" type="button" onClick={() => void act(`/jobs/${job.id}/assignees/remove`, { employeeId: person.employeeId })}>
+                                  Remove
+                                </button>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                        {manageJobs && people.length > 0 ? (
+                          <AssignForm key={available.map((person) => person.id).join(",")} people={available} onAssign={(employeeId) => act(`/jobs/${job.id}/assignees`, { employeeId })} />
                         ) : null}
                       </div>
-                    </li>
-                  ))}
-                </ul>
-                {canManageJobs(user?.role) && people.length > 0 ? (
-                  <AssignForm
-                    key={people
-                      .filter((person) => !job.assignees.some((assigned) => assigned.employeeId === person.id))
-                      .map((person) => person.id)
-                      .join(",")}
-                    people={people.filter((person) => !job.assignees.some((assigned) => assigned.employeeId === person.id))}
-                    onAssign={(employeeId) => act(`/jobs/${job.id}/assignees`, { employeeId })}
-                  />
-                ) : null}
-              </div>
-              <div className="mt-4 border-t border-black/5 pt-3">
-                <h3 className="mb-2 font-medium">Tasks</h3>
-                {job.tasks.length === 0 ? <p className="text-sm text-muted">No tasks yet.</p> : null}
-                <ul className="space-y-2 text-sm">
-                  {[...job.tasks].reverse().map((task) => (
-                    <li key={task.id} className="flex flex-wrap items-center justify-between gap-2">
-                      <span>
-                        {task.title}
-                        <span className="text-muted">
-                          {" "}
-                          · {task.status}
-                          {task.assigneeName ? ` · ${task.assigneeName}` : ""}
-                          {task.dueOn ? ` · due ${task.dueOn}` : ""}
-                          {task.dependsOnTitle ? ` · after ${task.dependsOnTitle}` : ""}
-                          {task.blocked ? " · waiting" : ""}
-                          {task.hourlyRateCents != null ? ` · ${money(task.hourlyRateCents)} / hour` : ""}
-                        </span>
-                        {task.status !== "done" && task.assigneeId ? (
-                          <span className="block text-xs text-muted">{taskStartNote(task)}</span>
+
+                      <div className={`mt-3 ${tab === "tasks" ? "" : "hidden"}`}>
+                        {job.tasks.length === 0 ? <p className="text-sm text-muted">No tasks yet.</p> : null}
+                        <ul className="divide-y divide-black/5">
+                          {[...job.tasks].reverse().map((task) => (
+                            <li key={task.id} className="flex flex-wrap items-start justify-between gap-2 py-2.5 text-sm">
+                              <div className="min-w-0 flex-1 basis-64">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className={`font-medium ${task.status === "done" ? "text-muted line-through" : ""}`}>{task.title}</span>
+                                  {task.status === "done" ? <Badge tone="ok">Done</Badge> : task.blocked ? <Badge tone="warn" dot>Waiting</Badge> : <Badge>Open</Badge>}
+                                </div>
+                                <p className="mt-0.5 text-xs text-muted">
+                                  {[
+                                    task.assigneeName ?? "Unassigned",
+                                    task.dueOn ? `due ${task.dueOn}` : null,
+                                    task.dependsOnTitle ? `after ${task.dependsOnTitle}` : null,
+                                    task.hourlyRateCents != null ? `${money(task.hourlyRateCents)} / hour` : null,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                                </p>
+                                {task.status !== "done" && task.assigneeId ? <p className="text-xs text-muted">{taskStartNote(task)}</p> : null}
+                                {manageJobs && task.status !== "done" && task.assigneeId && !closed ? (
+                                  <StartTime
+                                    key={`${task.id}-${task.startAt ?? "none"}-${task.started}`}
+                                    activities={choices}
+                                    current={task}
+                                    onSave={(startAt, activityCode) =>
+                                      act(`/jobs/${job.id}/tasks/${task.id}/start`, {
+                                        startAt,
+                                        ...(activityCode ? { activityCode } : {}),
+                                      })
+                                    }
+                                  />
+                                ) : null}
+                                {manageJobs && task.assigneeId && task.assigneeName ? (
+                                  <AddTime person={task.assigneeName} activities={choices} activityCode={task.activityCode} onSave={(body) => act(`/jobs/${job.id}/tasks/${task.id}/time`, body)} />
+                                ) : null}
+                              </div>
+                              {manageJobs && task.status !== "done" && !task.blocked ? (
+                                <button className="btn btn-sm" type="button" onClick={() => void act(`/jobs/${job.id}/tasks/${task.id}/done`, {})}>
+                                  Mark done
+                                </button>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                        {manageJobs ? (
+                          <details className="mt-3 rounded-xl border border-black/10">
+                            <summary className="cursor-pointer select-none px-3 py-2.5 text-sm font-semibold text-moss">Add a task or floor work</summary>
+                            <div className="border-t border-black/5 px-3 pb-3">
+                              <TaskForm
+                                people={job.assignees.map((person) => ({ id: person.employeeId, name: person.name }))}
+                                tasks={job.tasks}
+                                services={job.enabledServices}
+                                activities={choices}
+                                rates={job.hourlyRates ?? []}
+                                closed={closed}
+                                onAdd={(body) => act(`/jobs/${job.id}/tasks`, body)}
+                                onAddWork={(body) => act(`/jobs/${job.id}/work`, body)}
+                              />
+                            </div>
+                          </details>
                         ) : null}
-                        {canManageJobs(user?.role) && task.status !== "done" && task.assigneeId && job.status !== "done" ? (
-                          <StartTime
-                            key={`${task.id}-${task.startAt ?? "none"}-${task.started}`}
-                            activities={startChoices(board.data?.activities ?? [], job.enabledServices)}
-                            current={task}
-                            onSave={(startAt, activityCode) =>
-                              act(`/jobs/${job.id}/tasks/${task.id}/start`, {
-                                startAt,
-                                ...(activityCode ? { activityCode } : {}),
-                              })
-                            }
-                          />
-                        ) : null}
-                        {canManageJobs(user?.role) && task.assigneeId && task.assigneeName ? (
-                          <AddTime
-                            person={task.assigneeName}
-                            activities={startChoices(board.data?.activities ?? [], job.enabledServices)}
-                            activityCode={task.activityCode}
-                            onSave={(body) => act(`/jobs/${job.id}/tasks/${task.id}/time`, body)}
-                          />
-                        ) : null}
-                      </span>
-                      {canManageJobs(user?.role) && task.status !== "done" && !task.blocked ? (
-                        <button className="btn btn-ghost" type="button" onClick={() => void act(`/jobs/${job.id}/tasks/${task.id}/done`, {})}>
-                          Mark done
-                        </button>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-                {canManageJobs(user?.role) ? (
-                  <TaskForm
-                    people={job.assignees.map((person) => ({ id: person.employeeId, name: person.name }))}
-                    tasks={job.tasks}
-                    services={job.enabledServices}
-                    activities={startChoices(board.data?.activities ?? [], job.enabledServices)}
-                    rates={job.hourlyRates ?? []}
-                    closed={job.status === "done"}
-                    onAdd={(body) => act(`/jobs/${job.id}/tasks`, body)}
-                    onAddWork={(body) => act(`/jobs/${job.id}/work`, body)}
-                  />
-                ) : null}
-              </div>
-              <div className="mt-4 border-t border-black/5 pt-3">
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="font-medium">Charges · {money(drafted)}</h3>
-                  <div className="flex gap-2">
-                    {canManageJobs(user?.role) || canApproveCharges(user?.role) ? (
-                      <button className="btn btn-ghost" type="button" onClick={() => void act(`/jobs/${job.id}/charges`, {})}>
-                        Draft charges
-                      </button>
-                    ) : null}
-                    {canManageJobs(user?.role) && job.status !== "done" ? (
-                      <button className="btn btn-ghost" type="button" onClick={() => void act(`/jobs/${job.id}/done`, {})}>
-                        Close job
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-                {job.charges.length === 0 ? <p className="text-sm text-muted">No charges yet.</p> : null}
-                <ul className="space-y-2 text-sm">
-                  {job.charges.map((charge) => (
-                    <li key={charge.id} className="flex flex-wrap items-center justify-between gap-2">
-                      <span>
-                        {charge.description}
-                        <span className="text-muted"> · {charge.status}</span>
-                      </span>
-                      <span className="flex items-center gap-2">
-                        <span className="font-medium">{money(charge.amountCents)}</span>
-                        {canApproveCharges(user?.role) && charge.status === "draft" ? (
-                          <button className="btn btn-ghost" type="button" onClick={() => void act(`/billing/charges/${charge.id}/approve`, {})}>
-                            Approve
+                      </div>
+
+                      <div className={`mt-3 ${tab === "charges" ? "" : "hidden"}`}>
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                          <p className="text-sm">
+                            Total <span className="font-mono font-semibold tabular-nums">{money(drafted)}</span>
+                          </p>
+                          {manageJobs || approve ? (
+                            <button className="btn btn-sm" type="button" onClick={() => void act(`/jobs/${job.id}/charges`, {})}>
+                              Draft charges
+                            </button>
+                          ) : null}
+                        </div>
+                        {job.charges.length === 0 ? <p className="text-sm text-muted">No charges yet.</p> : null}
+                        <ul className="divide-y divide-black/5 text-sm">
+                          {job.charges.map((charge) => (
+                            <li key={charge.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                              <span className="min-w-0 flex-1 basis-48">{charge.description}</span>
+                              <span className="flex items-center gap-2">
+                                <Badge tone={charge.status === "draft" ? "warn" : "ok"}>
+                                  <span className="capitalize">{charge.status}</span>
+                                </Badge>
+                                <span className="font-mono font-medium tabular-nums">{money(charge.amountCents)}</span>
+                                {approve && charge.status === "draft" ? (
+                                  <button className="btn btn-sm" type="button" onClick={() => void act(`/billing/charges/${charge.id}/approve`, {})}>
+                                    Approve
+                                  </button>
+                                ) : null}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      {manageJobs && !closed ? (
+                        <div className="mt-4 flex justify-end border-t border-black/5 pt-3">
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm(`Close job ${job.reference}? Everyone must be paused first.`)) void act(`/jobs/${job.id}/done`, {});
+                            }}
+                          >
+                            Close job
                           </button>
-                        ) : null}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              </>
-              ) : null}
-            </article>
-          );
-        })}
-      </div>
-      </div>
-      <JobsChat clientId={client?.id} onChanged={() => board.reload()} />
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+          {paged.hidden > 0 ? <div className="card mt-3 overflow-hidden"><MoreButton hidden={paged.hidden} onClick={paged.more} /></div> : null}
+        </div>
+        <div className="xl:sticky xl:top-6">
+          <JobsChat clientId={client?.id} onChanged={() => board.reload()} />
+        </div>
       </div>
     </div>
   );
@@ -863,7 +943,7 @@ function TaskForm({
       ) : null}
       {kind === "sorting" ? (
         <>
-          <Field label="Gaylord code">
+          <Field label="Bin code">
             <input className="field font-mono" value={reference} onChange={(event) => setReference(event.target.value)} />
           </Field>
           <Field label="Carrier">
@@ -918,7 +998,11 @@ function TaskForm({
           {kind ? `Add ${WORK_KINDS.find(([code]) => code === kind)?.[1].toLowerCase()}` : "Add task"}
         </button>
         {kind ? (
-          <span className="ml-3 text-sm text-muted">This also opens the record on the {kind} board.</span>
+          <span className="ml-3 text-sm text-muted">
+            {kind === "receiving" || kind === "unloading"
+              ? `Adds a task. The live ${kind} work still happens on the ${kind} page, attached to this job.`
+              : `Adds a task on this job. Record the work on the ${kind} page.`}
+          </span>
         ) : null}
         {assigneeId ? (
           <p className="mt-2 text-xs text-muted">

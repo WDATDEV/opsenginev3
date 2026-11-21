@@ -115,8 +115,10 @@ export const deviceKinds = ["packing_computer", "barcode_scanner", "handheld"] a
 
 export type DeviceKind = (typeof deviceKinds)[number];
 
-export const loginModes = ["individual", "shared", "none"] as const;
-export type LoginMode = (typeof loginModes)[number];
+export const stationModes = ["assigned", "shared", "none"] as const;
+export type StationMode = (typeof stationModes)[number];
+export const loginModes = stationModes;
+export type LoginMode = StationMode;
 
 export const ownerships = ["personal", "shared_pool"] as const;
 export type Ownership = (typeof ownerships)[number];
@@ -190,17 +192,13 @@ export const claimStationSchema = z.object({
 
 export const completePackSchema = z.object({
   orderNumber: z.string().trim().min(1).max(80),
-  deviceCode: code,
-  badge: optionalText,
+  badge: code,
   units: z.number().int().min(1).max(10000).default(1),
-  warehanceRecorded: z.boolean().optional(),
-  warehanceUserId: optionalText,
   clientId: z.string().uuid().optional(),
 });
 
 export const recordPickSchema = z.object({
-  deviceCode: code,
-  badge: optionalText,
+  badge: code,
   batchCode: z.string().trim().min(1).max(80),
   sku: z.string().trim().min(1).max(80),
   qty: z.number().int().min(1).max(100000).default(1),
@@ -219,7 +217,6 @@ export const createEmployeeSchema = z.object({
   departmentHome: z.enum(departments).optional(),
   departments: z.array(z.enum(departments)).max(departments.length).optional(),
   employmentType: z.enum(["employee", "temp"]).default("employee"),
-  warehanceUserId: optionalText,
   clientId: z.string().uuid().optional(),
 });
 
@@ -228,7 +225,7 @@ export const createDeviceSchema = z.object({
   label: z.string().trim().min(1).max(80),
   kind: z.enum(deviceKinds),
   ownership: z.enum(ownerships),
-  warehanceLoginMode: z.enum(loginModes),
+  stationMode: z.enum(stationModes),
   location: z.string().trim().min(1).max(80),
   assignedBadge: optionalText,
   clientId: z.string().uuid().optional(),
@@ -406,7 +403,7 @@ export const createJobWorkSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("sorting"),
-    reference: z.string().trim().min(1, "Enter the gaylord code.").max(40),
+    reference: z.string().trim().min(1, "Enter the bin code.").max(40),
     carrier: z.enum(carriers),
     ...jobWorkBase,
   }),

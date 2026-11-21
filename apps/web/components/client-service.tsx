@@ -47,10 +47,17 @@ export function ClientService({
   }
   return (
     <div>
-      <p className="mb-4 text-sm">
-        <span className="font-medium">{client.name}</span>
-        <span className="text-muted"> · {label}</span>
-      </p>
+      <nav aria-label="Breadcrumb" className="mb-4 flex items-center gap-1.5 text-sm text-muted">
+        <Link className="hover:text-ink hover:underline" href="/">
+          Clients
+        </Link>
+        <span aria-hidden="true">/</span>
+        <span className="truncate">{client.name}</span>
+        <span aria-hidden="true">/</span>
+        <span className="font-medium text-ink" aria-current="page">
+          {label}
+        </span>
+      </nav>
       {children(client)}
     </div>
   );

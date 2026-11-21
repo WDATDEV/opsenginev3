@@ -59,8 +59,8 @@ export function ReceivingBoard({ client }: { client?: { id: string; name: string
         title={client ? `Receiving for ${client.name}` : "More than one person on a shipment"}
         detail={
           client
-            ? `Shipments here belong to ${client.name}. Anyone clocked in can join an open shipment.`
-            : "Anyone clocked in can join an open shipment. Each count stays with the person who entered it, even when the times overlap."
+            ? `Open a shipment here and pick an open job for ${client.name}. Anyone clocked in can join. Counts stay with the person who entered them.`
+            : "Open a shipment on this board and pick an open job. Anyone clocked in can join. Each count stays with the person who entered it."
         }
       />
       {board.error ? <Notice tone="bad">{board.error}</Notice> : null}

@@ -53,8 +53,8 @@ export function SortingBoard({ client }: { client?: { id: string; name: string }
         title={client ? `Sorting for ${client.name}` : "Scan into the gaylord"}
         detail={
           client
-            ? `Gaylords opened here belong to ${client.name}. A package placed without a scan still needs a reason.`
-            : "USPS, UPS, FedEx, DHL, and other carrier gaylords take a scan. Placing a package without a scan needs a reason."
+            ? `Open gaylords here for ${client.name} and scan packages in. A package placed without a scan still needs a reason.`
+            : "Open a gaylord on this board, then scan packages in. Placing one without a scan needs a reason."
         }
       />
       {board.error ? <Notice tone="bad">{board.error}</Notice> : null}

@@ -1,4 +1,4 @@
-export type LoginMode = "individual" | "shared" | "none";
+export type LoginMode = "assigned" | "shared" | "none";
 export type DeviceKind = "packing_computer" | "barcode_scanner" | "handheld";
 export type Ownership = "personal" | "shared_pool";
 export type Department =
@@ -9,7 +9,19 @@ export type Department =
   | "sorting"
   | "indirect";
 
-export type PackAttribution = "warehance_user" | "station_badge" | "manual";
+export type PackAttribution = "assigned" | "station_badge" | "manual";
+
+/** Stored `warehance_login_mode` still uses `individual` for an assigned packing PC. */
+export function stationModeFromStored(value: string): LoginMode {
+  if (value === "shared") return "shared";
+  if (value === "assigned" || value === "individual") return "assigned";
+  return "none";
+}
+
+export function storedStationMode(mode: LoginMode): string {
+  if (mode === "assigned") return "individual";
+  return mode;
+}
 
 export type RuleFailure = { ok: false; reason: string };
 export type RuleSuccess<T> = { ok: true } & T;
@@ -31,14 +43,14 @@ export const trackingPolicy = [
     area: "Packing",
     question: "Does each packer have their own station, or do employees share computers?",
     answer:
-      "Both happen on this floor. Each packing computer is marked individual or shared. An individual computer belongs to one person. A shared computer stays on a station login, and the packer badges in.",
+      "Both happen on this floor. A packing computer is assigned to one person, or it is shared and the packer badges in. Time tracking records who packed. Warehance is not involved.",
   },
   {
     id: "packing-attribution",
     area: "Packing",
     question: "When an employee finishes packing, who is recorded as the packer?",
     answer:
-      "Ops Engine stores the packer. On an individual computer, that person is the packer. On a shared computer, the badge or the open station session is the record.",
+      "Ops Engine stores the packer. On an assigned computer, that person is the packer unless someone else badges in. On a shared computer, the badge or the open station session is the record.",
   },
   {
     id: "picking-devices",
@@ -79,9 +91,9 @@ export const trackingPolicy = [
 
 export function resolvePacker(input: {
   loginMode: LoginMode;
+  assignedEmployeeId?: string | null;
   badgeEmployeeId?: string | null;
   stationSessionEmployeeId?: string | null;
-  warehanceMappedEmployeeId?: string | null;
   manualEmployeeId?: string | null;
 }): RuleSuccess<{
   employeeId: string;
@@ -90,14 +102,14 @@ export function resolvePacker(input: {
 }> | RuleFailure {
   const badge = input.badgeEmployeeId ?? null;
   const session = input.stationSessionEmployeeId ?? null;
-  const mapped = input.warehanceMappedEmployeeId ?? null;
+  const assigned = input.assignedEmployeeId ?? null;
   const manual = input.manualEmployeeId ?? null;
 
   if (input.loginMode === "shared") {
     const employeeId = badge ?? session ?? manual;
     if (!employeeId) {
       return fail(
-        "This packing computer uses a shared station login. Scan the packer's badge so we record who packed the order.",
+        "This packing computer is shared. Scan the packer's badge so we record who packed the order.",
       );
     }
     return {
@@ -108,11 +120,11 @@ export function resolvePacker(input: {
     };
   }
 
-  if (input.loginMode !== "individual") {
-    return fail("Packing is recorded on a packing computer.");
+  if (input.loginMode !== "assigned") {
+    return fail("Set this packing computer as assigned to one person or shared.");
   }
 
-  if (badge && mapped && badge !== mapped) {
+  if (badge && assigned && badge !== assigned) {
     return {
       ok: true,
       employeeId: badge,
@@ -125,7 +137,7 @@ export function resolvePacker(input: {
     return {
       ok: true,
       employeeId: badge,
-      attribution: mapped === badge ? "warehance_user" : "station_badge",
+      attribution: assigned === badge ? "assigned" : "station_badge",
       loginMismatch: false,
     };
   }
@@ -134,16 +146,16 @@ export function resolvePacker(input: {
     return {
       ok: true,
       employeeId: session,
-      attribution: mapped === session ? "warehance_user" : "station_badge",
-      loginMismatch: Boolean(mapped && mapped !== session),
+      attribution: assigned === session ? "assigned" : "station_badge",
+      loginMismatch: Boolean(assigned && assigned !== session),
     };
   }
 
-  if (mapped) {
+  if (assigned) {
     return {
       ok: true,
-      employeeId: mapped,
-      attribution: "warehance_user",
+      employeeId: assigned,
+      attribution: "assigned",
       loginMismatch: false,
     };
   }
@@ -284,29 +296,28 @@ export function taskFor(department: Department): string {
 export function normalizeDevice(input: {
   kind: DeviceKind;
   ownership: Ownership;
-  warehanceLoginMode: LoginMode;
+  stationMode: LoginMode;
   assignedEmployeeId?: string | null;
 }): { ok: true } | RuleFailure {
   const assigned = input.assignedEmployeeId ?? null;
+  const mode = stationModeFromStored(input.stationMode);
 
-  if (input.warehanceLoginMode === "shared" && input.ownership === "personal") {
-    return fail("A shared station login is a station device, not a personal one.");
+  if (mode === "shared" && input.ownership === "personal") {
+    return fail("A shared packing computer is a station device, not a personal one.");
   }
 
   if (input.kind === "packing_computer") {
-    if (input.warehanceLoginMode === "none") {
-      return fail(
-        "A packing computer is either an individual login or a shared station login.",
-      );
+    if (mode === "none") {
+      return fail("A packing computer is assigned to one person, or it is shared and people badge in.");
     }
-    if (input.warehanceLoginMode === "individual" && !assigned) {
-      return fail("An individual packing computer has to be assigned to that person.");
+    if (mode === "assigned" && !assigned) {
+      return fail("An assigned packing computer has to be assigned to that person.");
     }
     return { ok: true };
   }
 
-  if (input.warehanceLoginMode !== "none") {
-    return fail("Only packing computers carry a station login.");
+  if (mode !== "none") {
+    return fail("Only packing computers are assigned or shared stations.");
   }
 
   if (input.ownership === "personal" && !assigned) {

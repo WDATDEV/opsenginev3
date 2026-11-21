@@ -70,8 +70,8 @@ export function UnloadingBoard({ client }: { client?: { id: string; name: string
         title={client ? `Unloading for ${client.name}` : "Who worked the truck"}
         detail={
           client
-            ? `Loads here belong to ${client.name}. A person can badge onto the trailer, or a supervisor can enter the crew.`
-            : "A person can badge onto the trailer, a lead can add a name, or a supervisor can enter the paper crew list. Each one has a start and an end."
+            ? `Open a trailer here and pick an open job for ${client.name}. A person can badge onto the load, or a supervisor can enter the crew.`
+            : "Open a trailer on this board and pick an open job. A person can badge on, a lead can add a name, or a supervisor can enter the paper crew. Each one has a start and an end."
         }
       />
       {board.error ? <Notice tone="bad">{board.error}</Notice> : null}

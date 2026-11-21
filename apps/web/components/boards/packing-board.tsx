@@ -10,7 +10,7 @@ type Board = {
     code: string;
     label: string;
     location: string;
-    loginMode: string;
+    stationMode: string;
     assignedTo: string | null;
     claimedBy: string | null;
   }[];
@@ -60,8 +60,8 @@ export function PackingBoard({ client }: { client?: { id: string; name: string }
         title={client ? `Packing for ${client.name}` : "Who packed the order"}
         detail={
           client
-            ? `Packs recorded here stay on ${client.name}. Shared station logins still need a badge.`
-            : "An individual station counts as that person. A shared station needs a badge. Ops Engine keeps the packer either way."
+            ? `Who packed which order for ${client.name}. Assigned computers count as that person. Shared computers need a badge. Warehance is not used here.`
+            : "Record packs on a packing computer. Assigned computers count as that person. Shared computers need a badge."
         }
       />
       {board.error ? <Notice tone="bad">{board.error}</Notice> : null}
@@ -78,7 +78,7 @@ export function PackingBoard({ client }: { client?: { id: string; name: string }
               <select className="field" value={deviceCode} onChange={(event) => setDeviceCode(event.target.value)}>
                 {board.data?.stations.map((station) => (
                   <option key={station.code} value={station.code}>
-                    {station.code} · {station.loginMode}
+                    {station.code} · {station.stationMode === "shared" ? "shared" : "assigned"}
                   </option>
                 ))}
               </select>
@@ -107,9 +107,9 @@ export function PackingBoard({ client }: { client?: { id: string; name: string }
                 <p className="font-mono text-sm">{station.code}</p>
                 <h3 className="text-lg font-semibold">{station.label}</h3>
                 <p className="mt-2 text-sm">
-                  {station.loginMode === "shared"
-                    ? "Shared station login"
-                    : `Individual login${station.assignedTo ? ` · ${station.assignedTo}` : ""}`}
+                  {station.stationMode === "shared"
+                    ? "Shared computer — badge in"
+                    : `Assigned${station.assignedTo ? ` · ${station.assignedTo}` : ""}`}
                 </p>
                 <p className="mt-1 text-sm text-muted">
                   {station.claimedBy ? `${station.claimedBy} is at this bench` : "Nobody badged in"}

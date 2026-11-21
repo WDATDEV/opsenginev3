@@ -141,8 +141,8 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
         title={client ? `Jobs for ${client.name}` : "One job per client"}
         detail={
           client
-            ? `${client.name} is already selected. Each job is a project. Say whether the bill uses time, a count, or both, then assign the crew.`
-            : "Each job is a project for one client. Say whether the bill uses time, a count, or both, then assign the crew."
+            ? `${client.name} is already selected. A job is the billable project. Receive and unload on those boards, picking this job. Pack, pick, and sort on their boards.`
+            : "A job is the billable project. Open receiving and unloading from those boards and pick the job. Pack, pick, and sort on their own boards."
         }
       />
       {board.error ? <Notice tone="bad">{board.error}</Notice> : null}
@@ -918,7 +918,11 @@ function TaskForm({
           {kind ? `Add ${WORK_KINDS.find(([code]) => code === kind)?.[1].toLowerCase()}` : "Add task"}
         </button>
         {kind ? (
-          <span className="ml-3 text-sm text-muted">This also opens the record on the {kind} board.</span>
+          <span className="ml-3 text-sm text-muted">
+            {kind === "receiving" || kind === "unloading"
+              ? `Adds a task. The live ${kind} work still happens on the ${kind} page, attached to this job.`
+              : `Adds a task on this job. Record the work on the ${kind} page.`}
+          </span>
         ) : null}
         {assigneeId ? (
           <p className="mt-2 text-xs text-muted">

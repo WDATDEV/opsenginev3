@@ -65,8 +65,8 @@ export function PickingBoard({ client }: { client?: { id: string; name: string }
         title={client ? `Picking for ${client.name}` : "Scanner or handheld"}
         detail={
           client
-            ? `Picks recorded here stay on ${client.name}. A shared handheld still needs a checkout or a badge.`
-            : "A personal scanner belongs to one picker. A shared handheld has to be checked out, or the picker badges at the scan."
+            ? `Record picks here for ${client.name}. A personal scanner belongs to one picker. A shared handheld needs a checkout or a badge.`
+            : "Record picks on this board. A personal scanner belongs to one picker. A shared handheld has to be checked out, or the picker badges at the scan."
         }
       />
       {board.error ? <Notice tone="bad">{board.error}</Notice> : null}

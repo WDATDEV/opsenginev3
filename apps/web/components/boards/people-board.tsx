@@ -67,8 +67,8 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string; e
         title={client ? `People for ${client.name}` : "Badges"}
         detail={
           client
-            ? `People added here belong to ${client.name}. Their badge is how check-in knows them.`
-            : "A badge is how the floor knows a person. Packers on a shared station badge in. Pickers use a scanner."
+            ? `People added here belong to ${client.name}. Pick the departments they may work. Their badge is how check-in and packing know them.`
+            : "A badge is how the floor knows a person. Packers on a shared computer badge in. Pickers use a scanner."
         }
       />
       {board.error ? <Notice tone="bad">{board.error}</Notice> : null}

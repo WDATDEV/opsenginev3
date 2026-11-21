@@ -16,23 +16,23 @@ const amina = "amina";
 const luis = "luis";
 
 describe("packing identity", () => {
-  it("uses the person assigned to an individual station", () => {
+  it("uses the person assigned to the computer", () => {
     const result = resolvePacker({
-      loginMode: "individual",
-      warehanceMappedEmployeeId: amina,
+      loginMode: "assigned",
+      assignedEmployeeId: amina,
     });
     expect(result).toMatchObject({
       ok: true,
       employeeId: amina,
-      attribution: "warehance_user",
+      attribution: "assigned",
       loginMismatch: false,
     });
   });
 
-  it("requires a badge when the packing computer is a shared login", () => {
+  it("requires a badge when the packing computer is shared", () => {
     const result = resolvePacker({ loginMode: "shared" });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toMatch(/shared station login/);
+    if (!result.ok) expect(result.reason).toMatch(/shared/);
   });
 
   it("records the badged packer on a shared computer when nobody is assigned", () => {
@@ -47,10 +47,10 @@ describe("packing identity", () => {
     });
   });
 
-  it("keeps the badge when an individual login belongs to someone else", () => {
+  it("keeps the badge when an assigned computer belongs to someone else", () => {
     const result = resolvePacker({
-      loginMode: "individual",
-      warehanceMappedEmployeeId: amina,
+      loginMode: "assigned",
+      assignedEmployeeId: amina,
       badgeEmployeeId: luis,
     });
     expect(result).toMatchObject({
@@ -209,7 +209,7 @@ describe("sorting and task changes", () => {
       normalizeDevice({
         kind: "barcode_scanner",
         ownership: "personal",
-        warehanceLoginMode: "none",
+        stationMode: "none",
         assignedEmployeeId: "priya",
       }).ok,
     ).toBe(true);
@@ -218,7 +218,7 @@ describe("sorting and task changes", () => {
       normalizeDevice({
         kind: "packing_computer",
         ownership: "shared_pool",
-        warehanceLoginMode: "shared",
+        stationMode: "shared",
       }).ok,
     ).toBe(true);
 
@@ -226,7 +226,7 @@ describe("sorting and task changes", () => {
       normalizeDevice({
         kind: "packing_computer",
         ownership: "personal",
-        warehanceLoginMode: "individual",
+        stationMode: "assigned",
       }).ok,
     ).toBe(false);
   });

@@ -115,7 +115,10 @@ export const deviceKinds = ["packing_computer", "barcode_scanner", "handheld"] a
 
 export type DeviceKind = (typeof deviceKinds)[number];
 
-export const loginModes = ["individual", "shared", "none"] as const;
+export const stationModes = ["assigned", "shared", "none"] as const;
+export type StationMode = (typeof stationModes)[number];
+/** @deprecated Use stationModes. Stored packing PCs may still say individual. */
+export const loginModes = ["assigned", "shared", "none", "individual"] as const;
 export type LoginMode = (typeof loginModes)[number];
 
 export const ownerships = ["personal", "shared_pool"] as const;
@@ -193,8 +196,6 @@ export const completePackSchema = z.object({
   deviceCode: code,
   badge: optionalText,
   units: z.number().int().min(1).max(10000).default(1),
-  warehanceRecorded: z.boolean().optional(),
-  warehanceUserId: optionalText,
   clientId: z.string().uuid().optional(),
 });
 
@@ -228,7 +229,7 @@ export const createDeviceSchema = z.object({
   label: z.string().trim().min(1).max(80),
   kind: z.enum(deviceKinds),
   ownership: z.enum(ownerships),
-  warehanceLoginMode: z.enum(loginModes),
+  stationMode: z.enum(stationModes),
   location: z.string().trim().min(1).max(80),
   assignedBadge: optionalText,
   clientId: z.string().uuid().optional(),

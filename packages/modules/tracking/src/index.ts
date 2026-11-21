@@ -10,6 +10,8 @@ export {
   planTaskSwitch,
   resolvePacker,
   resolvePicker,
+  stationModeFromStored,
+  storedStationMode,
   taskFor,
   throwIfRejected,
   trackingPolicy,

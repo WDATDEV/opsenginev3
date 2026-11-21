@@ -64,7 +64,7 @@ type Context = {
   stations: {
     code: string;
     label: string;
-    loginMode: string;
+    stationMode: string;
     claimedBy: string | null;
     assignedTo: string | null;
   }[];
@@ -735,17 +735,17 @@ function PackPanel({
         <select className="field" value={deviceCode} onChange={(event) => setDeviceCode(event.target.value)}>
           {context.stations.map((item) => (
             <option key={item.code} value={item.code}>
-              {item.code} · {item.loginMode === "shared" ? "shared login" : item.assignedTo ?? "individual"}
+              {item.code} · {item.stationMode === "shared" ? "shared" : item.assignedTo ?? "assigned"}
             </option>
           ))}
         </select>
       </Field>
       <p className="text-sm text-muted">
-        {station?.loginMode === "shared"
+        {station?.stationMode === "shared"
           ? station.claimedBy
-            ? `${station.claimedBy} currently holds this shared login.`
-            : "Shared station login. Claim it with your badge before the pack counts."
-          : "This computer is an individual station."}
+            ? `${station.claimedBy} currently holds this shared computer.`
+            : "Shared computer. Claim it with your badge before the pack counts."
+          : "This computer is assigned to one person."}
       </p>
       <button
         className="btn btn-ghost tap w-full"

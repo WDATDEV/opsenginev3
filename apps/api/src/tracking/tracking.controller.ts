@@ -217,8 +217,6 @@ export class TrackingController {
       deviceCode: string;
       badge?: string;
       units: number;
-      warehanceRecorded?: boolean;
-      warehanceUserId?: string;
       clientId?: string;
     },
   ) {

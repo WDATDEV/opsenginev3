@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { jobChatGate, matchJob, matchOne, matchPeople, parseAssignPeople, parseCreateJob, takeProposed } from "./jobs-chat.js";
+import {
+  historyContent,
+  jobChatGate,
+  jobChatKind,
+  matchJob,
+  matchOne,
+  matchPeople,
+  parseAssignPeople,
+  parseCreateJob,
+  recheckCard,
+  requestText,
+  takeProposed,
+  trimHistory,
+} from "./jobs-chat.js";
 
 const clients = [
   { id: "c1", name: "Harbor Goods", code: "HG", enabledServices: ["jobs"] },
@@ -130,5 +143,109 @@ describe("jobs chat cards", () => {
       }),
       null,
     );
+  });
+});
+
+describe("jobs chat follows what was asked", () => {
+  const made = (args: Record<string, unknown>, asked: string, extra: Record<string, unknown> = {}) =>
+    parseCreateJob(args, { clients, people, jobs, now, asked, ...extra });
+
+  it("keeps a typed reference, title, client, crew, and billing", () => {
+    const result = made(
+      { client_name: "Harbor Goods", reference: "HG-205", title: "Unload 20 pallets", bill_basis: "pallet", people: ["Ada Cole"] },
+      "Open job HG-205 for Harbor Goods to unload 20 pallets, bill per pallet, assign Ada Cole",
+    );
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.card.jobReference, "HG-205");
+    assert.equal(result.card.billBasis, "pallet");
+    assert.equal(result.card.people[0]?.employeeId, "p1");
+  });
+
+  it("numbers the job when no reference was typed, and refuses an invented one", () => {
+    const numbered = made({ client_name: "Harbor Goods", title: "Inbound receiving" }, "Create an inbound receiving job for Harbor Goods");
+    assert.equal(numbered.ok, true);
+    if (numbered.ok) assert.equal(numbered.card.jobReference, "HG-1001");
+    const invented = made({ client_name: "Harbor Goods", reference: "HG-777", title: "Inbound" }, "Create an inbound job for Harbor Goods");
+    assert.equal(invented.ok, false);
+  });
+
+  it("does not read a work count as the billing method", () => {
+    const result = made(
+      { client_name: "Harbor Goods", title: "Unload 20 pallets", bill_basis: "pallet" },
+      "Create a job for Harbor Goods to unload 20 pallets",
+    );
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.card.billBasis, "mixed");
+  });
+
+  it("understands hourly as billing by time", () => {
+    const result = made({ client_name: "Harbor Goods", title: "Kitting", bill_basis: "hourly" }, "Kitting job for Harbor Goods, hourly");
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.card.billBasis, "time");
+  });
+
+  it("refuses a made-up title, an unnamed person, and an unnamed client", () => {
+    assert.equal(made({ client_name: "Harbor Goods", title: "Inbound freight" }, "Open a job for Harbor Goods").ok, false);
+    assert.equal(made({ client_name: "Harbor Goods", title: "Packing", people: ["Ben Cole"] }, "Packing job for Harbor Goods with Ada").ok, false);
+    assert.equal(made({ client_name: "Harbor Goods", title: "Packing" }, "Create a packing job").ok, false);
+  });
+
+  it("asks when a short name fits two clients or two people", () => {
+    const twoClients = [...clients, { id: "c3", name: "Harbor Freight", code: "HF", enabledServices: ["jobs"] }];
+    assert.equal(made({ client_name: "Harbor Goods", title: "Packing" }, "Packing job for Harbor", { clients: twoClients }).ok, false);
+    const twoAdas = [...people, { id: "p4", name: "Ada Stone", clientId: "c1", active: true }];
+    assert.equal(made({ client_name: "HG", title: "Packing", people: ["Ada Cole"] }, "Packing job for HG with Ada", { people: twoAdas }).ok, false);
+  });
+
+  it("carries over only a card that is still being changed", () => {
+    const card = { jobReference: "HG-9", title: "Inbound", clientName: "Harbor Goods", billBasis: "mixed", people: [{ employeeId: "p1", name: "Ada Cole" }] };
+    const waiting = requestText([
+      { role: "user", content: "Open HG-9 inbound" },
+      { role: "assistant", content: "Press Confirm", jobChange: { ...card, status: "proposed" } },
+      { role: "user", content: "add Ben too" },
+    ]);
+    assert.match(waiting, /HG-9/);
+    assert.match(waiting, /Ben/);
+    const saved = requestText([
+      { role: "user", content: "Open HG-9 inbound" },
+      { role: "assistant", content: "Saved", jobChange: { ...card, status: "applied" } },
+      { role: "user", content: "open another job" },
+    ]);
+    assert.doesNotMatch(saved, /HG-9|Ada/);
+  });
+
+  it("counts a suggested name only after the person agrees", () => {
+    const question = { role: "assistant", content: "Did you mean Harbor Goods?" };
+    assert.match(requestText([{ role: "user", content: "Job for Harbour" }, question, { role: "user", content: "yes" }]), /Harbor Goods/);
+    assert.doesNotMatch(requestText([{ role: "user", content: "Job for Harbour" }, question, { role: "user", content: "no, Acme" }]), /Harbor Goods/);
+  });
+
+  it("starts trimmed history on a user message and shows card status", () => {
+    const rows = Array.from({ length: 31 }, (_, index) => ({ role: index % 2 ? "assistant" : "user", content: String(index) }));
+    assert.equal(trimHistory(rows, 24)[0]?.role, "user");
+    const line = historyContent({
+      role: "assistant",
+      content: "Done",
+      jobChange: { jobReference: "HG-9", title: "T", clientName: "Harbor Goods", billBasis: "time", people: [], status: "applied" },
+    });
+    assert.match(line, /Status: applied/);
+  });
+
+  it("confirms the exact person by id when two share a name", () => {
+    const twins = [
+      { id: "s1", name: "Sam", clientId: "c1", active: true },
+      { id: "s2", name: "Sam", clientId: "c1", active: true },
+    ];
+    const card = { kind: "create_job" as const, clientId: "c1", jobId: null, jobReference: "HG-300", people: [{ employeeId: "s2", name: "Sam" }] };
+    assert.equal(recheckCard(card, { clients, people: twins, jobs, references: ["HG-100"] }), null);
+    assert.match(recheckCard({ ...card, jobReference: "HG 100" }, { clients, people: twins, jobs, references: ["HG-100"] }) ?? "", /already used/);
+    assert.match(recheckCard(card, { clients, people: [twins[0]!], jobs, references: [] }) ?? "", /no longer/);
+    assert.match(recheckCard(card, { clients, people: twins, jobs, references: [], scopedClientId: "c9" }) ?? "", /one client/);
+  });
+
+  it("keeps each client's conversation separate", () => {
+    assert.equal(jobChatKind(null), "jobs");
+    assert.notEqual(jobChatKind("c1"), jobChatKind("c2"));
   });
 });

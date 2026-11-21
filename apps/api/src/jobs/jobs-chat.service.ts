@@ -9,17 +9,21 @@ import {
   type ChatJobChange,
   type ChatLookup,
 } from "@opsengine/db";
-import { can, ForbiddenError, type Principal } from "@opsengine/kernel";
+import { assertClientVisible, can, ForbiddenError, type Principal } from "@opsengine/kernel";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { DbService } from "../db.service.js";
 import { isCancelled, STOPPED, throwIfAborted } from "../mail/abort.js";
 import { ask, modelFor, type Block, type ClaudeTool, type Message } from "../mail/anthropic.js";
 import { JobsService } from "./jobs.service.js";
 import {
-  JOB_CHAT_KIND,
+  historyContent,
   jobChatGate,
+  jobChatKind,
   parseAssignPeople,
   parseCreateJob,
+  recheckCard,
+  requestText,
+  trimHistory,
   type JobCard,
   type OpsClient,
   type OpsJob,
@@ -39,6 +43,14 @@ Rules:
 - Use only the Time tracking list tools. Never invent a client, person, job, reference, or id.
 - Before propose_create_job, call list_ops_clients. If they named people, call list_ops_people for that client. Copy client_name and people strings exactly from those records. If a name is missing or several people match, ask — do not guess.
 - Before propose_assign_people, call list_ops_jobs and list_ops_people. Copy job_reference and people exactly from those records.
+- Reference: pass it only if the person typed one. Otherwise leave it out and the app numbers the job.
+- Title: a short description in the person's own words, such as "Unload 20 pallets". If they did not say what the job is for, ask.
+- Bill by: pass bill_basis only if they said how to bill, such as hourly or per pallet. A count like "20 pallets" describes the work, not the billing.
+- People: add only people they named. Never add someone because they worked with this client before.
+- If they ask for several jobs, call propose_create_job once per job in the same reply. Each job gets its own card.
+- A job card stores only client, reference, title, bill by, and people. Put anything else they asked for, such as dates, start times, quantities, docks, carriers, or tasks, in not_saved in their words, and tell them it was not saved.
+- If a tool returns an error, fix it from the lists or ask the person. Do not work around it.
+- [App note: ...] lines in the history are written by the app and show each card's real status. Do not repeat them. "applied" means saved. "proposed" means it is waiting for Confirm.
 - A card only fills a form. Tell them to press Confirm. Never claim the job was created or people were assigned until they confirm.
 - If this chat is limited to one client, do not use another client.
 - Answer in plain text, short and clear. No markdown tables.
@@ -68,7 +80,7 @@ export class JobsChatService {
   }
 
   async get(principal: Principal, scopedClientId?: string | null) {
-    const thread = await this.thread(principal.id);
+    const thread = await this.thread(principal, scopedClientId);
     const stale = new Date(Date.now() - STUCK_MS);
     const waiting = await this.db.db
       .select()
@@ -105,7 +117,7 @@ export class JobsChatService {
     if (!can(principal, "job.manage")) throw new ForbiddenError();
     const ready = await this.ready();
     if (!ready.claude) throw new BadRequestException("Add the Claude API key in Settings first.");
-    const thread = await this.thread(principal.id);
+    const thread = await this.thread(principal, scopedClientId);
     const busy = await this.db.db
       .select({ id: chatMessages.id })
       .from(chatMessages)
@@ -129,7 +141,7 @@ export class JobsChatService {
 
   async cancel(principal: Principal, messageId: string, scopedClientId?: string | null) {
     if (!can(principal, "job.manage")) throw new ForbiddenError();
-    const thread = await this.thread(principal.id);
+    const thread = await this.thread(principal, scopedClientId);
     const [row] = await this.db.db
       .select({ id: chatMessages.id })
       .from(chatMessages)
@@ -147,9 +159,9 @@ export class JobsChatService {
     return this.get(principal, scopedClientId);
   }
 
-  async confirm(principal: Principal, messageId: string) {
+  async confirm(principal: Principal, messageId: string, scopedClientId?: string | null) {
     if (!can(principal, "job.manage")) throw new ForbiddenError();
-    const thread = await this.thread(principal.id);
+    const thread = await this.thread(principal, scopedClientId);
     const [row] = await this.db.db
       .select()
       .from(chatMessages)
@@ -174,7 +186,7 @@ export class JobsChatService {
       .returning({ id: chatMessages.id });
     if (!claimed[0]) throw new BadRequestException("Someone already confirmed that card.");
     try {
-      const result = await this.applyCard(principal, applying);
+      const result = await this.applyCard(principal, applying, scopedClientId ?? null);
       const done: ChatJobChange = { ...applying, status: "applied", result, error: null };
       await this.db.db.update(chatMessages).set({ jobChange: done }).where(eq(chatMessages.id, row.id));
     } catch (err) {
@@ -183,20 +195,24 @@ export class JobsChatService {
       await this.db.db.update(chatMessages).set({ jobChange: failed }).where(eq(chatMessages.id, row.id));
       throw new BadRequestException(message);
     }
-    return this.get(principal);
+    return this.get(principal, scopedClientId);
   }
 
-  private async thread(ownerId: string) {
+  // Each client page has its own conversation, so one client's job details never carry into another's.
+  private async thread(principal: Principal, scopedClientId?: string | null) {
+    if (scopedClientId) assertClientVisible(principal, scopedClientId);
+    const ownerId = principal.id;
+    const kind = jobChatKind(scopedClientId);
     const [existing] = await this.db.db
       .select()
       .from(chatThreads)
-      .where(and(eq(chatThreads.ownerId, ownerId), eq(chatThreads.kind, JOB_CHAT_KIND)))
+      .where(and(eq(chatThreads.ownerId, ownerId), eq(chatThreads.kind, kind)))
       .orderBy(desc(chatThreads.updatedAt))
       .limit(1);
     if (existing) return existing;
     const [created] = await this.db.db
       .insert(chatThreads)
-      .values({ ownerId, title: "Jobs", kind: JOB_CHAT_KIND, model: "haiku" })
+      .values({ ownerId, title: "Jobs", kind, model: "haiku" })
       .returning();
     if (!created) throw new BadRequestException("Could not open the jobs chat.");
     return created;
@@ -211,10 +227,11 @@ export class JobsChatService {
       .from(chatMessages)
       .where(eq(chatMessages.threadId, thread.id))
       .orderBy(asc(chatMessages.createdAt));
-    const prior = history.filter((row) => row.id !== messageId).slice(-HISTORY);
-    const messages: Message[] = prior.map((row) => ({
+    const earlier = history.filter((row) => row.id !== messageId);
+    const asked = requestText(earlier);
+    const messages: Message[] = trimHistory(earlier, HISTORY).map((row) => ({
       role: row.role === "assistant" ? "assistant" : "user",
-      content: row.content || "(no text)",
+      content: historyContent(row),
     }));
     const scope = scopedClientId ? catalog.clients.find((client) => client.id === scopedClientId) : null;
     const system = [
@@ -227,7 +244,25 @@ export class JobsChatService {
     const tools = this.tools();
     let lookups: ChatLookup[] = [];
     let jobChange: ChatJobChange | null = null;
+    const cards: ChatJobChange[] = [];
     const model = modelFor("sonnet");
+    // Extra jobs from one request each get their own card and Confirm, right after the answer.
+    const finish = async (values: Partial<typeof chatMessages.$inferInsert>) => {
+      const [saved] = await this.db.db
+        .update(chatMessages)
+        .set({ ...values, lookups, jobChange })
+        .where(and(eq(chatMessages.id, messageId), eq(chatMessages.status, "working")))
+        .returning({ id: chatMessages.id });
+      if (!saved) return;
+      for (const [index, card] of cards.slice(1).entries()) {
+        await this.db.db.insert(chatMessages).values({
+          threadId: thread.id,
+          role: "assistant",
+          content: `Card ${index + 2} of ${cards.length}: ${card.summary}`,
+          jobChange: card,
+        });
+      }
+    };
     try {
       throwIfAborted(signal);
       let reply = await ask(key, { model, system, messages, tools, signal });
@@ -240,17 +275,20 @@ export class JobsChatService {
           .join("\n")
           .trim();
         if (uses.length === 0) {
-          await this.db.db
-            .update(chatMessages)
-            .set({ content: text || "Ask me to open a job or assign people.", status: "done", error: null, lookups, jobChange })
-            .where(and(eq(chatMessages.id, messageId), eq(chatMessages.status, "working")));
+          await finish({ content: text || "Ask me to open a job or assign people.", status: "done", error: null });
           return;
         }
         const results: Block[] = [];
         for (const use of uses) {
           throwIfAborted(signal);
-          const [content, isError] = await this.useTool(use, catalog, scopedClientId, (card) => {
-            jobChange = card;
+          const [content, isError] = await this.useTool(use, catalog, scopedClientId, asked, (card) => {
+            // A retry of the same job replaces its card instead of adding a duplicate.
+            const same = cards.findIndex((item) => item.kind === card.kind && item.jobReference === card.jobReference);
+            if (same >= 0) cards[same] = card;
+            else cards.push(card);
+            // Several unnumbered jobs in one request must each get their own number.
+            if (card.kind === "create_job") catalog.references.push(card.jobReference);
+            jobChange = cards[0] ?? null;
           });
           lookups = [...lookups, { tool: use.name, summary: clip(`${use.name}: ${isError ? content : "ok"}`, 120) }];
           await this.db.db
@@ -263,17 +301,11 @@ export class JobsChatService {
         messages.push({ role: "user", content: results });
         reply = await ask(key, { model, system, messages, tools, signal });
       }
-      await this.db.db
-        .update(chatMessages)
-        .set({ content: "That took too many steps. Ask again with the client, job reference, and people named.", status: "done", lookups, jobChange })
-        .where(and(eq(chatMessages.id, messageId), eq(chatMessages.status, "working")));
+      await finish({ content: "That took too many steps. Ask again with the client, job reference, and people named.", status: "done" });
     } catch (err) {
       if (!isCancelled(err)) {
         const reason = err instanceof Error ? err.message : "Something went wrong.";
-        await this.db.db
-          .update(chatMessages)
-          .set({ status: "failed", error: clip(reason, 400), lookups, jobChange })
-          .where(and(eq(chatMessages.id, messageId), eq(chatMessages.status, "working")));
+        await finish({ status: "failed", error: clip(reason, 400) });
       }
     } finally {
       this.turns.delete(messageId);
@@ -305,17 +337,18 @@ export class JobsChatService {
       },
       {
         name: "propose_create_job",
-        description: "Prepare a card to open a job. Does not save the job until the owner confirms.",
+        description: "Prepare one card to open one job. Does not save the job until the owner confirms. Call once per job.",
         input_schema: {
           type: "object",
           properties: {
-            client_name: { type: "string" },
-            reference: { type: "string" },
-            title: { type: "string" },
-            bill_basis: { type: "string" },
-            people: { type: "array", items: { type: "string" } },
+            client_name: { type: "string", description: "Exact client name from list_ops_clients." },
+            reference: { type: "string", description: "Only if the person typed a reference. Leave out and the app numbers the job." },
+            title: { type: "string", description: "Short description of the work in the person's words." },
+            bill_basis: { type: "string", enum: ["time", "pallet", "carton", "sku", "mixed"], description: "Only if the person said how to bill." },
+            people: { type: "array", items: { type: "string" }, description: "Only people the person named, copied from list_ops_people." },
+            not_saved: { type: "array", items: { type: "string" }, description: "Details they asked for that this card cannot store, such as dates, times, quantities, docks, or tasks." },
           },
-          required: ["client_name", "reference", "title"],
+          required: ["client_name", "title"],
         },
       },
       {
@@ -326,6 +359,7 @@ export class JobsChatService {
           properties: {
             job_reference: { type: "string" },
             people: { type: "array", items: { type: "string" } },
+            not_saved: { type: "array", items: { type: "string" }, description: "Details they asked for that this card cannot store, such as start times or tasks." },
           },
           required: ["job_reference", "people"],
         },
@@ -335,8 +369,9 @@ export class JobsChatService {
 
   private async useTool(
     use: ToolUse,
-    catalog: { clients: OpsClient[]; people: OpsPerson[]; jobs: OpsJob[] },
+    catalog: { clients: OpsClient[]; people: OpsPerson[]; jobs: OpsJob[]; references: string[] },
     scopedClientId: string | null,
+    asked: string,
     save: (card: JobCard) => void,
   ): Promise<[string, boolean]> {
     const args = asRecord(use.input);
@@ -389,13 +424,13 @@ export class JobsChatService {
         ];
       }
       if (use.name === "propose_create_job") {
-        const parsed = parseCreateJob(args, { ...catalog, now: Date.now(), scopedClientId });
+        const parsed = parseCreateJob(args, { ...catalog, now: Date.now(), scopedClientId, asked });
         if (!parsed.ok) return [parsed.error, true];
         save(parsed.card);
         return [JSON.stringify({ ok: true, summary: parsed.card.summary }), false];
       }
       if (use.name === "propose_assign_people") {
-        const parsed = parseAssignPeople(args, { ...catalog, now: Date.now(), scopedClientId });
+        const parsed = parseAssignPeople(args, { ...catalog, now: Date.now(), scopedClientId, asked });
         if (!parsed.ok) return [parsed.error, true];
         save(parsed.card);
         return [JSON.stringify({ ok: true, summary: parsed.card.summary }), false];
@@ -434,49 +469,39 @@ export class JobsChatService {
       clients: clients.filter((client) => !client.hidden && visible.has(client.id)),
       people: people.filter((person) => person.active !== false && board.people.some((item) => item.id === person.id)),
       jobs: jobRows.filter((job) => visible.has(job.clientId)),
+      // References are unique across every client, including ones this person cannot see.
+      references: jobRows.map((job) => job.reference),
     };
   }
 
-  private async applyCard(principal: Principal, card: JobCard) {
+  private async applyCard(principal: Principal, card: JobCard, scopedClientId: string | null) {
     const catalog = await this.catalog(principal);
-    const people = card.people.map((person) => person.name);
-    const checked =
-      card.kind === "create_job"
-        ? parseCreateJob(
-            {
-              client_name: card.clientName,
-              reference: card.jobReference,
-              title: card.title,
-              bill_basis: card.billBasis,
-              people,
-            },
-            { ...catalog, now: Date.now() },
-          )
-        : parseAssignPeople(
-            { job_reference: card.jobReference, people },
-            { ...catalog, now: Date.now() },
-          );
-    if (!checked.ok) throw new Error(checked.error);
-    if (checked.card.clientId !== card.clientId) throw new Error("That client changed. Ask again.");
-    if (card.kind === "assign_people" && checked.card.jobId !== card.jobId) throw new Error("That job changed. Ask again.");
+    const blocked = recheckCard(card, { ...catalog, scopedClientId });
+    if (blocked) throw new Error(blocked);
     const notes: string[] = [];
-    let jobId = checked.card.jobId;
+    let jobId = card.jobId;
     if (card.kind === "create_job") {
       const created = await this.jobs.create(principal, {
-        clientId: checked.card.clientId,
-        reference: checked.card.jobReference,
-        title: checked.card.title,
-        billBasis: checked.card.billBasis ?? "mixed",
+        clientId: card.clientId,
+        reference: card.jobReference,
+        title: card.title,
+        billBasis: card.billBasis ?? "mixed",
       });
       jobId = created.id;
       notes.push(created.message);
     }
     if (!jobId) throw new Error("That job is not on file.");
-    for (const person of checked.card.people) {
-      const assigned = await this.jobs.assign(principal, jobId, person.employeeId);
-      notes.push(assigned.message);
+    for (const person of card.people) {
+      try {
+        const assigned = await this.jobs.assign(principal, jobId, person.employeeId);
+        notes.push(assigned.message);
+      } catch (err) {
+        // The job already exists at this point, so say exactly who is missing instead of failing the card.
+        if (card.kind !== "create_job") throw err;
+        notes.push(`Could not assign ${person.name}: ${explain(err)}`);
+      }
     }
-    if (notes.length === 0) return `${checked.card.jobReference} is assigned.`;
+    if (notes.length === 0) return `${card.jobReference} is assigned.`;
     return notes.join(" ");
   }
 }
@@ -497,7 +522,8 @@ function rosterLines(catalog: { clients: OpsClient[]; people: OpsPerson[]; jobs:
     .slice(0, 40)
     .map((person) => person.name)
     .join(", ");
-  return `Live Time tracking list — copy these names exactly.\nClients: ${clientBit || "none"}.\nOpen jobs: ${jobBit || "none"}.\nPeople: ${peopleBit || "none"}.`;
+  const partial = clients.length > 40 || jobs.length > 30 || people.length > 40 ? "\nThis list is cut short. Use the list tools with a query before saying someone or something is missing." : "";
+  return `Live Time tracking list — copy these names exactly.\nClients: ${clientBit || "none"}.\nOpen jobs: ${jobBit || "none"}.\nPeople: ${peopleBit || "none"}.${partial}`;
 }
 
 function personFits(person: OpsPerson, query: string) {
@@ -505,7 +531,7 @@ function personFits(person: OpsPerson, query: string) {
   if (!q) return true;
   const name = person.name.toLowerCase();
   const badge = (person.badgeCode ?? "").toLowerCase();
-  return name === q || name.startsWith(`${q} `) || name.split(" ")[0] === q || badge === q || badge.replace(/\s+/g, "") === q.replace(/\s+/g, "");
+  return name === q || name.startsWith(`${q} `) || name.split(/\s+/).includes(q) || badge === q || badge.replace(/\s+/g, "") === q.replace(/\s+/g, "");
 }
 
 function jobFits(job: OpsJob, query: string) {

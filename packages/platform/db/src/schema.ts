@@ -234,6 +234,7 @@ export type ChatJobChange = {
   billBasis: string | null;
   people: ChatJobPerson[];
   summary: string;
+  notSaved?: string[];
   status: "proposed" | "applying" | "applied" | "rejected";
   proposedAt: string;
   expiresAt: string;

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { FloorGate } from "@/components/floor-access";
 import { Field, Notice } from "@/components/ui";
 import { ApiError, billBasisLabel, post, when } from "@/lib/api";
 import { badgeFromScan } from "@/lib/qr";
@@ -132,6 +133,14 @@ function Elapsed({ since }: { since: string }) {
 }
 
 export default function WarehousePage() {
+  return (
+    <FloorGate>
+      <FloorPhone />
+    </FloorGate>
+  );
+}
+
+function FloorPhone() {
   const [badge, setBadge] = useState("");
   const [context, setContext] = useState<Context | null>(null);
   const [jobId, setJobId] = useState("");

@@ -1320,6 +1320,38 @@ export class TrackingService {
     });
   }
 
+  /** Turning someone off ends any open shift, so their badge and running time stop right away. */
+  async setEmployeeActive(principal: Principal, id: string, active: boolean) {
+    return this.inTx(async (tx) => {
+      const employee = await this.employeeById(tx, id);
+      if (employee.active === active) {
+        return { message: `${employee.name} is already ${active ? "active" : "inactive"}.` };
+      }
+      await tx.update(employees).set({ active }).where(eq(employees.id, employee.id));
+      let ended = false;
+      if (!active) {
+        const shift = await this.openShift(tx, employee.id);
+        if (shift) {
+          const now = new Date();
+          const meal = await this.openBreak(tx, shift.id);
+          if (meal) await tx.update(breaks).set({ endedAt: now }).where(eq(breaks.id, meal.id));
+          await tx.update(shifts).set({ clockOut: now, clockOutPlace: "Deactivated by a manager" }).where(eq(shifts.id, shift.id));
+          await this.closeOpenWork(tx, employee.id, now);
+          ended = true;
+        }
+      }
+      const summary = active
+        ? `${principal.name} reactivated ${employee.name}.`
+        : `${principal.name} deactivated ${employee.name}${ended ? " and ended the open shift" : ""}.`;
+      await this.audit(tx, principal.id, active ? "tracking.employee_reactivated" : "tracking.employee_deactivated", "employee", employee.id, summary);
+      return {
+        message: active
+          ? `${employee.name} is active. Their badge works again.`
+          : `${employee.name} is inactive. Their badge no longer works${ended ? ", and their open shift was ended" : ""}.`,
+      };
+    });
+  }
+
   async receivingBoard() {
     const orm = this.db.db;
     const [shipmentRows, workers, lines, people, clientRows, jobRows] = await Promise.all([

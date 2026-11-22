@@ -550,6 +550,17 @@ export const gatePlaces = tracking.table("gate_places", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+// A phone, kiosk, or gate a manager approved for floor scans. Only a hash of its token is stored.
+export const floorDevices = tracking.table("floor_devices", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  name: text("name").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  createdBy: uuid("created_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+});
+
 export const breaks = tracking.table("breaks", {
   id: uuid("id").defaultRandom().primaryKey(),
   shiftId: uuid("shift_id").notNull(),

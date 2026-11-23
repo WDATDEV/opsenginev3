@@ -51,7 +51,7 @@ import { verifiedTestClient } from "./test-client.js";
 import { checkInventoryLocations, toInventoryLocations } from "./warehance-templates.js";
 import { eventsFromLookup, eventsFromPreparedChange, eventsFromStockChange, type WarehanceAuditEvent } from "./warehance-audit.js";
 import { isCancelled, STOPPED, throwIfAborted } from "./abort.js";
-import { linksForMessage } from "./warehance-links.js";
+import { addLookupLinks, placeLinks, type WarehanceLink } from "./warehance-links.js";
 
 type Thread = typeof chatThreads.$inferSelect;
 type ToolUse = Extract<Block, { type: "tool_use" }>;
@@ -255,13 +255,15 @@ export class ChatService {
     return {
       thread,
       messages: (() => {
-        const already = new Set<string>();
+        // Records found earlier in this chat stay linkable when a later reply names them again.
+        const book = new Map<string, WarehanceLink>();
         return messages.map((row) => {
           const mine = logs.filter((log) => String(log.messageId) === String(row.id));
+          addLookupLinks(book, mine);
           return {
             ...row,
             botLogs: mine.map((log) => ({ tool: log.tool, ok: log.ok, records: log.recordCount, error: log.error })),
-            links: row.role === "assistant" ? linksForMessage(row.id, row.lookups ?? [], logs, already) : [],
+            links: row.role === "assistant" ? placeLinks(row.content, book.values()) : [],
           };
         });
       })(),

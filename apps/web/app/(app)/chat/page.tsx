@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useSession } from "@/components/shell";
 import { Badge, Field, Notice, SkeletonList, Spinner, timeAgo, useResource } from "@/components/ui";
 import { api, ApiError, hasSection, post } from "@/lib/api";
@@ -42,7 +42,14 @@ type PreparedChange = {
 };
 type Send = { kind: "email" | "slack"; to: string; at: string; ok: boolean; note: string; file: string | null };
 type BotLog = { tool: string; ok: boolean; records: number; error: string | null };
-type WarehanceLink = { href: string; label: string; kind: string };
+type WarehanceLink = {
+  href: string;
+  label: string;
+  kind: string;
+  details: { label: string; value: string }[];
+  start: number;
+  end: number;
+};
 type Message = {
   id: string;
   role: "user" | "assistant";
@@ -126,68 +133,91 @@ function WarehanceLinkIcon() {
   );
 }
 
-function recordId(href: string) {
-  const last = href.replace(/\/+$/, "").split("/").pop() ?? "";
-  return /^\d+$/.test(last) ? last : "";
-}
-
-function hitsFor(content: string, links: WarehanceLink[]) {
-  const hits: { start: number; end: number; link: WarehanceLink }[] = [];
-  const placed = new Set<string>();
-  for (const link of links) {
-    const id = recordId(link.href);
-    const needles = [...(id ? [`(ID: ${id})`, `ID: ${id}`, id] : []), link.label].filter((needle) => needle.trim());
-    let found: { start: number; end: number } | null = null;
-    for (const needle of needles) {
-      const at = content.indexOf(needle);
-      if (at >= 0) {
-        found = { start: at, end: at + needle.length };
-        break;
-      }
-    }
-    if (!found || placed.has(link.href)) continue;
-    placed.add(link.href);
-    hits.push({ ...found, link });
-  }
-  hits.sort((a, b) => a.end - b.end);
-  const out: typeof hits = [];
-  let last = -1;
-  for (const hit of hits) {
-    if (hit.start < last) continue;
-    out.push(hit);
-    last = hit.end;
-  }
-  return out;
-}
-
 function InlinePeek({ link }: { link: WarehanceLink }) {
   const [open, setOpen] = useState(false);
+  const [place, setPlace] = useState<CSSProperties>({});
   const box = useRef<HTMLSpanElement | null>(null);
+  const button = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
     function onPointer(event: MouseEvent) {
       if (!box.current?.contains(event.target as Node)) setOpen(false);
     }
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      button.current?.focus();
+    }
+    // The preview is pinned to the screen, so it closes instead of drifting away from its icon.
+    function onScroll(event: Event) {
+      if (!box.current?.contains(event.target as Node)) setOpen(false);
+    }
+    function onResize() {
+      setOpen(false);
+    }
     window.addEventListener("mousedown", onPointer);
-    return () => window.removeEventListener("mousedown", onPointer);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("mousedown", onPointer);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
+    };
   }, [open]);
 
+  function toggle() {
+    const spot = button.current?.getBoundingClientRect();
+    if (spot) {
+      const edge = 8;
+      const width = Math.min(288, window.innerWidth - edge * 2);
+      const left = Math.max(edge, Math.min(spot.left, window.innerWidth - width - edge));
+      const roomBelow = window.innerHeight - spot.bottom;
+      const below = roomBelow >= 240 || roomBelow >= spot.top;
+      setPlace({
+        position: "fixed",
+        left,
+        width,
+        maxHeight: Math.max(160, (below ? roomBelow : spot.top) - edge * 2),
+        ...(below ? { top: spot.bottom + 4 } : { bottom: window.innerHeight - spot.top + 4 }),
+      });
+    }
+    setOpen((value) => !value);
+  }
+
   return (
-    <span className="relative ml-1 inline-flex translate-y-0.5 align-text-bottom" ref={box}>
+    <span className="ml-1 inline-flex align-text-bottom" ref={box}>
       <button
-        className="inline-flex rounded-md p-0.5 text-moss hover:bg-moss/10"
+        ref={button}
+        className="inline-flex min-h-6 min-w-6 translate-y-0.5 items-center justify-center rounded-md text-moss hover:bg-moss/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-moss/40"
         type="button"
+        aria-expanded={open}
         aria-label={`View ${link.label}`}
         title={`View ${link.label}`}
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggle}
       >
         <WarehanceLinkIcon />
       </button>
       {open ? (
-        <span className="absolute left-0 top-full z-20 mt-1 block w-[min(22rem,calc(100vw-6rem))] overflow-hidden rounded-xl border border-black/10 bg-surface shadow-md">
-          <span className="block truncate border-b border-black/10 px-2.5 py-2 text-sm font-medium">{link.label}</span>
-          <iframe title={link.label} src={link.href} className="h-64 w-full bg-white" />
+        <span style={place} className="z-50 block overflow-y-auto rounded-xl border border-black/10 bg-surface text-left shadow-md">
+          <span className="block break-words border-b border-black/10 px-3 py-2 text-sm font-semibold">{link.label}</span>
+          {link.details.length > 0 ? (
+            <span className="block space-y-1 px-3 py-2">
+              {link.details.map((row) => (
+                <span key={row.label} className="flex justify-between gap-3 text-xs leading-5">
+                  <span className="shrink-0 text-muted">{row.label}</span>
+                  <span className="min-w-0 break-words text-right font-medium capitalize">{row.value}</span>
+                </span>
+              ))}
+            </span>
+          ) : null}
+          <span className="block p-2">
+            <a className="btn btn-primary btn-sm w-full" href={link.href} target="_blank" rel="noopener noreferrer">
+              Open in Warehance
+            </a>
+          </span>
         </span>
       ) : null}
     </span>
@@ -195,18 +225,18 @@ function InlinePeek({ link }: { link: WarehanceLink }) {
 }
 
 function LinkedReply({ content, links }: { content: string; links: WarehanceLink[] }) {
-  const hits = hitsFor(content, links);
   const nodes: ReactNode[] = [];
   let cursor = 0;
-  hits.forEach((hit, index) => {
-    if (hit.start > cursor) nodes.push(content.slice(cursor, hit.start));
+  links.forEach((link, index) => {
+    if (link.start < cursor) return;
+    if (link.start > cursor) nodes.push(content.slice(cursor, link.start));
     nodes.push(
-      <span key={`${hit.link.href}-${index}`}>
-        {content.slice(hit.start, hit.end)}
-        <InlinePeek link={hit.link} />
+      <span key={`${link.href}-${index}`}>
+        {content.slice(link.start, link.end)}
+        <InlinePeek link={link} />
       </span>,
     );
-    cursor = hit.end;
+    cursor = link.end;
   });
   if (cursor < content.length) nodes.push(content.slice(cursor));
   return <p className="whitespace-pre-wrap rounded-2xl rounded-bl-md bg-black/[0.04] px-3.5 py-2.5 text-sm leading-6">{nodes.length ? nodes : content}</p>;

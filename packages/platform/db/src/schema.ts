@@ -225,7 +225,7 @@ export type ChatPreparedChange = {
 export type ChatJobPerson = { employeeId: string; name: string };
 
 export type ChatJobChange = {
-  kind: "create_job" | "assign_people";
+  kind: "create_job" | "assign_people" | "edit_job" | "add_tasks";
   clientId: string;
   clientName: string;
   jobId: string | null;
@@ -235,6 +235,13 @@ export type ChatJobChange = {
   people: ChatJobPerson[];
   summary: string;
   notSaved?: string[];
+  // Only on edit_job: people leaving the crew, the crew now, and the values being replaced.
+  removePeople?: ChatJobPerson[];
+  crewBefore?: ChatJobPerson[];
+  before?: { reference: string; title: string; billBasis: string };
+  // One row per person, so each person sees their own task on the floor phone.
+  tasks?: { title: string; activityCode: string; activityName: string; employeeId: string | null; name: string | null }[];
+  workOptions?: { code: string; name: string }[];
   status: "proposed" | "applying" | "applied" | "rejected";
   proposedAt: string;
   expiresAt: string;
@@ -269,6 +276,8 @@ export const chatThreads = mail.table("chat_threads", {
   // warehance = Mail Chat. jobs = Time tracking Jobs chat.
   kind: text("kind").notNull().default("warehance"),
   model: text("model").notNull().default("haiku"),
+  // Hidden chats stay saved and can be shown again.
+  hiddenAt: timestamp("hidden_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

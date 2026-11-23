@@ -74,7 +74,7 @@ function stamp(value: string) {
 }
 
 function startNote(person: { startAt: string | null; activityName: string | null; started: boolean }) {
-  if (!person.startAt) return "Starts when they tap the job on the floor phone";
+  if (!person.startAt) return "Starts when they tap Start on the floor phone";
   const what = person.activityName ? ` · ${person.activityName}` : "";
   return person.started
     ? `Started by the set time ${stamp(person.startAt)}${what}`
@@ -246,7 +246,7 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
         </form>
       ) : null}
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-start">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-5 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-start">
         <div className="min-w-0">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <Segmented label="Show jobs" options={JOB_VIEWS} value={view} onChange={setView} />
@@ -479,7 +479,7 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
           {paged.hidden > 0 ? <div className="card mt-3 overflow-hidden"><MoreButton hidden={paged.hidden} onClick={paged.more} /></div> : null}
         </div>
         <div className="xl:sticky xl:top-6">
-          <JobsChat clientId={client?.id} onChanged={() => board.reload()} />
+          <JobsChat clientId={client?.id} people={people} onChanged={() => board.reload()} />
         </div>
       </div>
     </div>

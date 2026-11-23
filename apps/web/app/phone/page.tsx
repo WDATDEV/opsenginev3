@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { FloorGate } from "@/components/floor-access";
 import { Field, Notice } from "@/components/ui";
-import { ApiError, billBasisLabel, post, when } from "@/lib/api";
+import { ApiError, post, when } from "@/lib/api";
 import { badgeFromScan } from "@/lib/qr";
 
 type Context = {
@@ -39,11 +39,13 @@ type Context = {
     title: string;
     jobId: string | null;
     jobReference: string | null;
+    clientName: string | null;
     activityCode: string | null;
     activityName: string | null;
     startAt: string | null;
     dueOn: string | null;
     blocked: boolean;
+    fromJob: boolean;
   }[];
   jobs: {
     id: string;
@@ -103,20 +105,13 @@ function readPosition() {
   });
 }
 
-function stamp(value: string) {
-  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(
-    new Date(value),
-  );
-}
-
-const AREAS = ["packing", "picking", "receiving", "unloading", "sorting"] as const;
-
-const serviceForDepartment: Record<string, string> = {
-  packing: "packing",
-  picking: "picking",
-  receiving: "receiving",
-  unloading: "unloading",
-  sorting: "sorting",
+// Only work that records something on the floor gets a form while the timer runs.
+const RECORD_PANEL: Record<string, "packing" | "picking" | "receiving" | "unloading" | "sorting"> = {
+  pack_orders: "packing",
+  pick_batch: "picking",
+  receive_shipment: "receiving",
+  unload_trailer: "unloading",
+  sort_gaylord: "sorting",
 };
 
 function Elapsed({ since }: { since: string }) {
@@ -144,14 +139,10 @@ export default function WarehousePage() {
 function FloorPhone() {
   const [badge, setBadge] = useState("");
   const [context, setContext] = useState<Context | null>(null);
-  const [jobId, setJobId] = useState("");
-  const [taskCode, setTaskCode] = useState("");
-  const [assignedTaskId, setAssignedTaskId] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [finished, setFinished] = useState<string[]>([]);
   const [confirmEnd, setConfirmEnd] = useState(false);
 
   useEffect(() => {
@@ -268,78 +259,45 @@ function FloorPhone() {
   }
 
   async function finish() {
-    const ending = context?.task?.taskCode ?? context?.paused?.taskCode ?? null;
     setConfirmEnd(false);
-    const done = await run("/tracking/tasks/stop", { badge });
-    if (done) {
-      if (ending) setFinished((list) => (list.includes(ending) ? list : [...list, ending]));
-      setTaskCode("");
-      setJobId("");
-      setAssignedTaskId("");
-    }
+    await run("/tracking/tasks/stop", { badge });
   }
 
-  const jobs = (context?.jobs ?? []).filter(
-    (job) => !context?.employee.clientId || job.clientId === context.employee.clientId,
+  function startTask(item: Context["tasks"][number]) {
+    void run(
+      "/tracking/tasks/switch",
+      item.fromJob ? { badge, activityCode: item.activityCode, jobId: item.jobId } : { badge, taskId: item.id },
+    );
+  }
+
+  const internalWork = (context?.activities ?? []).filter(
+    (activity) =>
+      Boolean(context?.employee.departments?.includes("indirect")) && (activity.department === "indirect" || !activity.billable),
   );
-  type FloorJob = (typeof jobs)[number];
-  type FloorActivity = NonNullable<typeof context>["activities"][number];
-  // One rule for both lists: the client offers it, the job is for it, and it is not finished.
-  const jobTakes = (job: FloorJob, activity: FloorActivity) => {
-    const service = serviceForDepartment[activity.department];
-    if (!service || !job.enabledServices.includes(service)) return false;
-    if (activity.clientId && activity.clientId !== job.clientId) return false;
-    if (job.workCodes && !job.workCodes.includes(activity.code)) return false;
-    return !(job.completedCodes ?? []).includes(activity.code);
-  };
-  const startable = (context?.activities ?? []).filter((activity) => {
-    if (!context) return false;
-    const allowed = context.employee.departments;
-    const internal = activity.department === "indirect" || !activity.billable;
-    // Internal work is not a floor default. Show it only if this person is assigned to it.
-    if (internal) return Boolean(allowed?.includes("indirect")) && !finished.includes(activity.code);
-    if (allowed?.length && !allowed.includes(activity.department)) return false;
-    if (finished.includes(activity.code)) return false;
-    return jobs.some((job) => jobTakes(job, activity));
-  });
-  const openTasks = (context?.tasks ?? []).filter((item) => !item.blocked);
-  const chosen =
-    startable.find((item) => item.code === taskCode) ??
-    (startable.length === 1 && openTasks.length === 0 ? startable[0] : null);
-  const projects = chosen?.billable ? jobs.filter((job) => jobTakes(job, chosen)) : [];
-  const picked = projects.find((job) => job.id === jobId) ?? (projects.length === 1 ? projects[0] : null);
-  const assignedTask =
-    openTasks.find((item) => item.id === assignedTaskId) ??
-    (!taskCode && openTasks.length === 1 ? openTasks[0] : null);
-  const ready = Boolean(assignedTask || (chosen && (!chosen.billable || picked)));
+  const myTasks = context?.tasks ?? [];
   const working = context?.task ?? null;
   const paused = !working ? context?.paused ?? null : null;
   const checkedIn = Boolean(context?.employee.clockedIn);
   const onMeal = Boolean(context?.employee.onMeal);
-  const currentJobId = working?.jobId ?? paused?.jobId ?? assignedTask?.jobId ?? picked?.id ?? null;
-  const activeDepartment = working?.department ?? paused?.department ?? null;
+  const currentJobId = working?.jobId ?? paused?.jobId ?? null;
+  const currentCode = working?.taskCode ?? paused?.taskCode ?? "";
+  const wanted = RECORD_PANEL[currentCode] ?? null;
+  // A form with nothing to record against is noise, so it stays off the screen.
   const panel =
-    (working || paused) && activeDepartment && (AREAS as readonly string[]).includes(activeDepartment)
-      ? (activeDepartment as (typeof AREAS)[number])
-      : null;
-  const hint = !checkedIn
-    ? "Check in at the QR gate first."
-    : assignedTask
+    wanted === "receiving" && !context?.shipments.some((item) => item.jobId === currentJobId)
       ? null
-      : !chosen
-        ? openTasks.length > 0
-          ? "Start an assigned task, or choose the kind of work."
-          : "Choose the kind of work."
-        : chosen.billable && !picked
-          ? "Choose a project."
-          : null;
+      : wanted === "unloading" && !context?.loads.some((item) => item.jobId === currentJobId)
+        ? null
+        : wanted === "sorting" && !context?.gaylords.length
+          ? null
+          : wanted;
 
   return (
-    <main className={`mx-auto min-h-screen max-w-lg px-4 py-6 ${context ? "pb-40" : ""}`}>
+    <main className={`mx-auto min-h-screen max-w-lg px-4 py-6 ${working || paused ? "pb-40" : ""}`}>
       <div className="mb-5 flex items-center justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-moss">Floor phone</p>
-          <h1 className="text-2xl font-semibold">What are you on?</h1>
+          <h1 className="text-2xl font-semibold">{working ? "You're working" : paused ? "You're paused" : "Your tasks"}</h1>
         </div>
         <Link className="text-sm text-moss" href="/gate">
           QR gate
@@ -402,10 +360,6 @@ function FloorPhone() {
               type="button"
               onClick={() => {
                 setContext(null);
-                setFinished([]);
-                setTaskCode("");
-                setJobId("");
-                setAssignedTaskId("");
                 setConfirmEnd(false);
               }}
             >
@@ -483,147 +437,58 @@ function FloorPhone() {
             </section>
           ) : null}
 
-          {checkedIn && !onMeal && !working && !paused && openTasks.length > 0 ? (
-            <section>
-              <p className="mb-2 text-sm font-semibold">
-                <span className="mr-2 inline-grid h-6 w-6 place-items-center rounded-full bg-ink text-xs text-paper">1</span>
-                Your tasks
-              </p>
-              <div className="space-y-2">
-                {openTasks.map((item) => {
-                  const selected = assignedTask?.id === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      aria-pressed={selected}
-                      disabled={saving}
-                      className={`card w-full p-4 text-left transition ${
-                        selected ? "border-moss ring-2 ring-moss/30" : "active:bg-black/5"
-                      }`}
-                      onClick={() => {
-                        setAssignedTaskId(item.id);
-                        setTaskCode("");
-                        setJobId("");
-                        setError(null);
-                      }}
-                    >
-                      <span className="block font-semibold">{item.title}</span>
-                      <span className="mt-1 block text-xs text-muted">
-                        {item.jobReference ?? "Project"}
-                        {item.activityName ? ` · ${item.activityName}` : " · start this on the timer"}
-                        {item.startAt ? ` · starts ${when(item.startAt)}` : ""}
-                        {item.dueOn ? ` · due ${item.dueOn}` : ""}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-          ) : null}
-
-          {!working && !paused && !onMeal && (startable.length > 0 || openTasks.length === 0) ? (
-            <section className="space-y-5">
-              <div>
-                <p className="mb-2 text-sm font-semibold">
-                  <span className="mr-2 inline-grid h-6 w-6 place-items-center rounded-full bg-ink text-xs text-paper">
-                    {openTasks.length > 0 ? "2" : "1"}
-                  </span>
-                  What kind of work?
-                </p>
-                {startable.length === 0 ? (
-                  <p className="card p-4 text-sm text-muted">
-                    {jobs.length === 0
-                      ? `${context.employee.name} is not assigned to an open project. Ask a manager to assign you on the job.`
-                      : "Nothing to start on your projects. The work may be finished, or you may not be set up for it. Ask a manager if this looks wrong."}
-                  </p>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {startable.map((activity) => {
-                      const active = chosen?.code === activity.code;
-                      return (
+          {checkedIn && !onMeal && !working && !paused ? (
+            <section aria-label="Your tasks">
+              {myTasks.length === 0 && internalWork.length === 0 ? (
+                <div className="card p-6 text-center">
+                  <p className="font-semibold">No tasks right now</p>
+                  <p className="mt-1 text-sm text-muted">Ask a manager to give you a task.</p>
+                </div>
+              ) : (
+                <ul className="space-y-3">
+                  {myTasks.map((item) => (
+                    <li key={item.id} className={`card p-4 ${item.blocked ? "opacity-70" : ""}`}>
+                      <p className="break-words text-lg font-semibold leading-snug">{item.title}</p>
+                      <p className="mt-1 text-sm text-muted">
+                        {[item.activityName, item.clientName, item.jobReference].filter(Boolean).join(" · ")}
+                      </p>
+                      {item.startAt || item.dueOn ? (
+                        <p className="mt-1 text-xs text-muted">
+                          {[item.startAt ? `Starts ${when(item.startAt)}` : "", item.dueOn ? `Due ${item.dueOn}` : ""].filter(Boolean).join(" · ")}
+                        </p>
+                      ) : null}
+                      {item.blocked ? (
+                        <p className="mt-3 rounded-lg bg-black/[0.04] px-3 py-2.5 text-center text-sm font-medium text-muted">Waiting on an earlier task</p>
+                      ) : (
                         <button
-                          key={activity.id}
+                          className="btn btn-primary tap mt-3 min-h-14 w-full text-base"
                           type="button"
                           disabled={saving}
-                          aria-pressed={active}
-                          className={`min-h-12 rounded-full border px-4 text-sm font-semibold transition ${
-                            active
-                              ? "border-moss bg-moss text-paper"
-                              : "border-black/15 bg-surface text-ink active:bg-black/5"
-                          }`}
-                          onClick={() => {
-                            setTaskCode(activity.code);
-                            setAssignedTaskId("");
-                            setJobId("");
-                            setError(null);
-                          }}
+                          aria-label={`Start ${item.title}`}
+                          onClick={() => startTask(item)}
                         >
-                          {activity.name}
+                          Start
                         </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {chosen && chosen.billable ? (
-                <div>
-                  <p className="mb-2 text-sm font-semibold">
-                    <span className="mr-2 inline-grid h-6 w-6 place-items-center rounded-full bg-ink text-xs text-paper">2</span>
-                    Which project?
-                  </p>
-                  {projects.length === 0 ? (
-                    <p className="card p-4 text-sm text-muted">No project of yours uses this kind of work.</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {projects.map((job) => {
-                        const selected = picked?.id === job.id;
-                        return (
-                          <button
-                            key={job.id}
-                            type="button"
-                            aria-pressed={selected}
-                            disabled={saving}
-                            className={`card w-full p-4 text-left transition ${
-                              selected ? "border-moss ring-2 ring-moss/30" : "active:bg-black/5"
-                            }`}
-                            onClick={() => {
-                              setJobId(job.id);
-                              setError(null);
-                            }}
-                          >
-                            <span className="flex items-start justify-between gap-3">
-                              <span className="min-w-0">
-                                <span className="block text-xs uppercase tracking-[0.12em] text-muted">
-                                  {job.clientName} · {job.reference}
-                                </span>
-                                <span className="mt-0.5 block font-semibold">{job.title}</span>
-                                <span className="mt-1 block text-xs text-muted">
-                                  {billBasisLabel(job.billBasis)}
-                                  {" · "}
-                                  {job.startAt
-                                    ? job.startedAuto
-                                      ? `Started by the set time ${stamp(job.startAt)}`
-                                      : `Starts by itself at ${stamp(job.startAt)}`
-                                    : "You start it when you begin"}
-                                </span>
-                              </span>
-                              <span
-                                className={`mt-1 grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 ${
-                                  selected ? "border-moss bg-moss text-paper" : "border-black/20"
-                                }`}
-                              >
-                                {selected ? "✓" : ""}
-                              </span>
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              ) : null}
+                      )}
+                    </li>
+                  ))}
+                  {internalWork.map((activity) => (
+                    <li key={activity.id} className="card p-4">
+                      <p className="text-lg font-semibold leading-snug">{activity.name}</p>
+                      <p className="mt-1 text-sm text-muted">Not billed to a client</p>
+                      <button
+                        className="btn btn-ghost tap mt-3 min-h-14 w-full text-base"
+                        type="button"
+                        disabled={saving}
+                        aria-label={`Start ${activity.name}`}
+                        onClick={() => void run("/tracking/tasks/switch", { badge, activityCode: activity.code })}
+                      >
+                        Start
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
           ) : null}
 
@@ -643,7 +508,7 @@ function FloorPhone() {
           ) : null}
         </div>
       )}
-      {context && checkedIn && !onMeal ? (
+      {context && checkedIn && !onMeal && (working || paused) ? (
         <div className="fixed inset-x-0 bottom-0 z-10 border-t border-black/10 bg-paper/95 px-4 pb-5 pt-3 backdrop-blur">
           <div className="mx-auto max-w-lg space-y-2">
             {working && !confirmEnd ? (
@@ -677,33 +542,6 @@ function FloorPhone() {
                     Yes, end
                   </button>
                 </div>
-              </>
-            ) : null}
-            {!working && !paused ? (
-              <>
-                {hint ? <p className="text-center text-sm text-muted">{hint}</p> : null}
-                <button
-                  className="btn btn-primary tap min-h-14 w-full text-base disabled:bg-ink/15 disabled:text-muted disabled:opacity-100"
-                  type="button"
-                  disabled={saving || !ready}
-                  onClick={() =>
-                    void run("/tracking/tasks/switch", {
-                      badge,
-                      ...(assignedTask
-                        ? { taskId: assignedTask.id }
-                        : {
-                            activityCode: chosen?.code,
-                            ...(picked ? { jobId: picked.id } : {}),
-                          }),
-                    })
-                  }
-                >
-                  {assignedTask
-                    ? `Start ${assignedTask.title}${assignedTask.jobReference ? ` on ${assignedTask.jobReference}` : ""}`
-                    : ready && chosen
-                      ? `Start ${chosen.name}${picked ? ` on ${picked.reference}` : ""}`
-                      : "Start timer"}
-                </button>
               </>
             ) : null}
           </div>

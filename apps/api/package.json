@@ -7,7 +7,7 @@
     "dev": "tsx watch src/main.ts",
     "build": "tsc -p tsconfig.json",
     "start": "tsx src/main.ts",
-    "test": "node --import tsx --test src/mail/approval.test.ts src/mail/claude-tools.test.ts src/mail/stock-confirm.test.ts src/mail/chat-lockdown.test.ts src/mail/browser-confirm.test.ts src/mail/settings-keys.test.ts src/mail/stock-change.test.ts src/mail/change-args.test.ts src/mail/change-confirm.test.ts src/jobs/jobs-chat.test.ts src/clients/warehance-pages.test.ts src/mail/warehance-links.test.ts src/mail/warehance-audit.test.ts src/mail/abort.test.ts src/tracking/floor-access.test.ts src/tracking/job-work.test.ts"
+    "test": "node --import tsx --test src/mail/approval.test.ts src/mail/claude-tools.test.ts src/mail/stock-confirm.test.ts src/mail/chat-lockdown.test.ts src/mail/browser-confirm.test.ts src/mail/settings-keys.test.ts src/mail/stock-change.test.ts src/mail/change-args.test.ts src/mail/change-confirm.test.ts src/jobs/jobs-chat.test.ts src/clients/warehance-pages.test.ts src/mail/warehance-links.test.ts src/mail/warehance-audit.test.ts src/mail/abort.test.ts src/tracking/floor-access.test.ts src/tracking/job-work.test.ts src/billing/labor-lines.test.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.3",

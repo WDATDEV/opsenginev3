@@ -1,5 +1,5 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import {
   activityTypes,
   charges,
@@ -19,6 +19,7 @@ import type { HourlyService } from "@opsengine/contracts";
 import { assertClientVisible, type Principal } from "@opsengine/kernel";
 import { assertClientService } from "../clients/access.js";
 import { DbService } from "../db.service.js";
+import { planLaborLines, type LaborSegment } from "./labor-lines.js";
 
 type Rate = typeof rateCards.$inferSelect;
 
@@ -157,11 +158,11 @@ export class BillingService {
       if (inserted) created += 1;
     };
 
+    const laborRows: LaborSegment[] = [];
     for (const segment of jobSegments) {
       if (!billsUnit(basis, "hour") || !segment.endedAt) continue;
       const elapsedMs = segment.endedAt.getTime() - segment.startedAt.getTime();
       if (elapsedMs <= 0) continue;
-      const minutes = Math.max(1, Math.round(elapsedMs / 60_000));
       const linked = segment.note ? taskById.get(segment.note) : null;
       const activityCode = linked?.activityCode ?? segment.taskCode;
       const department = departmentByCode.get(activityCode) ?? segment.department;
@@ -171,13 +172,48 @@ export class BillingService {
           : latest(rates, activityCode, "hour") ?? serviceRate(rates, department);
       if (!rate) continue;
       const label = linked?.title ?? names.get(activityCode) ?? names.get(segment.taskCode) ?? segment.taskCode;
-      await draft({
-        description: `${label}, ${minutes} min`,
-        quantity: minutes,
-        unit: "hour",
+      laborRows.push({
+        id: segment.id,
+        ms: elapsedMs,
+        groupKey: `${linked?.id ?? activityCode}|${rate.id ?? "task"}|${rate.rateCents}`,
+        label,
         rate,
-        sourceType: "segment",
-        sourceId: segment.id,
+      });
+    }
+    let combined = 0;
+    if (laborRows.length > 0) {
+      await orm.transaction(async (tx) => {
+        // Two people pressing Draft charges at once must not both rebuild the same line.
+        await tx.select({ id: jobs.id }).from(jobs).where(eq(jobs.id, job.id)).for("update");
+        const existing = await tx.select().from(charges).where(eq(charges.jobId, job.id));
+        const plan = planLaborLines(laborRows, existing);
+        if (plan.replace.length > 0) {
+          await tx
+            .delete(charges)
+            .where(and(inArray(charges.id, plan.replace), eq(charges.status, "draft"), isNull(charges.invoiceId)));
+          combined = plan.replace.length;
+        }
+        for (const line of plan.lines) {
+          const [inserted] = await tx
+            .insert(charges)
+            .values({
+              clientId: job.clientId,
+              jobId: job.id,
+              rateCardId: line.rate.id ?? null,
+              description: line.description,
+              quantity: line.quantity,
+              unit: "hour",
+              rateCents: line.rate.rateCents,
+              amountCents: line.amountCents,
+              status: "draft",
+              idempotencyKey: line.idempotencyKey,
+              sourceType: "labor",
+              sourceId: line.sourceId,
+            })
+            .onConflictDoNothing({ target: charges.idempotencyKey })
+            .returning();
+          if (inserted) created += 1;
+        }
       });
     }
 
@@ -249,7 +285,9 @@ export class BillingService {
     }
 
     const message =
-      created > 0
+      combined > 0
+        ? `Draft labor for ${job.reference} is updated and combined.`
+        : created > 0
         ? `${created} charge${created === 1 ? "" : "s"} drafted for ${job.reference}.`
         : `No new charges for ${job.reference}. Finished work needs a matching rate, and each charge is drafted once.`;
     return { message, created };

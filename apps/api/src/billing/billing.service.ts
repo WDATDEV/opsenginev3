@@ -175,7 +175,8 @@ export class BillingService {
       laborRows.push({
         id: segment.id,
         ms: elapsedMs,
-        groupKey: `${linked?.id ?? activityCode}|${rate.id ?? "task"}|${rate.rateCents}`,
+        // Two people on the same task title share one line, so the bill does not show repeats.
+        groupKey: `${activityCode}|${label}|${rate.id ?? "task"}|${rate.rateCents}`,
         label,
         rate,
       });

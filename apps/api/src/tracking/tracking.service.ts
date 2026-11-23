@@ -336,7 +336,9 @@ export class TrackingService {
       const now = new Date();
       const taskRows = await tx.select().from(tasks).where(eq(tasks.assigneeId, employee.id));
       const taskTitleById = new Map(taskRows.map((row) => [row.id, row.title]));
-      const jobTaskRows = await tx.select({ jobId: tasks.jobId, activityCode: tasks.activityCode }).from(tasks);
+      const jobTaskRows = await tx
+        .select({ id: tasks.id, jobId: tasks.jobId, activityCode: tasks.activityCode, status: tasks.status, assigneeId: tasks.assigneeId })
+        .from(tasks);
       const describe = (row: {
         taskCode: string;
         jobId: string | null;
@@ -377,6 +379,41 @@ export class TrackingService {
       const owned = (clientId: string | null) => !employee.clientId || clientId === employee.clientId;
       const gear = (clientId: string | null) => owned(clientId) || clientId == null;
       const mine = (jobId: string | null) => Boolean(jobId && assigned.has(jobId));
+      // Older jobs may have a crew and no tasks. Their people still get something to start.
+      const crewWork = jobRows
+        .filter((row) => row.status !== "done" && mine(row.id))
+        .filter((row) => !jobTaskRows.some((task) => task.jobId === row.id && task.assigneeId === employee.id))
+        .flatMap((row) => {
+          const client = clientRows.find((item) => item.id === row.clientId);
+          const services = enabledServiceList(client?.enabledServices) as string[];
+          const finished = completedCodesByJob.get(row.id);
+          const named = jobWorkCodes(row.title);
+          if (!named && finished?.size) return [];
+          const fits = activities.filter(
+            (item) =>
+              item.active &&
+              item.billable &&
+              item.department !== "indirect" &&
+              services.includes(item.department) &&
+              (item.clientId == null || item.clientId === row.clientId) &&
+              (!employee.departments?.length || employee.departments.includes(item.department)) &&
+              !finished?.has(item.code),
+          );
+          const chosen = named ? fits.filter((item) => named.includes(item.code)) : fits.slice(0, 1);
+          return chosen.map((item) => ({
+            id: `job:${row.id}:${item.code}`,
+            title: row.title,
+            jobId: row.id as string | null,
+            jobReference: row.reference as string | null,
+            clientName: client?.name ?? null,
+            activityCode: item.code as string | null,
+            activityName: item.name as string | null,
+            startAt: null as Date | null,
+            dueOn: null as string | null,
+            blocked: false,
+            fromJob: true,
+          }));
+        });
 
       return {
         employee: {
@@ -391,20 +428,29 @@ export class TrackingService {
         },
         task: segment ? describe(segment) : null,
         paused: paused ? describe(paused) : null,
-        tasks: taskRows
-          .filter((row) => row.status !== "done" && row.jobId && mine(row.jobId) && jobById.get(row.jobId)?.status !== "done")
-          .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
-          .map((row) => ({
-            id: row.id,
-            title: row.title,
-            jobId: row.jobId,
-            jobReference: row.jobId ? jobById.get(row.jobId)?.reference ?? null : null,
-            activityCode: row.activityCode,
-            activityName: row.activityCode ? activityName.get(row.activityCode) ?? row.activityCode : null,
-            startAt: row.startAt,
-            dueOn: row.dueOn,
-            blocked: Boolean(row.dependsOnId && taskRows.find((item) => item.id === row.dependsOnId)?.status !== "done"),
-          })),
+        tasks: [
+          ...taskRows
+            .filter((row) => row.status !== "done" && row.jobId && mine(row.jobId) && jobById.get(row.jobId)?.status !== "done")
+            .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime())
+            .map((row) => {
+              const job = row.jobId ? jobById.get(row.jobId) : null;
+              return {
+                id: row.id,
+                title: row.title,
+                jobId: row.jobId,
+                jobReference: job?.reference ?? null,
+                clientName: job ? clientNameById.get(job.clientId) ?? null : null,
+                activityCode: row.activityCode,
+                activityName: row.activityCode ? activityName.get(row.activityCode) ?? row.activityCode : null,
+                startAt: row.startAt,
+                dueOn: row.dueOn,
+                // The earlier task may belong to someone else on the crew.
+                blocked: Boolean(row.dependsOnId && jobTaskRows.find((item) => item.id === row.dependsOnId)?.status !== "done"),
+                fromJob: false,
+              };
+            }),
+          ...crewWork,
+        ],
         jobs: jobRows
           .filter((row) => row.status !== "done" && mine(row.id))
           .map((row) => {

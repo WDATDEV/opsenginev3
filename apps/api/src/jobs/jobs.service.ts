@@ -1,5 +1,5 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne } from "drizzle-orm";
 import {
   activity as auditLog,
   activityTypes,
@@ -22,6 +22,7 @@ import type { ClientService, addTaskTimeSchema, createJobWorkSchema } from "@ops
 import { assertClientVisible, canSeeClient, type Principal } from "@opsengine/kernel";
 import { assertClientService, enabledServiceList } from "../clients/access.js";
 import { DbService } from "../db.service.js";
+import { jobWorkCodes } from "../tracking/job-work.js";
 
 function isUnique(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
@@ -216,7 +217,93 @@ export class JobsService {
     return { message: `${job.reference} is closed.` };
   }
 
+  /** Puts someone on the crew and makes sure they have a task, because the floor phone shows only tasks. */
   async assign(
+    principal: Principal,
+    jobId: string,
+    employeeId: string,
+    schedule?: { startAt?: string | null; activityCode?: string },
+  ) {
+    const result = await this.addToCrew(principal, jobId, employeeId, schedule);
+    const job = await this.requireJob(principal, jobId);
+    if (job.status !== "done") {
+      await this.ensureTask(this.db.db, job, await this.activeEmployee(employeeId), schedule?.activityCode);
+    }
+    return result;
+  }
+
+  /** Gives this person the job's unclaimed task, or one named after the job if none is waiting. */
+  private async ensureTask(
+    conn: Pick<typeof this.db.db, "select" | "update" | "insert">,
+    job: typeof jobs.$inferSelect,
+    person: { id: string },
+    activityCode?: string,
+  ) {
+    const open = await conn
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.jobId, job.id), ne(tasks.status, "done")))
+      .orderBy(asc(tasks.createdAt));
+    if (open.some((task) => task.assigneeId === person.id)) return;
+    const waiting = open.find((task) => !task.assigneeId);
+    if (waiting) {
+      await conn.update(tasks).set({ assigneeId: person.id }).where(eq(tasks.id, waiting.id));
+      return;
+    }
+    let code = activityCode ?? null;
+    if (!code) {
+      const named = jobWorkCodes(job.title);
+      if (named?.length === 1) {
+        const [client] = await conn.select().from(clientRecords).where(eq(clientRecords.id, job.clientId)).limit(1);
+        const kinds = await conn.select().from(activityTypes).where(eq(activityTypes.code, named[0]!));
+        const kind = kinds.find((row) => row.active && (row.clientId == null || row.clientId === job.clientId));
+        if (kind && enabledServiceList(client?.enabledServices).includes(kind.department as ClientService)) code = kind.code;
+      }
+    }
+    await conn.insert(tasks).values({
+      title: job.title,
+      status: "open",
+      clientId: job.clientId,
+      jobId: job.id,
+      assigneeId: person.id,
+      activityCode: code,
+    });
+  }
+
+  /** Adds one task from a confirmed chat card, with its person on the crew. Never makes a duplicate. */
+  async addCrewTask(
+    principal: Principal,
+    jobId: string,
+    input: { title: string; activityCode: string; employeeId: string | null },
+  ) {
+    const job = await this.requireJob(principal, jobId);
+    if (job.status === "done") throw new ConflictException("That job is already closed.");
+    if (input.employeeId) await this.addToCrew(principal, job.id, input.employeeId);
+    const title = input.title.trim();
+    const open = await this.db.db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.jobId, job.id), ne(tasks.status, "done")))
+      .orderBy(asc(tasks.createdAt));
+    const same = open.filter((task) => task.title.trim().toLowerCase() === title.toLowerCase() && task.activityCode === input.activityCode);
+    if (same.some((task) => task.assigneeId === input.employeeId)) return;
+    const waiting = input.employeeId ? same.find((task) => !task.assigneeId) : null;
+    if (waiting) {
+      await this.db.db.update(tasks).set({ assigneeId: input.employeeId }).where(eq(tasks.id, waiting.id));
+      return;
+    }
+    await this.db.db.insert(tasks).values({
+      title,
+      status: "open",
+      clientId: job.clientId,
+      requestorId: principal.id,
+      jobId: job.id,
+      assigneeId: input.employeeId,
+      activityCode: input.activityCode,
+    });
+  }
+
+  private async addToCrew(
     principal: Principal,
     jobId: string,
     employeeId: string,
@@ -260,11 +347,109 @@ export class JobsService {
     return { message: `${person.name} is assigned to ${job.reference}.` };
   }
 
+  /** Changes a job and its crew together. If any part cannot be saved, none of it is. */
+  async edit(
+    principal: Principal,
+    jobId: string,
+    input: {
+      reference?: string;
+      title?: string;
+      billBasis?: string;
+      addIds: string[];
+      removeIds: string[];
+      before?: { reference: string; title: string; billBasis: string };
+    },
+  ) {
+    const job = await this.requireJob(principal, jobId);
+    const adding: (typeof employees.$inferSelect)[] = [];
+    for (const id of input.addIds) {
+      const person = await this.activeEmployee(id);
+      if (person.clientId && person.clientId !== job.clientId) {
+        throw new ConflictException(`${person.name} works for another client and cannot be assigned to ${job.reference}.`);
+      }
+      adding.push(person);
+    }
+    try {
+      return await this.db.db.transaction(async (tx) => {
+        const [current] = await tx.select().from(jobs).where(eq(jobs.id, job.id)).for("update");
+        if (!current || current.status === "done") throw new ConflictException("That job is closed, so it cannot be changed.");
+        const before = input.before;
+        if (before && (before.reference !== current.reference || before.title !== current.title || before.billBasis !== current.billBasis)) {
+          throw new ConflictException(`${current.reference} was changed by someone else. Ask again.`);
+        }
+        if (input.removeIds.length > 0) {
+          const leaving = await tx.select().from(employees).where(inArray(employees.id, input.removeIds));
+          const nameOf = (id: string) => leaving.find((row) => row.id === id)?.name ?? "Someone";
+          const [working] = await tx
+            .select({ employeeId: segments.employeeId })
+            .from(segments)
+            .where(and(eq(segments.jobId, job.id), isNull(segments.endedAt), inArray(segments.employeeId, input.removeIds)))
+            .limit(1);
+          if (working) throw new ConflictException(`${nameOf(working.employeeId)} is working on this job now. Pause them first.`);
+          // Their open tasks wait for whoever joins next, so the work is not lost.
+          await tx
+            .update(tasks)
+            .set({ assigneeId: null, startAt: null })
+            .where(and(eq(tasks.jobId, job.id), ne(tasks.status, "done"), inArray(tasks.assigneeId, input.removeIds)));
+          await tx.delete(jobAssignees).where(and(eq(jobAssignees.jobId, job.id), inArray(jobAssignees.employeeId, input.removeIds)));
+        }
+        const patch = {
+          ...(input.reference ? { reference: input.reference.trim() } : {}),
+          ...(input.title ? { title: input.title.trim() } : {}),
+          ...(input.billBasis ? { billBasis: input.billBasis } : {}),
+        };
+        if (Object.keys(patch).length > 0) await tx.update(jobs).set(patch).where(eq(jobs.id, job.id));
+        for (const person of adding) {
+          const [onCrew] = await tx
+            .select({ id: jobAssignees.id })
+            .from(jobAssignees)
+            .where(and(eq(jobAssignees.jobId, job.id), eq(jobAssignees.employeeId, person.id)))
+            .limit(1);
+          if (!onCrew) await tx.insert(jobAssignees).values({ jobId: job.id, employeeId: person.id });
+          await this.ensureTask(tx, { ...current, ...patch }, person);
+        }
+        const reference = patch.reference ?? current.reference;
+        const changes = [
+          patch.reference && patch.reference !== current.reference ? `reference ${current.reference} to ${patch.reference}` : "",
+          patch.title && patch.title !== current.title ? `title "${current.title}" to "${patch.title}"` : "",
+          patch.billBasis && patch.billBasis !== current.billBasis ? `bill by ${current.billBasis} to ${patch.billBasis}` : "",
+          adding.length ? `added ${adding.map((person) => person.name).join(", ")}` : "",
+          input.removeIds.length ? `removed ${input.removeIds.length} from the crew` : "",
+        ].filter(Boolean);
+        await tx.insert(auditLog).values({
+          actorId: principal.id,
+          action: "jobs.edited",
+          module: "jobs",
+          entityType: "job",
+          entityId: job.id,
+          before: { reference: current.reference, title: current.title, billBasis: current.billBasis },
+          after: { summary: `${reference}: ${changes.join("; ")}.` },
+        });
+        const billNote = patch.billBasis && patch.billBasis !== current.billBasis ? " Charges already made stay as they are." : "";
+        return { message: `${reference} is updated.${billNote}` };
+      });
+    } catch (err) {
+      if (isUnique(err)) throw new ConflictException("That job reference is already used.");
+      throw err;
+    }
+  }
+
   async unassign(principal: Principal, jobId: string, employeeId: string) {
     const job = await this.requireJob(principal, jobId);
-    await this.db.db
-      .delete(jobAssignees)
-      .where(and(eq(jobAssignees.jobId, job.id), eq(jobAssignees.employeeId, employeeId)));
+    const [working] = await this.db.db
+      .select({ id: segments.id })
+      .from(segments)
+      .where(and(eq(segments.jobId, job.id), eq(segments.employeeId, employeeId), isNull(segments.endedAt)))
+      .limit(1);
+    if (working) throw new ConflictException("This person is working on this job now. Pause them first.");
+    await this.db.db.transaction(async (tx) => {
+      // Their open tasks wait for whoever joins next, so the work is not lost.
+      await tx
+        .update(tasks)
+        .set({ assigneeId: null, startAt: null })
+        .where(and(eq(tasks.jobId, job.id), eq(tasks.assigneeId, employeeId), ne(tasks.status, "done")));
+      await tx.delete(jobAssignees).where(and(eq(jobAssignees.jobId, job.id), eq(jobAssignees.employeeId, employeeId)));
+    });
     return { message: `Removed from ${job.reference}.` };
   }
 
@@ -289,7 +474,7 @@ export class JobsService {
     if (assignee) {
       await this.requireCrew(job, assignee);
       if (input.startAt) {
-        await this.assign(principal, job.id, assignee.id, {
+        await this.addToCrew(principal, job.id, assignee.id, {
           startAt: input.startAt,
           ...(input.activityCode ? { activityCode: input.activityCode } : {}),
         });
@@ -362,7 +547,7 @@ export class JobsService {
     if (task.status === "done") throw new ConflictException("That task is already done.");
     if (!task.assigneeId) throw new ConflictException("Choose who does this task before setting a start time.");
     const activityCode = input.activityCode ?? task.activityCode ?? undefined;
-    await this.assign(
+    await this.addToCrew(
       principal,
       job.id,
       task.assigneeId,

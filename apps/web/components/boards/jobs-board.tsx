@@ -54,7 +54,7 @@ type JobBoard = {
   }[];
   clients: { id: string; name: string; code: string }[];
   activities: { code: string; name: string; department: string; billable: boolean }[];
-  people: { id: string; name: string }[];
+  people: { id: string; name: string; clientId: string | null }[];
 };
 
 const SERVICE_FOR_DEPARTMENT = ["receiving", "unloading", "packing", "picking", "sorting"];
@@ -274,7 +274,11 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                 ["charges", pendingCharges ? `Charges (${pendingCharges} to approve)` : "Charges"],
               ] as const;
               const choices = startChoices(board.data?.activities ?? [], job.enabledServices);
-              const available = people.filter((person) => !job.assignees.some((assigned) => assigned.employeeId === person.id));
+              const available = people.filter(
+                (person) =>
+                  (!person.clientId || person.clientId === job.clientId) &&
+                  !job.assignees.some((assigned) => assigned.employeeId === person.id),
+              );
               return (
                 <article key={job.id} className="card overflow-hidden">
                   <button
@@ -352,7 +356,7 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                           ))}
                         </ul>
                         {manageJobs && people.length > 0 ? (
-                          <AssignForm key={available.map((person) => person.id).join(",")} people={available} onAssign={(employeeId) => act(`/jobs/${job.id}/assignees`, { employeeId })} />
+                          <AssignForm key={available.map((person) => person.id).join(",")} people={available} clientName={job.clientName} onAssign={(employeeId) => act(`/jobs/${job.id}/assignees`, { employeeId })} />
                         ) : null}
                       </div>
 
@@ -708,12 +712,22 @@ function AddTime({
 
 function AssignForm({
   people,
+  clientName,
   onAssign,
 }: {
-  people: { id: string; name: string }[];
+  people: { id: string; name: string; clientId: string | null }[];
+  clientName: string;
   onAssign: (employeeId: string) => Promise<boolean>;
 }) {
-  const [employeeId, setEmployeeId] = useState(people[0]?.id ?? "");
+  const own = people.filter((person) => person.clientId);
+  const shared = people.filter((person) => !person.clientId);
+  const [employeeId, setEmployeeId] = useState((own[0] ?? shared[0])?.id ?? "");
+  const options = (list: typeof people) =>
+    list.map((person) => (
+      <option key={person.id} value={person.id}>
+        {person.name}
+      </option>
+    ));
   return (
     <form
       className="mt-3 flex flex-wrap items-end gap-2"
@@ -725,12 +739,9 @@ function AssignForm({
     >
       <Field label="Assign someone">
         <select className="field" value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}>
-          {people.length === 0 ? <option value="">Everyone on this job is already assigned</option> : null}
-          {people.map((person) => (
-            <option key={person.id} value={person.id}>
-              {person.name}
-            </option>
-          ))}
+          {people.length === 0 ? <option value="">Nobody else can be assigned</option> : null}
+          {own.length > 0 ? <optgroup label={`${clientName} people`}>{options(own)}</optgroup> : null}
+          {shared.length > 0 ? <optgroup label="Shared warehouse staff">{options(shared)}</optgroup> : null}
         </select>
       </Field>
       <button className="btn btn-ghost" type="submit" disabled={people.length === 0}>

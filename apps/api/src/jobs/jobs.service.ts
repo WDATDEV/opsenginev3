@@ -170,7 +170,9 @@ export class JobsService {
       people:
         principal.role === "external_customer"
           ? []
-          : people.filter((person) => person.active).map((person) => ({ id: person.id, name: person.name })),
+          : people
+              .filter((person) => person.active)
+              .map((person) => ({ id: person.id, name: person.name, clientId: person.clientId })),
     };
   }
 
@@ -222,6 +224,10 @@ export class JobsService {
   ) {
     const job = await this.requireJob(principal, jobId);
     const person = await this.activeEmployee(employeeId);
+    // People with no client are shared warehouse staff and may work on any client's job.
+    if (person.clientId && person.clientId !== job.clientId) {
+      throw new ConflictException(`${person.name} works for another client and cannot be assigned to ${job.reference}.`);
+    }
     let start: { startAt: Date | null; activityCode: string | null; autoStartedAt: null } | null = null;
     if (schedule && schedule.startAt !== undefined) {
       if (schedule.startAt === null) {

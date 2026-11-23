@@ -63,6 +63,19 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string; e
     }
   }
 
+  async function setStatus(person: Employee, active: boolean) {
+    if (!active && !window.confirm(`Deactivate ${person.name}? Their badge stops working now, and any open shift ends.`)) return;
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await post<{ message: string }>(`/tracking/employees/${person.id}/status`, { active });
+      setMessage(result.message);
+      board.reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not update that person.");
+    }
+  }
+
   const people = (board.data ?? []).filter((person) => (client ? person.clientId === client.id : !person.clientId));
   const query = search.trim().toLowerCase();
   const list = people.filter((person) => !query || `${person.name} ${person.badgeCode} ${workOf(person).join(" ")}`.toLowerCase().includes(query));
@@ -125,7 +138,7 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string; e
           {board.data && list.length === 0 ? <EmptyRow title={query ? "Nobody matches that search" : "Nobody added yet"}>{query ? null : "Add someone with a badge to get started."}</EmptyRow> : null}
           <ul className="divide-y divide-black/5">
             {paged.shown.map((person) => (
-              <li key={person.id} className={`grid grid-cols-[2.25rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 px-4 py-3 sm:grid-cols-[2.25rem_minmax(0,1fr)_minmax(0,1.4fr)] sm:px-5 ${person.active ? "" : "opacity-60"}`}>
+              <li key={person.id} className={`grid grid-cols-[2.25rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 px-4 py-3 sm:grid-cols-[2.25rem_minmax(0,1fr)_minmax(0,1.4fr)_auto] sm:px-5 ${person.active ? "" : "bg-black/[0.025]"}`}>
                 <Avatar name={person.name} active={person.active} />
                 <div className="min-w-0">
                   <p className="truncate font-medium">
@@ -141,6 +154,15 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string; e
                     </span>
                   ))}
                 </div>
+                {manage ? (
+                  <button
+                    className={`btn btn-ghost btn-sm col-start-2 justify-self-start sm:col-start-4 sm:justify-self-end ${person.active ? "btn-danger" : ""}`}
+                    type="button"
+                    onClick={() => void setStatus(person, !person.active)}
+                  >
+                    {person.active ? "Deactivate" : "Reactivate"}
+                  </button>
+                ) : null}
               </li>
             ))}
           </ul>

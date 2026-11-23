@@ -190,6 +190,12 @@ export const claimStationSchema = z.object({
   deviceCode: code,
 });
 
+export const floorDeviceSchema = z.object({
+  name: z.string().trim().min(1, "Name this device.").max(60),
+});
+
+export const employeeStatusSchema = z.object({ active: z.boolean() });
+
 export const completePackSchema = z.object({
   orderNumber: z.string().trim().min(1).max(80),
   badge: code,

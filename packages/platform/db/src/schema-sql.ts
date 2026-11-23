@@ -531,6 +531,16 @@ CREATE TABLE IF NOT EXISTS tracking.device_checkouts (
 CREATE UNIQUE INDEX IF NOT EXISTS checkout_one_open_device
   ON tracking.device_checkouts (device_id) WHERE ended_at IS NULL;
 
+CREATE TABLE IF NOT EXISTS tracking.floor_devices (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  token_hash text NOT NULL UNIQUE,
+  created_by uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  last_seen_at timestamptz,
+  revoked_at timestamptz
+);
+
 CREATE TABLE IF NOT EXISTS tracking.pack_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   order_number text NOT NULL UNIQUE,

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { FloorGate } from "@/components/floor-access";
 import { Notice } from "@/components/ui";
 import { api, ApiError, post } from "@/lib/api";
 import { badgeFromScan } from "@/lib/qr";
@@ -35,6 +36,14 @@ function readPosition() {
 }
 
 export default function GatePage() {
+  return (
+    <FloorGate>
+      <GateScreen />
+    </FloorGate>
+  );
+}
+
+function GateScreen() {
   const [action, setAction] = useState<Action>("in");
   const [place, setPlace] = useState("");
   const [places, setPlaces] = useState<string[]>([]);

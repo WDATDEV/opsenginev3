@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { BadgeQr } from "@/components/badge-qr";
+import { FloorDevicesPanel } from "@/components/floor-access";
 import { useSession } from "@/components/shell";
 import { Avatar, Badge, EmptyRow, Field, isToday, MoreButton, Notice, PageTitle, Panel, SearchBox, Segmented, SkeletonList, Stat, StatGrid, usePaged, useResource } from "@/components/ui";
 import { api, ApiError, canManage, post, when } from "@/lib/api";
@@ -278,6 +279,7 @@ export function CheckInBoard({ client }: { client?: { id: string; name: string }
 
       {tab === "setup" && !client ? (
         <div className="space-y-5">
+          <FloorDevicesPanel />
           <section className="card space-y-4 p-4 sm:p-5">
             <div>
               <h2 className="font-semibold">How people check in</h2>

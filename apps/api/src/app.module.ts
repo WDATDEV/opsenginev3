@@ -4,6 +4,7 @@ import { JwtModule } from "@nestjs/jwt";
 import { AuthController } from "./auth/auth.controller.js";
 import { AuthGuard, OptionalAuthGuard } from "./auth/auth.guard.js";
 import { AuthService } from "./auth/auth.service.js";
+import { jwtSecret } from "./auth/jwt-secret.js";
 import { BillingController } from "./billing/billing.controller.js";
 import { BillingService } from "./billing/billing.service.js";
 import { ClientsController } from "./clients/clients.controller.js";
@@ -15,6 +16,9 @@ import { JobsController } from "./jobs/jobs.controller.js";
 import { JobsService } from "./jobs/jobs.service.js";
 import { HealthController } from "./health.controller.js";
 import { InternalController } from "./internal/internal.controller.js";
+import { FloorAccessGuard, FloorSessionGuard } from "./tracking/floor-access.guard.js";
+import { FloorDevicesController } from "./tracking/floor-devices.controller.js";
+import { FloorDevicesService } from "./tracking/floor-devices.service.js";
 import { SchedulerService } from "./tracking/scheduler.service.js";
 import { TrackingController } from "./tracking/tracking.controller.js";
 import { TrackingService } from "./tracking/tracking.service.js";
@@ -35,7 +39,7 @@ import { WorkService } from "./work/work.service.js";
 @Module({
   imports: [
     JwtModule.register({
-      secret: process.env.JWT_SECRET ?? "dev-only-change-me",
+      secret: jwtSecret(),
       signOptions: { expiresIn: "12h" },
     }),
   ],
@@ -47,6 +51,7 @@ import { WorkService } from "./work/work.service.js";
     JobsController,
     JobsChatController,
     BillingController,
+    FloorDevicesController,
     TrackingController,
     WorkController,
     SettingsController,
@@ -61,6 +66,9 @@ import { WorkService } from "./work/work.service.js";
     AuthGuard,
     OptionalAuthGuard,
     SectionGuard,
+    FloorSessionGuard,
+    FloorAccessGuard,
+    FloorDevicesService,
     TrackingService,
     SchedulerService,
     JobsService,

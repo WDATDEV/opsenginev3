@@ -58,8 +58,9 @@ type Context = {
     startedAuto: boolean;
     enabledServices: string[];
     completedCodes: string[];
+    workCodes: string[] | null;
   }[];
-  activities: { id: string; code: string; name: string; department: string; billable: boolean }[];
+  activities: { id: string; code: string; name: string; department: string; billable: boolean; clientId: string | null }[];
   station: string | null;
   checkout: string | null;
   stations: {
@@ -281,6 +282,16 @@ function FloorPhone() {
   const jobs = (context?.jobs ?? []).filter(
     (job) => !context?.employee.clientId || job.clientId === context.employee.clientId,
   );
+  type FloorJob = (typeof jobs)[number];
+  type FloorActivity = NonNullable<typeof context>["activities"][number];
+  // One rule for both lists: the client offers it, the job is for it, and it is not finished.
+  const jobTakes = (job: FloorJob, activity: FloorActivity) => {
+    const service = serviceForDepartment[activity.department];
+    if (!service || !job.enabledServices.includes(service)) return false;
+    if (activity.clientId && activity.clientId !== job.clientId) return false;
+    if (job.workCodes && !job.workCodes.includes(activity.code)) return false;
+    return !(job.completedCodes ?? []).includes(activity.code);
+  };
   const startable = (context?.activities ?? []).filter((activity) => {
     if (!context) return false;
     const allowed = context.employee.departments;
@@ -289,23 +300,13 @@ function FloorPhone() {
     if (internal) return Boolean(allowed?.includes("indirect")) && !finished.includes(activity.code);
     if (allowed?.length && !allowed.includes(activity.department)) return false;
     if (finished.includes(activity.code)) return false;
-    const service = serviceForDepartment[activity.department];
-    if (!service) return false;
-    return jobs.some(
-      (job) => job.enabledServices.includes(service) && !(job.completedCodes ?? []).includes(activity.code),
-    );
+    return jobs.some((job) => jobTakes(job, activity));
   });
   const openTasks = (context?.tasks ?? []).filter((item) => !item.blocked);
   const chosen =
     startable.find((item) => item.code === taskCode) ??
     (startable.length === 1 && openTasks.length === 0 ? startable[0] : null);
-  const projects = chosen?.billable
-    ? jobs.filter((job) => {
-        const service = serviceForDepartment[chosen.department];
-        if (service && !job.enabledServices.includes(service)) return false;
-        return !(job.completedCodes ?? []).includes(chosen.code);
-      })
-    : [];
+  const projects = chosen?.billable ? jobs.filter((job) => jobTakes(job, chosen)) : [];
   const picked = projects.find((job) => job.id === jobId) ?? (projects.length === 1 ? projects[0] : null);
   const assignedTask =
     openTasks.find((item) => item.id === assignedTaskId) ??
@@ -534,7 +535,7 @@ function FloorPhone() {
                   <p className="card p-4 text-sm text-muted">
                     {jobs.length === 0
                       ? `${context.employee.name} is not assigned to an open project. Ask a manager to assign you on the job.`
-                      : "Finished work stays off this list. Nothing left to start on your projects."}
+                      : "Nothing to start on your projects. The work may be finished, or you may not be set up for it. Ask a manager if this looks wrong."}
                   </p>
                 ) : (
                   <div className="flex flex-wrap gap-2">

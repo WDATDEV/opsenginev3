@@ -48,6 +48,7 @@ import {
 import type { ClientService, GateMode } from "@opsengine/contracts";
 import { assertClientService, enabledServiceList } from "../clients/access.js";
 import { DbService } from "../db.service.js";
+import { jobWorkCodes, workFitsJob } from "./job-work.js";
 
 type Conn = Database;
 type Employee = typeof employees.$inferSelect;
@@ -335,6 +336,7 @@ export class TrackingService {
       const now = new Date();
       const taskRows = await tx.select().from(tasks).where(eq(tasks.assigneeId, employee.id));
       const taskTitleById = new Map(taskRows.map((row) => [row.id, row.title]));
+      const jobTaskRows = await tx.select({ jobId: tasks.jobId, activityCode: tasks.activityCode }).from(tasks);
       const describe = (row: {
         taskCode: string;
         jobId: string | null;
@@ -424,6 +426,10 @@ export class TrackingService {
               clientCode: client?.code ?? "",
               enabledServices: services,
               completedCodes: [...(completedCodesByJob.get(row.id) ?? [])],
+              workCodes: jobWorkCodes(
+                row.title,
+                jobTaskRows.filter((task) => task.jobId === row.id).map((task) => task.activityCode),
+              ),
             };
           }),
         activities: activities
@@ -437,6 +443,7 @@ export class TrackingService {
             name: row.name,
             department: row.department,
             billable: row.billable,
+            clientId: row.clientId,
           })),
         station: session ? deviceById.get(session.deviceId)?.code ?? null : null,
         checkout: checkout ? deviceById.get(checkout.deviceId)?.code ?? null : null,
@@ -878,6 +885,14 @@ export class TrackingService {
       const jobCheck = assertBillableJob({ billable, jobId });
       if (!jobCheck.ok) throw new TrackingError(jobCheck.reason);
       const job = jobCheck.jobId ? await this.jobForEmployee(tx, employee, jobCheck.jobId, department) : null;
+      if (job && activity && !assigned) {
+        if (activity.clientId && activity.clientId !== job.clientId) {
+          throw new TrackingError("That work belongs to another client.");
+        }
+        if (!workFitsJob(activity.code, await this.workCodesForJob(tx, job))) {
+          throw new TrackingError(`${activity.name} is not part of ${job.reference}.`);
+        }
+      }
       const segmentId = await this.touchSegment(tx, employee, shift.id, department, null, {
         jobId: job?.id ?? null,
         activityId: activity?.id ?? null,
@@ -2208,12 +2223,20 @@ export class TrackingService {
         services.includes(row.department) &&
         (row.clientId == null || row.clientId === job.clientId),
     );
+    const codes = await this.workCodesForJob(tx, job);
+    const fitting = matches.filter((row) => workFitsJob(row.code, codes));
+    const choices = fitting.length > 0 ? fitting : matches;
     const preferred = employee.departments?.length
-      ? matches.find((row) => employee.departments?.includes(row.department))
+      ? choices.find((row) => employee.departments?.includes(row.department))
       : null;
-    const pick = preferred ?? matches[0];
+    const pick = preferred ?? choices[0];
     if (!pick) throw new TrackingError("This job has no task type to clock. Turn a service on for the client.");
     return pick;
+  }
+
+  private async workCodesForJob(tx: Conn, job: { id: string; title: string }) {
+    const rows = await tx.select({ activityCode: tasks.activityCode }).from(tasks).where(eq(tasks.jobId, job.id));
+    return jobWorkCodes(job.title, rows.map((row) => row.activityCode));
   }
 
   private async jobForEmployee(tx: Conn, employee: Employee, jobId: string, department: Department) {

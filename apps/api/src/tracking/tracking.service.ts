@@ -339,6 +339,12 @@ export class TrackingService {
       const jobTaskRows = await tx
         .select({ id: tasks.id, jobId: tasks.jobId, activityCode: tasks.activityCode, status: tasks.status, assigneeId: tasks.assigneeId })
         .from(tasks);
+      const spanMs = (rows: { startedAt: Date; endedAt: Date | null }[]) =>
+        rows.reduce((sum, row) => sum + Math.max(0, (row.endedAt ?? now).getTime() - row.startedAt.getTime()), 0);
+      // Each task keeps its own total, so switching away and back never mixes two tasks' time.
+      const taskSpentMs = (taskId: string) => spanMs(employeeSegments.filter((row) => row.note === taskId));
+      const jobWorkSpentMs = (jobId: string, code: string) =>
+        spanMs(employeeSegments.filter((row) => !row.note && row.jobId === jobId && row.taskCode === code));
       const describe = (row: {
         taskCode: string;
         jobId: string | null;
@@ -347,11 +353,18 @@ export class TrackingService {
         note?: string | null;
       }) => {
         const job = row.jobId ? jobById.get(row.jobId) : null;
+        const spent = row.note
+          ? taskSpentMs(row.note)
+          : row.jobId
+            ? jobWorkSpentMs(row.jobId, row.taskCode)
+            : now.getTime() - stintDisplayStart(employeeSegments, row, now).getTime();
         return {
           department: row.department,
           taskCode: row.taskCode,
           activityName: (row.note ? taskTitleById.get(row.note) : null) ?? activityName.get(row.taskCode) ?? row.taskCode,
-          startedAt: stintDisplayStart(employeeSegments, row, now),
+          startedAt: new Date(now.getTime() - spent),
+          taskId: row.note ?? (row.jobId ? `job:${row.jobId}:${row.taskCode}` : null),
+          spentSeconds: Math.round(spent / 1000),
           jobId: row.jobId,
           jobReference: job?.reference ?? null,
           clientName: job ? clientNameById.get(job.clientId) ?? null : null,
@@ -412,6 +425,7 @@ export class TrackingService {
             dueOn: null as string | null,
             blocked: false,
             fromJob: true,
+            spentSeconds: Math.round(jobWorkSpentMs(row.id, item.code) / 1000),
           }));
         });
 
@@ -447,6 +461,7 @@ export class TrackingService {
                 // The earlier task may belong to someone else on the crew.
                 blocked: Boolean(row.dependsOnId && jobTaskRows.find((item) => item.id === row.dependsOnId)?.status !== "done"),
                 fromJob: false,
+                spentSeconds: Math.round(taskSpentMs(row.id) / 1000),
               };
             }),
           ...crewWork,
@@ -2165,7 +2180,9 @@ export class TrackingService {
       next: { department, taskCode, jobId },
     });
     const now = link?.at ?? new Date();
-    if (!plan.start && open) {
+    // Two tasks can share a job and kind of work. Moving to a different task must start its own timer.
+    const otherTask = Boolean(link && "note" in link && open && (open.note ?? null) !== (link.note ?? null));
+    if (!plan.start && open && !otherTask) {
       if (deviceId && open.deviceId !== deviceId) {
         await tx.update(segments).set({ deviceId }).where(eq(segments.id, open.id));
       }

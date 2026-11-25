@@ -22,6 +22,8 @@ type Context = {
     taskCode: string;
     activityName: string;
     startedAt: string;
+    taskId: string | null;
+    spentSeconds: number;
     jobId: string | null;
     jobReference: string | null;
     clientName: string | null;
@@ -30,6 +32,8 @@ type Context = {
     department: string;
     taskCode: string;
     activityName: string;
+    taskId: string | null;
+    spentSeconds: number;
     jobId: string | null;
     jobReference: string | null;
     clientName: string | null;
@@ -46,6 +50,7 @@ type Context = {
     dueOn: string | null;
     blocked: boolean;
     fromJob: boolean;
+    spentSeconds: number;
   }[];
   jobs: {
     id: string;
@@ -113,6 +118,13 @@ const RECORD_PANEL: Record<string, "packing" | "picking" | "receiving" | "unload
   unload_trailer: "unloading",
   sort_gaylord: "sorting",
 };
+
+function spentLabel(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 1) return "";
+  const hours = Math.floor(minutes / 60);
+  return hours > 0 ? `${hours} h ${minutes % 60} min` : `${minutes} min`;
+}
 
 function Elapsed({ since }: { since: string }) {
   const [now, setNow] = useState(() => Date.now());
@@ -274,9 +286,12 @@ function FloorPhone() {
     (activity) =>
       Boolean(context?.employee.departments?.includes("indirect")) && (activity.department === "indirect" || !activity.billable),
   );
-  const myTasks = context?.tasks ?? [];
   const working = context?.task ?? null;
   const paused = !working ? context?.paused ?? null : null;
+  const currentTaskId = working?.taskId ?? paused?.taskId ?? null;
+  // The task on the timer card is not repeated in the list below it.
+  const myTasks = (context?.tasks ?? []).filter((item) => item.id !== currentTaskId);
+  const busy = Boolean(working || paused);
   const checkedIn = Boolean(context?.employee.clockedIn);
   const onMeal = Boolean(context?.employee.onMeal);
   const currentJobId = working?.jobId ?? paused?.jobId ?? null;
@@ -413,7 +428,7 @@ function FloorPhone() {
                     {working.jobReference}
                   </p>
                 ) : null}
-                <p className="text-sm text-muted">Started {when(working.startedAt)}</p>
+                <p className="text-sm text-muted">Total time on this task</p>
               </div>
             </section>
           ) : null}
@@ -432,63 +447,11 @@ function FloorPhone() {
                     {paused.jobReference}
                   </p>
                 ) : null}
-                <p className="text-sm text-muted">The minutes already worked stay on the project. Resume to keep counting.</p>
+                <p className="text-sm text-muted">
+                  {spentLabel(paused.spentSeconds) ? `${spentLabel(paused.spentSeconds)} on this task so far. ` : ""}
+                  Resume to keep counting, or switch to another task below.
+                </p>
               </div>
-            </section>
-          ) : null}
-
-          {checkedIn && !onMeal && !working && !paused ? (
-            <section aria-label="Your tasks">
-              {myTasks.length === 0 && internalWork.length === 0 ? (
-                <div className="card p-6 text-center">
-                  <p className="font-semibold">No tasks right now</p>
-                  <p className="mt-1 text-sm text-muted">Ask a manager to give you a task.</p>
-                </div>
-              ) : (
-                <ul className="space-y-3">
-                  {myTasks.map((item) => (
-                    <li key={item.id} className={`card p-4 ${item.blocked ? "opacity-70" : ""}`}>
-                      <p className="break-words text-lg font-semibold leading-snug">{item.title}</p>
-                      <p className="mt-1 text-sm text-muted">
-                        {[item.activityName, item.clientName, item.jobReference].filter(Boolean).join(" · ")}
-                      </p>
-                      {item.startAt || item.dueOn ? (
-                        <p className="mt-1 text-xs text-muted">
-                          {[item.startAt ? `Starts ${when(item.startAt)}` : "", item.dueOn ? `Due ${item.dueOn}` : ""].filter(Boolean).join(" · ")}
-                        </p>
-                      ) : null}
-                      {item.blocked ? (
-                        <p className="mt-3 rounded-lg bg-black/[0.04] px-3 py-2.5 text-center text-sm font-medium text-muted">Waiting on an earlier task</p>
-                      ) : (
-                        <button
-                          className="btn btn-primary tap mt-3 min-h-14 w-full text-base"
-                          type="button"
-                          disabled={saving}
-                          aria-label={`Start ${item.title}`}
-                          onClick={() => startTask(item)}
-                        >
-                          Start
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                  {internalWork.map((activity) => (
-                    <li key={activity.id} className="card p-4">
-                      <p className="text-lg font-semibold leading-snug">{activity.name}</p>
-                      <p className="mt-1 text-sm text-muted">Not billed to a client</p>
-                      <button
-                        className="btn btn-ghost tap mt-3 min-h-14 w-full text-base"
-                        type="button"
-                        disabled={saving}
-                        aria-label={`Start ${activity.name}`}
-                        onClick={() => void run("/tracking/tasks/switch", { badge, activityCode: activity.code })}
-                      >
-                        Start
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
             </section>
           ) : null}
 
@@ -504,6 +467,72 @@ function FloorPhone() {
                 <UnloadPanel context={context} badge={badge} run={run} jobId={currentJobId} />
               ) : null}
               {panel === "sorting" ? <SortPanel context={context} badge={badge} run={run} /> : null}
+            </section>
+          ) : null}
+
+          {checkedIn && !onMeal && !(busy && myTasks.length === 0 && internalWork.length === 0) ? (
+            <section aria-label="Your tasks">
+              {busy ? (
+                <p className="mb-2 text-sm font-semibold">
+                  Your other tasks <span className="font-normal text-muted">· switching pauses the current one</span>
+                </p>
+              ) : null}
+              {myTasks.length === 0 && internalWork.length === 0 ? (
+                <div className="card p-6 text-center">
+                  <p className="font-semibold">No tasks right now</p>
+                  <p className="mt-1 text-sm text-muted">Ask a manager to give you a task.</p>
+                </div>
+              ) : (
+                <ul className="space-y-3">
+                  {myTasks.map((item) => (
+                    <li key={item.id} className={`card p-4 ${item.blocked ? "opacity-70" : ""}`}>
+                      <p className="break-words text-lg font-semibold leading-snug">{item.title}</p>
+                      <p className="mt-1 text-sm text-muted">
+                        {[item.activityName, item.clientName, item.jobReference].filter(Boolean).join(" · ")}
+                      </p>
+                      {item.startAt || item.dueOn || spentLabel(item.spentSeconds) ? (
+                        <p className="mt-1 text-xs text-muted">
+                          {[
+                            spentLabel(item.spentSeconds) ? `${spentLabel(item.spentSeconds)} so far` : "",
+                            item.startAt ? `Starts ${when(item.startAt)}` : "",
+                            item.dueOn ? `Due ${item.dueOn}` : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </p>
+                      ) : null}
+                      {item.blocked ? (
+                        <p className="mt-3 rounded-lg bg-black/[0.04] px-3 py-2.5 text-center text-sm font-medium text-muted">Waiting on an earlier task</p>
+                      ) : (
+                        <button
+                          className={`btn tap mt-3 min-h-14 w-full text-base ${busy ? "btn-ghost" : "btn-primary"}`}
+                          type="button"
+                          disabled={saving}
+                          aria-label={`${busy ? "Switch to" : "Start"} ${item.title}`}
+                          onClick={() => startTask(item)}
+                        >
+                          {busy ? "Switch to this task" : spentLabel(item.spentSeconds) ? "Continue" : "Start"}
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                  {internalWork.map((activity) => (
+                    <li key={activity.id} className="card p-4">
+                      <p className="text-lg font-semibold leading-snug">{activity.name}</p>
+                      <p className="mt-1 text-sm text-muted">Not billed to a client</p>
+                      <button
+                        className="btn btn-ghost tap mt-3 min-h-14 w-full text-base"
+                        type="button"
+                        disabled={saving}
+                        aria-label={`${busy ? "Switch to" : "Start"} ${activity.name}`}
+                        onClick={() => void run("/tracking/tasks/switch", { badge, activityCode: activity.code })}
+                      >
+                        {busy ? "Switch to this" : "Start"}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
           ) : null}
         </div>

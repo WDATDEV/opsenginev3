@@ -169,6 +169,12 @@ export const pauseReasons = [
   "Cleaning up",
 ] as const;
 
+// Ending work. With taskId it ends that task; without, whatever is running or paused.
+export const stopSchema = z.object({
+  badge: code,
+  taskId: z.string().trim().min(1).max(200).optional(),
+});
+
 export const pauseSchema = z.object({
   badge: code,
   reason: z.string().trim().min(1, "Say why you are pausing.").max(120),

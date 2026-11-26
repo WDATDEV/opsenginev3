@@ -782,7 +782,11 @@ export class TrackingService {
     });
   }
 
-  async stopTask(badge: string) {
+  /**
+   * Ends a task. With no taskId it ends what is running or paused, as before.
+   * With a taskId it ends that task: the running or paused one, or any other open task of theirs.
+   */
+  async stopTask(badge: string, taskId?: string) {
     return this.inTx(async (tx) => {
       const employee = await this.employeeByBadge(tx, badge);
       await this.requireReady(tx, employee);
@@ -797,6 +801,8 @@ export class TrackingService {
             .limit(1);
       const target =
         open ?? (last && (last.endReason === "pause" || last.endReason === "meal") ? last : null);
+      const targetId = target ? target.note ?? (target.jobId ? `job:${target.jobId}:${target.taskCode}` : null) : null;
+      if (taskId && taskId !== targetId) return this.endIdleTask(tx, employee, taskId);
       if (!target) throw new TrackingError(`${employee.name} has nothing running to finish.`);
       const now = new Date();
       await tx.update(segments).set({ endedAt: target.endedAt ?? now, endReason: "complete" }).where(eq(segments.id, target.id));
@@ -811,6 +817,26 @@ export class TrackingService {
       else if (target.jobId) await this.completeMatchingTask(tx, employee.id, target.jobId, target.taskCode);
       return { message };
     });
+  }
+
+  // Ends a task that is not on the clock right now. Its recorded time stays; the clock is not touched.
+  private async endIdleTask(tx: Conn, employee: Employee, taskId: string) {
+    if (taskId.startsWith("job:")) throw new TrackingError("Start this work first, then end it.");
+    const [task] = await tx
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.id, taskId), eq(tasks.assigneeId, employee.id)))
+      .limit(1);
+    if (!task) throw new TrackingError("That task is not on your list.");
+    if (task.status === "done") throw new TrackingError(`${task.title} is already done.`);
+    if (task.dependsOnId) {
+      const [before] = await tx.select().from(tasks).where(eq(tasks.id, task.dependsOnId)).limit(1);
+      if (before && before.status !== "done") throw new TrackingError(`${task.title} is waiting on ${before.title}.`);
+    }
+    await tx.update(tasks).set({ status: "done" }).where(eq(tasks.id, task.id));
+    const message = `${employee.name} ended ${task.title}.`;
+    await this.audit(tx, employee.id, "tracking.task_stopped", "task", task.id, message);
+    return { message };
   }
 
   private async completeTaskById(tx: Conn, employeeId: string, taskId: string) {

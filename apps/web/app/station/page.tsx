@@ -250,7 +250,8 @@ function Station() {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [confirmEnd, setConfirmEnd] = useState(false);
+  // Which task's End is waiting for "Yes, end": "current" for the running or paused one, or a task id.
+  const [confirmEnd, setConfirmEnd] = useState<string | null>(null);
   const [confirmOut, setConfirmOut] = useState(false);
   const [choosingPause, setChoosingPause] = useState(false);
   const badgeInput = useRef<HTMLInputElement>(null);
@@ -264,7 +265,7 @@ function Station() {
   function reset() {
     setContext(null);
     setBadge("");
-    setConfirmEnd(false);
+    setConfirmEnd(null);
     setConfirmOut(false);
     setChoosingPause(false);
     setError(null);
@@ -382,9 +383,26 @@ function Station() {
     }
   }
 
-  async function finish() {
-    setConfirmEnd(false);
-    await run("/tracking/tasks/stop", { badge });
+  // Ends the running or paused task, or (with an id) any other task on their list without touching the clock.
+  async function finish(taskId?: string) {
+    setConfirmEnd(null);
+    await run("/tracking/tasks/stop", taskId ? { badge, taskId } : { badge });
+  }
+
+  function endConfirm(key: string, label: string, onYes: () => void) {
+    return (
+      <div className="mt-3 space-y-2">
+        <p className="text-center text-sm font-medium">{label}</p>
+        <div className="grid grid-cols-2 gap-3">
+          <button className="btn btn-ghost tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setConfirmEnd(null)}>
+            Keep it open
+          </button>
+          <button className="btn btn-primary tap min-h-14 text-base" type="button" disabled={saving} aria-label={`Yes, end ${key}`} onClick={onYes}>
+            Yes, end
+          </button>
+        </div>
+      </div>
+    );
   }
 
   async function checkOut() {
@@ -430,7 +448,7 @@ function Station() {
           : wanted;
 
   return (
-    <main className={`mx-auto min-h-screen max-w-lg px-4 py-6 ${choosingPause && working ? "pb-[26rem]" : working || paused ? "pb-40" : ""}`}>
+    <main className="mx-auto min-h-screen max-w-lg px-4 py-6 pb-10">
       <div className="mb-5">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-moss">Check-in station</p>
         <h1 className="text-2xl font-semibold">
@@ -613,6 +631,30 @@ function Station() {
                   </p>
                 ) : null}
                 <p className="text-sm text-muted">Total time on this task</p>
+                {choosingPause ? (
+                  <div className="pt-3">
+                    <PauseReasonPicker
+                      saving={saving}
+                      onCancel={() => setChoosingPause(false)}
+                      onPause={(reason) => {
+                        void run("/tracking/tasks/pause", { badge, reason }).then((done) => {
+                          if (done) setChoosingPause(false);
+                        });
+                      }}
+                    />
+                  </div>
+                ) : confirmEnd === "current" ? (
+                  endConfirm(working.activityName, "End this task and save its time?", () => void finish())
+                ) : (
+                  <div className="grid grid-cols-2 gap-3 pt-3">
+                    <button className="btn btn-ghost tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setChoosingPause(true)}>
+                      Pause
+                    </button>
+                    <button className="btn btn-primary tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setConfirmEnd("current")}>
+                      End
+                    </button>
+                  </div>
+                )}
               </div>
             </section>
           ) : null}
@@ -636,8 +678,20 @@ function Station() {
                 ) : null}
                 <p className="text-sm text-muted">
                   {spentLabel(paused.spentSeconds) ? `${spentLabel(paused.spentSeconds)} on this task so far. ` : ""}
-                  Resume to keep counting, or switch to another task below.
+                  Resume to keep counting, or start another task below.
                 </p>
+                {confirmEnd === "current" ? (
+                  endConfirm(paused.activityName, "End this task and save its time?", () => void finish())
+                ) : (
+                  <div className="grid grid-cols-2 gap-3 pt-3">
+                    <button className="btn btn-primary tap min-h-14 text-base" type="button" disabled={saving} onClick={() => void run("/tracking/tasks/resume", { badge })}>
+                      Resume
+                    </button>
+                    <button className="btn btn-ghost tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setConfirmEnd("current")}>
+                      End
+                    </button>
+                  </div>
+                )}
               </div>
             </section>
           ) : null}
@@ -661,7 +715,7 @@ function Station() {
             <section aria-label="Your tasks">
               {busy ? (
                 <p className="mb-2 text-sm font-semibold">
-                  Your other tasks <span className="font-normal text-muted">· switching pauses the current one</span>
+                  Your other tasks <span className="font-normal text-muted">· starting one pauses the current one</span>
                 </p>
               ) : null}
               {myTasks.length === 0 && internalWork.length === 0 ? (
@@ -690,16 +744,37 @@ function Station() {
                       ) : null}
                       {item.blocked ? (
                         <p className="mt-3 rounded-lg bg-black/[0.04] px-3 py-2.5 text-center text-sm font-medium text-muted">Waiting on an earlier task</p>
+                      ) : confirmEnd === item.id ? (
+                        endConfirm(
+                          item.title,
+                          spentLabel(item.spentSeconds) ? `End ${item.title}? Its ${spentLabel(item.spentSeconds)} stays saved.` : `End ${item.title} without starting it?`,
+                          () => void finish(item.id),
+                        )
                       ) : (
-                        <button
-                          className={`btn tap mt-3 min-h-14 w-full text-base ${busy ? "btn-ghost" : "btn-primary"}`}
-                          type="button"
-                          disabled={saving}
-                          aria-label={`${busy ? "Switch to" : "Start"} ${item.title}`}
-                          onClick={() => startTask(item)}
-                        >
-                          {busy ? "Switch to this task" : spentLabel(item.spentSeconds) ? "Continue" : "Start"}
-                        </button>
+                        // One clock per person: Start or Resume here pauses whatever is running, so time is never counted twice.
+                        <div className={`mt-3 grid gap-3 ${item.fromJob ? "grid-cols-1" : "grid-cols-2"}`}>
+                          <button
+                            className={`btn tap min-h-14 text-base ${busy ? "btn-ghost" : "btn-primary"}`}
+                            type="button"
+                            disabled={saving}
+                            aria-label={`${spentLabel(item.spentSeconds) ? "Resume" : "Start"} ${item.title}`}
+                            onClick={() => startTask(item)}
+                          >
+                            {spentLabel(item.spentSeconds) ? "Resume" : "Start"}
+                          </button>
+                          {/* Crew work has no task record of its own, so it ends from its timer card once started. */}
+                          {!item.fromJob ? (
+                            <button
+                              className="btn btn-ghost tap min-h-14 text-base"
+                              type="button"
+                              disabled={saving}
+                              aria-label={`End ${item.title}`}
+                              onClick={() => setConfirmEnd(item.id)}
+                            >
+                              End
+                            </button>
+                          ) : null}
+                        </div>
                       )}
                     </li>
                   ))}
@@ -724,56 +799,6 @@ function Station() {
           ) : null}
         </div>
       )}
-      {context && checkedIn && !onMeal && (working || paused) ? (
-        <div className="fixed inset-x-0 bottom-0 z-10 border-t border-black/10 bg-paper/95 px-4 pb-5 pt-3 backdrop-blur">
-          <div className="mx-auto max-w-lg space-y-2">
-            {working && choosingPause && !confirmEnd ? (
-              <PauseReasonPicker
-                saving={saving}
-                onCancel={() => setChoosingPause(false)}
-                onPause={(reason) => {
-                  void run("/tracking/tasks/pause", { badge, reason }).then((done) => {
-                    if (done) setChoosingPause(false);
-                  });
-                }}
-              />
-            ) : null}
-            {working && !choosingPause && !confirmEnd ? (
-              <div className="grid grid-cols-2 gap-3">
-                <button className="btn btn-ghost tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setChoosingPause(true)}>
-                  Pause
-                </button>
-                <button className="btn btn-primary tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setConfirmEnd(true)}>
-                  End
-                </button>
-              </div>
-            ) : null}
-            {paused && !confirmEnd ? (
-              <div className="grid grid-cols-2 gap-3">
-                <button className="btn btn-primary tap min-h-14 text-base" type="button" disabled={saving} onClick={() => void run("/tracking/tasks/resume", { badge })}>
-                  Resume
-                </button>
-                <button className="btn btn-ghost tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setConfirmEnd(true)}>
-                  End
-                </button>
-              </div>
-            ) : null}
-            {(working || paused) && confirmEnd ? (
-              <>
-                <p className="text-center text-sm font-medium">End now and save this time on the project?</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <button className="btn btn-ghost tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setConfirmEnd(false)}>
-                    Keep going
-                  </button>
-                  <button className="btn btn-primary tap min-h-14 text-base" type="button" disabled={saving} onClick={() => void finish()}>
-                    Yes, end
-                  </button>
-                </div>
-              </>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
     </main>
   );
 }

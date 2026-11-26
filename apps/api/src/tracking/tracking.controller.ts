@@ -21,6 +21,7 @@ import {
   employeeStatusSchema,
   createGaylordSchema,
   pauseSchema,
+  stopSchema,
   createLoadSchema,
   createShipmentSchema,
   finishLoadSchema,
@@ -124,8 +125,8 @@ export class TrackingController {
 
   @Post("tasks/stop")
   @UseGuards(FloorAccessGuard)
-  stop(@Body(new ZodPipe(badgeSchema)) body: { badge: string }) {
-    return this.tracking.stopTask(body.badge);
+  stop(@Body(new ZodPipe(stopSchema)) body: { badge: string; taskId?: string }) {
+    return this.tracking.stopTask(body.badge, body.taskId);
   }
 
   @Post("stations/claim")

@@ -12,10 +12,23 @@ type Person = {
   departmentHome: string;
   clockedIn: boolean;
   onMeal: boolean;
+  shiftStartedAt: string | null;
   entry: string | null;
   entryPlace: string | null;
   place: string | null;
-  task: { department: string; startedAt: string; jobReference?: string | null; clientName?: string | null } | null;
+  paused: { reason: string | null; since: string; title: string } | null;
+  lastTask: { title: string; endedAt: string; ended: string | null } | null;
+  task: { title?: string; department: string; startedAt: string; jobReference?: string | null; clientName?: string | null } | null;
+};
+
+// A shift this long is almost always a missed check-out.
+const LONG_SHIFT_MS = 14 * 60 * 60 * 1000;
+
+const ENDED: Record<string, string> = {
+  complete: "Finished",
+  switch: "Stopped",
+  meal: "Stopped for meal",
+  clock_out: "Stopped",
 };
 
 type Floor = {
@@ -32,15 +45,16 @@ type Floor = {
   policy: { id: string; area: string; question: string; answer: string }[];
 };
 
-type Status = "working" | "idle" | "meal" | "off";
+type Status = "working" | "paused" | "idle" | "meal" | "off";
 type View = "here" | Status;
 
 const REFRESH_MS = 20_000;
 const FEED_PREVIEW = 8;
 const DEPARTMENTS = ["packing", "picking", "receiving", "unloading", "sorting"] as const;
-const STATUS_ORDER: Record<Status, number> = { working: 0, idle: 1, meal: 2, off: 3 };
+const STATUS_ORDER: Record<Status, number> = { working: 0, paused: 1, idle: 2, meal: 3, off: 4 };
 const STATUS_META: Record<Status, { label: string; tone: "ok" | "warn" | "neutral" }> = {
   working: { label: "Working", tone: "ok" },
+  paused: { label: "Paused", tone: "warn" },
   idle: { label: "Between tasks", tone: "warn" },
   meal: { label: "On meal", tone: "neutral" },
   off: { label: "Off shift", tone: "neutral" },
@@ -48,6 +62,7 @@ const STATUS_META: Record<Status, { label: string; tone: "ok" | "warn" | "neutra
 const VIEW_TITLES: Record<View, string> = {
   here: "On shift now",
   working: "Working now",
+  paused: "Paused",
   idle: "Between tasks",
   meal: "On meal",
   off: "Off shift",
@@ -56,7 +71,8 @@ const VIEW_TITLES: Record<View, string> = {
 function statusOf(person: Person): Status {
   if (person.onMeal) return "meal";
   if (person.task) return "working";
-  return person.clockedIn ? "idle" : "off";
+  if (!person.clockedIn) return "off";
+  return person.paused ? "paused" : "idle";
 }
 
 function capitalize(text: string) {
@@ -114,7 +130,7 @@ export function FloorBoard() {
 
   const people = data?.people;
   const tally = useMemo(() => {
-    const counts: Record<Status, number> = { working: 0, idle: 0, meal: 0, off: 0 };
+    const counts: Record<Status, number> = { working: 0, paused: 0, idle: 0, meal: 0, off: 0 };
     for (const person of people ?? []) counts[statusOf(person)] += 1;
     return counts;
   }, [people]);
@@ -144,7 +160,7 @@ export function FloorBoard() {
     setSearch("");
   }
 
-  const onShift = tally.working + tally.idle + tally.meal;
+  const onShift = tally.working + tally.paused + tally.idle + tally.meal;
   const listTitle = query ? "Search results" : department ? `${capitalize(department)} now` : VIEW_TITLES[view];
   const filtered = Boolean(query || department || view !== "here");
   const departments = data && (data.counts.indirect ?? 0) > 0 ? [...DEPARTMENTS, "indirect"] : [...DEPARTMENTS];
@@ -185,9 +201,10 @@ export function FloorBoard() {
 
       {data ? (
         <div className="page-enter space-y-5">
-          <section aria-label="Shift summary" className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+          <section aria-label="Shift summary" className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
             <StatTile label="On shift" value={onShift} note={`of ${data.people.length} people`} active={view === "here" && !department && !query} onClick={() => chooseView("here")} />
             <StatTile label="Working" value={tally.working} note="on a task" tone="ok" active={view === "working" && !department && !query} onClick={() => chooseView("working")} />
+            <StatTile label="Paused" value={tally.paused} note="gave a reason" tone={tally.paused ? "warn" : undefined} active={view === "paused" && !query} onClick={() => chooseView("paused")} />
             <StatTile label="Between tasks" value={tally.idle} note={tally.idle ? "may need work" : "nobody waiting"} tone={tally.idle ? "warn" : undefined} active={view === "idle" && !query} onClick={() => chooseView("idle")} />
             <StatTile label="On meal" value={tally.meal} note="on break" active={view === "meal" && !query} onClick={() => chooseView("meal")} />
             <StatTile label="Off shift" value={tally.off} note="not clocked in" active={view === "off" && !query} onClick={() => chooseView("off")} />
@@ -341,6 +358,7 @@ function emptyTitle(view: View, department: string | null) {
   if (department) return `Nobody is on ${department} right now`;
   if (view === "here") return "Nobody is on shift right now";
   if (view === "working") return "Nobody is working a task right now";
+  if (view === "paused") return "Nobody is paused right now";
   if (view === "idle") return "Nobody is waiting between tasks";
   if (view === "meal") return "Nobody is on a meal break";
   return "Everyone is on shift";
@@ -367,7 +385,7 @@ function StatTile({
       type="button"
       aria-pressed={active}
       onClick={onClick}
-      className={`card card-hover p-4 text-left last:col-span-2 sm:last:col-span-1 ${active ? "!border-moss ring-1 ring-moss" : ""}`}
+      className={`card card-hover p-4 text-left ${active ? "!border-moss ring-1 ring-moss" : ""}`}
     >
       <span className="flex items-center gap-2 text-sm text-muted">
         <span className={`h-2 w-2 flex-none rounded-full ${dot}`} aria-hidden="true" />
@@ -388,12 +406,27 @@ function PersonRow({ person, now }: { person: Person; now: number }) {
     status === "meal"
       ? "On a meal break"
       : task
-        ? capitalize(task.department)
-        : status === "idle"
-          ? "Checked in, no task yet (unaccounted)"
+        ? task.title ?? capitalize(task.department)
+        : status === "paused" && person.paused
+          ? `Paused: ${person.paused.reason ?? "no reason given"}`
+          : status === "idle"
+            ? person.lastTask
+              ? `${ENDED[person.lastTask.ended ?? ""] ?? "Stopped"} ${person.lastTask.title} ${timeAgo(person.lastTask.endedAt).toLowerCase()}`
+              : "Checked in, no task yet"
+            : `Home: ${capitalize(person.departmentHome)}`;
+  const context =
+    status === "working"
+      ? [capitalize(task?.department ?? ""), where || "Not on a client job"].filter(Boolean).join(" · ")
+      : status === "paused" && person.paused
+        ? `On ${person.paused.title}`
+        : status === "off"
+          ? null
           : `Home: ${capitalize(person.departmentHome)}`;
-  const context = status === "working" ? where || "Not on a client job" : status === "off" ? null : `Home: ${capitalize(person.departmentHome)}`;
-  const extras = [person.place].filter(Boolean).join(" · ");
+  const longShift = Boolean(person.shiftStartedAt && now - new Date(person.shiftStartedAt).getTime() > LONG_SHIFT_MS);
+  const sinceShift = status !== "off" && person.shiftStartedAt ? `On shift since ${when(person.shiftStartedAt)}` : null;
+  const extras = [person.place, sinceShift].filter(Boolean).join(" · ");
+  // Paused and idle time are shown running, like the working timer.
+  const runningSince = status === "working" ? task?.startedAt : status === "paused" ? person.paused?.since : status === "idle" ? person.lastTask?.endedAt ?? person.shiftStartedAt : null;
 
   return (
     <li className={`grid grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-4 py-3 sm:grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,1.3fr)_8rem] sm:px-5 ${status === "off" ? "text-ink/70" : ""}`}>
@@ -407,12 +440,13 @@ function PersonRow({ person, now }: { person: Person; now: number }) {
       <div className="col-span-2 col-start-2 row-start-2 min-w-0 sm:col-span-1 sm:col-start-3 sm:row-start-1">
         <p className="truncate text-sm font-medium">{headline}</p>
         {context || extras ? <p className="truncate text-xs text-muted">{[context, extras].filter(Boolean).join(" · ")}</p> : null}
+        {longShift ? <p className="text-xs font-medium text-clay">On shift over 14 hours. They may have forgotten to check out.</p> : null}
       </div>
       <div className="col-start-3 row-start-1 flex flex-col items-end gap-0.5 sm:col-start-4">
         <Badge tone={meta.tone} dot>
           {meta.label}
         </Badge>
-        {status === "working" && task ? <span className="text-xs tabular-nums text-muted" title={`Since ${when(task.startedAt)}`}>{elapsed(task.startedAt, now)}</span> : null}
+        {runningSince ? <span className="text-xs tabular-nums text-muted" title={`Since ${when(runningSince)}`}>{elapsed(runningSince, now)}</span> : null}
       </div>
     </li>
   );
@@ -430,8 +464,8 @@ function Mini({ label, value }: { label: string; value: number }) {
 function FloorSkeleton() {
   return (
     <div className="space-y-5" aria-busy="true" aria-label="Loading the floor">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-        {Array.from({ length: 5 }, (_, index) => (
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+        {Array.from({ length: 6 }, (_, index) => (
           <div key={index} className="skeleton h-28" />
         ))}
       </div>

@@ -19,10 +19,11 @@ import {
 } from "@opsengine/db";
 import type { z } from "zod";
 import type { ClientService, addTaskTimeSchema, createJobWorkSchema } from "@opsengine/contracts";
-import { assertClientVisible, canSeeClient, type Principal } from "@opsengine/kernel";
+import { assertClientVisible, canSeeClient, ForbiddenError, type Principal } from "@opsengine/kernel";
 import { assertClientService, enabledServiceList } from "../clients/access.js";
 import { DbService } from "../db.service.js";
 import { jobWorkCodes } from "../tracking/job-work.js";
+import { taskLog } from "../tracking/task-log.js";
 
 function isUnique(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
@@ -881,6 +882,34 @@ export class JobsService {
     const [person] = await this.db.db.select().from(employees).where(eq(employees.id, employeeId)).limit(1);
     if (!person || !person.active) throw new NotFoundException("That employee is not on the floor.");
     return person;
+  }
+
+  /** The assignee's timeline on one task: work stretches, pauses with reasons, and meal breaks. */
+  async taskLog(principal: Principal, jobId: string, taskId: string) {
+    if (principal.role === "external_customer") throw new ForbiddenError("Work logs are for warehouse staff.");
+    const job = await this.requireJob(principal, jobId);
+    const orm = this.db.db;
+    const [task] = await orm.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
+    if (!task || task.jobId !== job.id) throw new NotFoundException("That task is not on this job.");
+    if (!task.assigneeId) {
+      return { task: { id: task.id, title: task.title }, person: null, ...taskLog({ taskSegments: [], allSegments: [], meals: [], shifts: [] }) };
+    }
+    const [person] = await orm.select().from(employees).where(eq(employees.id, task.assigneeId)).limit(1);
+    const theirs = await orm.select().from(segments).where(eq(segments.employeeId, task.assigneeId));
+    const manualNote = `Added by a manager for ${task.title}`;
+    const mine = theirs.filter((row) => row.note === task.id || (row.jobId === job.id && row.note === manualNote));
+    const shiftIds = [...new Set(mine.map((row) => row.shiftId))];
+    const [meals, theirShifts] = shiftIds.length
+      ? await Promise.all([
+          orm.select().from(breaks).where(inArray(breaks.shiftId, shiftIds)),
+          orm.select().from(shifts).where(inArray(shifts.id, shiftIds)),
+        ])
+      : [[], []];
+    return {
+      task: { id: task.id, title: task.title },
+      person: person ? { id: person.id, name: person.name, badgeCode: person.badgeCode } : null,
+      ...taskLog({ taskSegments: mine, allSegments: theirs, meals, shifts: theirShifts }),
+    };
   }
 
   async requireJob(principal: Principal, id: string) {

@@ -148,41 +148,36 @@ const optionalText = z
   .optional()
   .transform((value) => (value ? value : undefined));
 
+// Check-in station taps. No location is sent or stored.
 export const clockSchema = z.object({
   badge: code,
   action: z.enum(["in", "out", "meal_start", "meal_end"]),
-  source: z.enum(["kiosk", "qr"]).default("kiosk"),
-  place: z.string().trim().min(1).max(80).optional(),
-  latitude: z.number().gte(-90).lte(90).optional(),
-  longitude: z.number().gte(-180).lte(180).optional(),
-  accuracy: z.number().positive().max(100_000).optional(),
-  capturedAt: z.number().int().optional(),
-});
-
-export const siteSchema = z.object({
-  latitude: z.number().gte(-90).lte(90),
-  longitude: z.number().gte(-180).lte(180),
-  radiusMeters: z.number().int().min(50).max(2000).default(250),
-});
-
-export const gateModes = ["location", "qr_gate"] as const;
-export type GateMode = (typeof gateModes)[number];
-
-export const gateModeSchema = z.object({ mode: z.enum(gateModes) });
-
-export const gatePlaceSchema = z.object({ name: z.string().trim().min(1).max(40) });
-
-// The floor phone sends the device position when someone opens it in location mode.
-export const arriveSchema = z.object({
-  badge: code,
-  latitude: z.number().gte(-90).lte(90).optional(),
-  longitude: z.number().gte(-180).lte(180).optional(),
-  accuracy: z.number().positive().max(100_000).optional(),
-  capturedAt: z.number().int().optional(),
 });
 
 export const badgeSchema = z.object({
   badge: code,
+});
+
+// Pausing a task needs a reason: one of the station's quick picks, or the person's own words.
+export const pauseReasons = [
+  "Waiting for work",
+  "Waiting on a supervisor",
+  "Equipment or scanner problem",
+  "Restroom",
+  "Short break",
+  "Helping a coworker",
+  "Cleaning up",
+] as const;
+
+// Ending work. With taskId it ends that task; without, whatever is running or paused.
+export const stopSchema = z.object({
+  badge: code,
+  taskId: z.string().trim().min(1).max(200).optional(),
+});
+
+export const pauseSchema = z.object({
+  badge: code,
+  reason: z.string().trim().min(1, "Say why you are pausing.").max(120),
 });
 
 export const claimStationSchema = z.object({
@@ -195,6 +190,12 @@ export const floorDeviceSchema = z.object({
 });
 
 export const employeeStatusSchema = z.object({ active: z.boolean() });
+
+export const updateEmployeeSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  badgeCode: code,
+  departments: z.array(z.enum(departments)).min(1, "Choose at least one kind of work.").max(departments.length),
+});
 
 export const completePackSchema = z.object({
   orderNumber: z.string().trim().min(1).max(80),

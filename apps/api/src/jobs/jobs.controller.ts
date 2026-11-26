@@ -63,6 +63,12 @@ export class JobsController {
     return this.jobs.unassign(ctx.principal, id, body.employeeId);
   }
 
+  @Get(":id/tasks/:taskId/log")
+  taskLog(@CurrentUser() ctx: RequestContext, @Param("id") id: string, @Param("taskId") taskId: string) {
+    authorize(ctx, "job.read");
+    return this.jobs.taskLog(ctx.principal, id, taskId);
+  }
+
   @Post(":id/tasks/:taskId/done")
   taskDone(@CurrentUser() ctx: RequestContext, @Param("id") id: string, @Param("taskId") taskId: string) {
     authorize(ctx, "job.manage");

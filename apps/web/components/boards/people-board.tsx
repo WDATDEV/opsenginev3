@@ -23,6 +23,101 @@ function workOf(person: Employee) {
   return person.departments?.length ? person.departments : [person.departmentHome];
 }
 
+function WorkChips({ offered, picked, onChange }: { offered: string[]; picked: string[]; onChange: (next: string[]) => void }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {offered.map((item) => {
+        const on = picked.includes(item);
+        return (
+          <label
+            key={item}
+            className={`inline-flex min-h-10 cursor-pointer select-none items-center justify-center rounded-full border px-3.5 text-sm font-medium capitalize leading-none transition-colors focus-within:ring-2 focus-within:ring-moss/40 ${
+              on ? "border-moss bg-moss text-paper" : "border-black/15 bg-white text-ink hover:border-moss"
+            }`}
+          >
+            <input
+              className="sr-only"
+              type="checkbox"
+              checked={on}
+              onChange={() => onChange(on ? picked.filter((value) => value !== item) : [...picked, item])}
+            />
+            {LABELS[item] ?? item}
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
+function EditPerson({
+  person,
+  offered,
+  onCancel,
+  onSaved,
+}: {
+  person: Employee;
+  offered: string[];
+  onCancel: () => void;
+  onSaved: (message: string) => void;
+}) {
+  const [name, setName] = useState(person.name);
+  const [badgeCode, setBadgeCode] = useState(person.badgeCode);
+  const [picked, setPicked] = useState<string[]>(workOf(person));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Keep work they already have visible, even if the client turned that service off, so it can be removed.
+  const choices = DEPARTMENTS.filter((item) => offered.includes(item) || workOf(person).includes(item));
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+    if (picked.length === 0) {
+      setError("Choose at least one kind of work.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await post<{ message: string }>(`/tracking/employees/${person.id}`, {
+        name,
+        badgeCode,
+        departments: DEPARTMENTS.filter((item) => picked.includes(item)),
+      });
+      onSaved(result.message);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not save that person.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="col-span-full mt-2 space-y-3 rounded-xl border border-black/10 bg-white p-3 sm:p-4" onSubmit={save}>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="Name">
+          <input className="field" required autoComplete="off" value={name} onChange={(event) => setName(event.target.value)} />
+        </Field>
+        <Field label="Badge">
+          <input className="field font-mono" required autoComplete="off" value={badgeCode} onChange={(event) => setBadgeCode(event.target.value)} />
+        </Field>
+      </div>
+      <fieldset>
+        <legend className="mb-1.5 text-sm font-medium text-ink/80">Can do (choose one or more)</legend>
+        <WorkChips offered={choices} picked={picked} onChange={setPicked} />
+        <p className="mt-1.5 text-xs text-muted">Work they are doing right now keeps running. The new list applies from their next switch.</p>
+      </fieldset>
+      {error ? <Notice tone="bad">{error}</Notice> : null}
+      <div className="flex gap-2">
+        <button className="btn btn-primary btn-sm" type="submit" disabled={busy}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+        <button className="btn btn-ghost btn-sm" type="button" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
 export function PeopleBoard({ client }: { client?: { id: string; name: string; enabledServices?: string[] } }) {
   const board = useResource<Employee[]>("/tracking/employees");
   const user = useSession();
@@ -36,6 +131,7 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string; e
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [editing, setEditing] = useState<string | null>(null);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -105,27 +201,7 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string; e
               {offered.length === 0 ? (
                 <p className="text-sm text-muted">Turn on a work service for this client first.</p>
               ) : (
-                <div className="flex flex-wrap gap-2">
-                  {offered.map((item) => {
-                    const on = picked.includes(item);
-                    return (
-                      <label
-                        key={item}
-                        className={`inline-flex min-h-10 cursor-pointer select-none items-center justify-center rounded-full border px-3.5 text-sm font-medium capitalize leading-none transition-colors focus-within:ring-2 focus-within:ring-moss/40 ${
-                          on ? "border-moss bg-moss text-paper" : "border-black/15 bg-white text-ink hover:border-moss"
-                        }`}
-                      >
-                        <input
-                          className="sr-only"
-                          type="checkbox"
-                          checked={on}
-                          onChange={() => setPicked(on ? picked.filter((value) => value !== item) : [...picked, item])}
-                        />
-                        {LABELS[item] ?? item}
-                      </label>
-                    );
-                  })}
-                </div>
+                <WorkChips offered={offered} picked={picked} onChange={setPicked} />
               )}
             </fieldset>
             <button className="btn btn-primary w-full" type="submit">
@@ -155,13 +231,37 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string; e
                   ))}
                 </div>
                 {manage ? (
-                  <button
-                    className={`btn btn-ghost btn-sm col-start-2 justify-self-start sm:col-start-4 sm:justify-self-end ${person.active ? "btn-danger" : ""}`}
-                    type="button"
-                    onClick={() => void setStatus(person, !person.active)}
-                  >
-                    {person.active ? "Deactivate" : "Reactivate"}
-                  </button>
+                  <div className="col-start-2 flex gap-1 justify-self-start sm:col-start-4 sm:justify-self-end">
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      type="button"
+                      aria-expanded={editing === person.id}
+                      onClick={() => setEditing(editing === person.id ? null : person.id)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className={`btn btn-ghost btn-sm ${person.active ? "btn-danger" : ""}`}
+                      type="button"
+                      onClick={() => void setStatus(person, !person.active)}
+                    >
+                      {person.active ? "Deactivate" : "Reactivate"}
+                    </button>
+                  </div>
+                ) : null}
+                {manage && editing === person.id ? (
+                  <EditPerson
+                    key={person.id}
+                    person={person}
+                    offered={offered}
+                    onCancel={() => setEditing(null)}
+                    onSaved={(text) => {
+                      setEditing(null);
+                      setError(null);
+                      setMessage(text);
+                      board.reload();
+                    }}
+                  />
                 ) : null}
               </li>
             ))}

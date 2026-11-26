@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import type { Principal } from "@opsengine/kernel";
 import { DEV_JWT_SECRET, jwtSecret } from "../auth/jwt-secret.js";
 import { LOGIN_LOCK_MS, LOGIN_MAX_FAILURES, LoginLimiter } from "../auth/login-limit.js";
-import { directClockAllowed, floorAllowed, hashDeviceToken, newDeviceToken } from "./floor-access.js";
+import { floorAllowed, hashDeviceToken, newDeviceToken } from "./floor-access.js";
 
 const person = (role: Principal["role"]): Principal => ({ id: "u", email: "a@example.test", name: "A", role, clientIds: null, sections: [] });
 
@@ -20,13 +20,6 @@ describe("floor access", () => {
     assert.equal(floorAllowed({ deviceApproved: false, principal: person("client_services") }), false);
   });
 
-  it("sends direct check-in and check-out through the QR gate", () => {
-    assert.equal(directClockAllowed("in", "kiosk"), false);
-    assert.equal(directClockAllowed("out", "kiosk"), false);
-    assert.equal(directClockAllowed("in", "qr"), true);
-    assert.equal(directClockAllowed("meal_end", "kiosk"), true);
-  });
-
   it("stores a one-way hash of a long random device token", () => {
     const token = newDeviceToken();
     assert.ok(token.length >= 40);
@@ -39,7 +32,9 @@ describe("floor access", () => {
     const source = readFileSync(new URL("./tracking.controller.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
     const routes = [...source.matchAll(/@(Get|Post|Delete)\("([^"]+)"\)\n(\s+@UseGuards\((\w+)\)\n)?/g)];
     const open = routes.filter((route) => !route[4]).map((route) => route[2]);
-    assert.deepEqual(open, ["gate"]);
+    assert.deepEqual(open, []);
+    // Location checks are gone: no route reads or stores a device position.
+    assert.equal(/latitude|phone\/arrive|"site"|gate\//.test(source), false);
     assert.equal(source.includes("OptionalAuthGuard"), false);
   });
 });

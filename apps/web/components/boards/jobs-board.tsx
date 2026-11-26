@@ -74,7 +74,7 @@ function stamp(value: string) {
 }
 
 function startNote(person: { startAt: string | null; activityName: string | null; started: boolean }) {
-  if (!person.startAt) return "Starts when they tap Start on the floor phone";
+  if (!person.startAt) return "Starts when they tap Start at the check-in station";
   const what = person.activityName ? ` · ${person.activityName}` : "";
   return person.started
     ? `Started by the set time ${stamp(person.startAt)}${what}`
@@ -82,7 +82,7 @@ function startNote(person: { startAt: string | null; activityName: string | null
 }
 
 function taskStartNote(task: { startAt: string | null; activityName: string | null; started: boolean }) {
-  if (!task.startAt) return "No start time. They start it from the floor phone.";
+  if (!task.startAt) return "No start time. They start it from the check-in station.";
   return task.started
     ? `Timer started by the set time ${stamp(task.startAt)}`
     : `Timer starts by itself at ${stamp(task.startAt)}`;
@@ -101,6 +101,130 @@ function hours(minutes: number) {
   const rest = minutes % 60;
   if (whole === 0) return `${rest} min`;
   return `${whole} h ${rest} min`;
+}
+
+type TaskLogEntry =
+  | { kind: "work"; startedAt: string; endedAt: string | null; seconds: number; ended: string | null; addedByManager: boolean }
+  | { kind: "pause"; startedAt: string; endedAt: string | null; seconds: number; reason: string }
+  | { kind: "meal"; startedAt: string; endedAt: string | null; seconds: number };
+
+type TaskLogData = {
+  person: { id: string; name: string; badgeCode: string } | null;
+  entries: TaskLogEntry[];
+  totals: {
+    workSeconds: number;
+    pausedSeconds: number;
+    mealSeconds: number;
+    pauses: { reason: string; seconds: number }[];
+    sessions: number;
+    firstStart: string | null;
+    lastEnd: string | null;
+    now: "working" | "paused" | "meal" | null;
+  };
+};
+
+function span(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 1) return seconds > 0 ? "under 1 min" : "0 min";
+  return hours(minutes);
+}
+
+function clock(value: string) {
+  return new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(new Date(value));
+}
+
+const ENTRY_STYLE: Record<TaskLogEntry["kind"], { dot: string; label: string }> = {
+  work: { dot: "bg-moss", label: "Working" },
+  pause: { dot: "bg-clay", label: "Paused" },
+  meal: { dot: "bg-black/30", label: "Meal break" },
+};
+
+/** One person's timeline on one task: when they worked, why and how long they paused, and meal breaks. */
+function TaskLog({ jobId, taskId }: { jobId: string; taskId: string }) {
+  const log = useResource<TaskLogData>(`/jobs/${jobId}/tasks/${taskId}/log`);
+  if (log.loading && !log.data) return <div className="mt-2"><SkeletonList rows={2} /></div>;
+  if (log.error) return <div className="mt-2"><Notice tone="bad">{log.error}</Notice></div>;
+  const data = log.data;
+  if (!data) return null;
+  const { totals, entries } = data;
+  const status =
+    totals.now === "working" ? <Badge tone="ok" dot>Working now</Badge> : totals.now === "paused" ? <Badge tone="warn" dot>Paused now</Badge> : totals.now === "meal" ? <Badge dot>On a meal break</Badge> : null;
+
+  return (
+    <div className="mt-2 space-y-3 rounded-xl border border-black/10 bg-black/[0.02] p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-semibold">
+          {data.person?.name ?? "Unassigned"}’s log on this task
+        </p>
+        <div className="flex items-center gap-2">
+          {status}
+          <button className="text-xs text-moss underline" type="button" onClick={log.reload}>
+            Refresh
+          </button>
+        </div>
+      </div>
+      {entries.length === 0 ? (
+        <p className="text-sm text-muted">No time on this task yet. It shows here once they start it from the station.</p>
+      ) : (
+        <>
+          <dl className="grid grid-cols-2 gap-2 text-center text-xs sm:grid-cols-4">
+            <div className="rounded-lg bg-moss/10 px-2 py-2">
+              <dt className="text-muted">Working</dt>
+              <dd className="text-sm font-semibold">{span(totals.workSeconds)}</dd>
+            </div>
+            <div className="rounded-lg bg-clay/10 px-2 py-2">
+              <dt className="text-muted">Paused</dt>
+              <dd className="text-sm font-semibold">{span(totals.pausedSeconds)}</dd>
+            </div>
+            <div className="rounded-lg bg-black/[0.05] px-2 py-2">
+              <dt className="text-muted">Meal breaks</dt>
+              <dd className="text-sm font-semibold">{span(totals.mealSeconds)}</dd>
+            </div>
+            <div className="rounded-lg bg-black/[0.05] px-2 py-2">
+              <dt className="text-muted">Work stretches</dt>
+              <dd className="text-sm font-semibold">{totals.sessions}</dd>
+            </div>
+          </dl>
+          {totals.pauses.length > 0 ? (
+            <p className="text-xs text-muted">
+              <span className="font-medium text-ink">Why they paused: </span>
+              {totals.pauses.map((item) => `${item.reason} (${span(item.seconds)})`).join(" · ")}
+            </p>
+          ) : null}
+          <ol className="relative space-y-2 border-l border-black/10 pl-4">
+            {entries.map((entry, index) => (
+              <li key={`${entry.kind}-${entry.startedAt}-${index}`} className="relative text-xs">
+                <span className={`absolute -left-[1.3rem] top-1 h-2.5 w-2.5 rounded-full ring-2 ring-surface ${ENTRY_STYLE[entry.kind].dot}`} />
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                  <p>
+                    <span className="font-semibold">{entry.kind === "pause" ? `Paused: ${entry.reason}` : ENTRY_STYLE[entry.kind].label}</span>
+                    {entry.kind === "work" && entry.addedByManager ? <span className="text-muted"> · added by a manager</span> : null}
+                  </p>
+                  <p className="tabular-nums text-muted">{span(entry.seconds)}</p>
+                </div>
+                <p className="text-muted">
+                  {stamp(entry.startedAt)} → {entry.endedAt ? clock(entry.endedAt) : "now"}
+                  {entry.kind === "work" && entry.ended ? ` · ${entry.ended}` : ""}
+                </p>
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+    </div>
+  );
+}
+
+function TaskLogToggle({ jobId, taskId, person }: { jobId: string; taskId: string; person: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button className="mt-1 block text-xs font-medium text-moss underline" type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+        {open ? "Hide work log" : `View ${person}’s work log`}
+      </button>
+      {open ? <TaskLog jobId={jobId} taskId={taskId} /> : null}
+    </>
+  );
 }
 
 export function JobsBoard({ client }: { client?: { id: string; name: string; code: string } }) {
@@ -393,6 +517,9 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                                       })
                                     }
                                   />
+                                ) : null}
+                                {task.assigneeId && task.assigneeName && user?.role !== "external_customer" ? (
+                                  <TaskLogToggle jobId={job.id} taskId={task.id} person={task.assigneeName} />
                                 ) : null}
                                 {manageJobs && task.assigneeId && task.assigneeName ? (
                                   <AddTime person={task.assigneeName} activities={choices} activityCode={task.activityCode} onSave={(body) => act(`/jobs/${job.id}/tasks/${task.id}/time`, body)} />

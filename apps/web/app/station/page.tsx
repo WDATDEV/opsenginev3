@@ -1,11 +1,80 @@
 "use client";
 
-import Link from "next/link";
+// The check-in station: a stand-alone screen for shared warehouse iPads.
+// Staff scan a badge, check in or out with a tap, and run their tasks. It links to nothing else in Ops Engine.
+
 import { useEffect, useRef, useState } from "react";
 import { FloorGate } from "@/components/floor-access";
 import { Field, Notice } from "@/components/ui";
-import { ApiError, post, when } from "@/lib/api";
+import { api, ApiError, post, when } from "@/lib/api";
 import { badgeFromScan } from "@/lib/qr";
+
+// A shared iPad goes back to the scan screen when nobody touches it for this long.
+const IDLE_RESET_MS = 45_000;
+
+// Quick picks for why someone pauses. Keep in step with pauseReasons in packages/contracts.
+const PAUSE_REASONS = [
+  "Waiting for work",
+  "Waiting on a supervisor",
+  "Equipment or scanner problem",
+  "Restroom",
+  "Short break",
+  "Helping a coworker",
+  "Cleaning up",
+];
+
+function PauseReasonPicker({ saving, onPause, onCancel }: { saving: boolean; onPause: (reason: string) => void; onCancel: () => void }) {
+  const [picked, setPicked] = useState<string | null>(null);
+  const [other, setOther] = useState("");
+  const reason = (picked ?? other).trim();
+  return (
+    <div className="space-y-3">
+      <p className="text-center text-sm font-semibold">Why are you pausing?</p>
+      <div className="flex flex-wrap justify-center gap-2" role="radiogroup" aria-label="Pause reason">
+        {PAUSE_REASONS.map((item) => {
+          const on = picked === item;
+          return (
+            <button
+              key={item}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              onClick={() => {
+                setPicked(on ? null : item);
+                setOther("");
+              }}
+              className={`min-h-11 rounded-full border px-3.5 text-sm font-medium transition-colors ${
+                on ? "border-moss bg-moss text-paper" : "border-black/15 bg-white text-ink hover:border-moss"
+              }`}
+            >
+              {item}
+            </button>
+          );
+        })}
+      </div>
+      <input
+        className="field"
+        value={other}
+        maxLength={120}
+        autoComplete="off"
+        aria-label="Something else"
+        placeholder="Something else? Type it here"
+        onChange={(event) => {
+          setOther(event.target.value);
+          if (event.target.value) setPicked(null);
+        }}
+      />
+      <div className="grid grid-cols-2 gap-3">
+        <button className="btn btn-ghost tap min-h-14 text-base" type="button" disabled={saving} onClick={onCancel}>
+          Keep working
+        </button>
+        <button className="btn btn-primary tap min-h-14 text-base" type="button" disabled={saving || !reason} onClick={() => onPause(reason)}>
+          Pause
+        </button>
+      </div>
+    </div>
+  );
+}
 
 type Context = {
   employee: {
@@ -17,6 +86,16 @@ type Context = {
     clockedIn: boolean;
     onMeal: boolean;
   };
+  shift: {
+    clockIn: string;
+    mealStartedAt: string | null;
+    totalSeconds: number;
+    taskSeconds: number;
+    mealSeconds: number;
+    pausedSeconds: number;
+    pauses: { reason: string; seconds: number }[];
+    unaccountedSeconds: number;
+  } | null;
   task: {
     department: string;
     taskCode: string;
@@ -37,6 +116,8 @@ type Context = {
     jobId: string | null;
     jobReference: string | null;
     clientName: string | null;
+    pauseReason: string | null;
+    pausedAt: string | null;
   } | null;
   tasks: {
     id: string;
@@ -90,26 +171,6 @@ type Context = {
   gaylords: { id: string; code: string; carrier: string }[];
 };
 
-function readPosition() {
-  return new Promise<{ latitude: number; longitude: number; accuracy: number; capturedAt: number } | null>((resolve) => {
-    if (!navigator.geolocation) {
-      resolve(null);
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (position) =>
-        resolve({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracy: position.coords.accuracy,
-          capturedAt: position.timestamp,
-        }),
-      () => resolve(null),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
-    );
-  });
-}
-
 // Only work that records something on the floor gets a form while the timer runs.
 const RECORD_PANEL: Record<string, "packing" | "picking" | "receiving" | "unloading" | "sorting"> = {
   pack_orders: "packing",
@@ -140,28 +201,95 @@ function Elapsed({ since }: { since: string }) {
   return <>{`${pad(hours)}:${pad(minutes)}:${pad(seconds)}`}</>;
 }
 
-export default function WarehousePage() {
+function hoursLabel(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  return hours > 0 ? `${hours} h ${minutes % 60} min` : `${minutes} min`;
+}
+
+export default function StationPage() {
   return (
     <FloorGate>
-      <FloorPhone />
+      <SignedInWarning />
+      <Station />
     </FloorGate>
   );
 }
 
-function FloorPhone() {
+// A manager signs in once to approve the iPad. Left signed in, staff could open the rest of Ops Engine.
+function SignedInWarning() {
+  const [signedIn, setSignedIn] = useState(false);
+  useEffect(() => {
+    void api<{ signedIn?: boolean; approved: boolean }>("/tracking/floor-devices/me")
+      .then((me) => setSignedIn(Boolean(me.signedIn && me.approved)))
+      .catch(() => undefined);
+  }, []);
+  if (!signedIn) return null;
+  return (
+    <div className="mx-auto max-w-lg px-4 pt-4">
+      <Notice tone="warn">
+        Someone is signed in on this iPad. Sign out so staff only see the station.{" "}
+        <button
+          className="font-semibold underline"
+          type="button"
+          onClick={() => {
+            void post("/auth/logout", {}).finally(() => window.location.reload());
+          }}
+        >
+          Sign out
+        </button>
+      </Notice>
+    </div>
+  );
+}
+
+function Station() {
   const [badge, setBadge] = useState("");
   const [context, setContext] = useState<Context | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [confirmEnd, setConfirmEnd] = useState(false);
+  // Which task's End is waiting for "Yes, end": "current" for the running or paused one, or a task id.
+  const [confirmEnd, setConfirmEnd] = useState<string | null>(null);
+  const [confirmOut, setConfirmOut] = useState(false);
+  const [choosingPause, setChoosingPause] = useState(false);
+  const badgeInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!message) return;
-    const timer = setTimeout(() => setMessage(null), 6000);
+    const timer = setTimeout(() => setMessage(null), 8000);
     return () => clearTimeout(timer);
   }, [message]);
+
+  function reset() {
+    setContext(null);
+    setBadge("");
+    setConfirmEnd(null);
+    setConfirmOut(false);
+    setChoosingPause(false);
+    setError(null);
+  }
+
+  // Shared iPad: go back to the scan screen after a quiet spell, so the next person never sees someone else.
+  useEffect(() => {
+    if (!context) {
+      badgeInput.current?.focus();
+      return;
+    }
+    let timer = setTimeout(reset, IDLE_RESET_MS);
+    const touched = () => {
+      clearTimeout(timer);
+      timer = setTimeout(reset, IDLE_RESET_MS);
+    };
+    window.addEventListener("pointerdown", touched);
+    window.addEventListener("keydown", touched);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("pointerdown", touched);
+      window.removeEventListener("keydown", touched);
+    };
+  }, [context]);
   const [cameraOn, setCameraOn] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const scannerRef = useRef<{ stop: () => Promise<void>; clear: () => void } | null>(null);
@@ -203,7 +331,7 @@ function FloorPhone() {
           scanned.current = true;
           void stopCamera().then(() => {
             setBadge(code);
-            void load(code, true);
+            void load(code);
           });
         },
         () => undefined,
@@ -216,28 +344,13 @@ function FloorPhone() {
     }
   }
 
-  // When someone opens the phone with their badge, location mode needs the device at the warehouse.
-  async function arrive(nextBadge: string) {
-    // The server decides whether a location is needed. Check-in off, or QR gate mode, needs none.
-    const first = await post<{ needsLocation: boolean }>("/tracking/phone/arrive", { badge: nextBadge });
-    if (!first.needsLocation) return;
-    const fix = await readPosition();
-    if (!fix) throw new ApiError(400, "This device must share its location. A scan without it is not recorded.");
-    await post("/tracking/phone/arrive", {
-      badge: nextBadge,
-      latitude: fix.latitude,
-      longitude: fix.longitude,
-      accuracy: fix.accuracy,
-      capturedAt: fix.capturedAt,
-    });
-  }
-
-  async function load(nextBadge = badge, opening = false) {
+  async function load(nextBadge = badge) {
+    const code = badgeFromScan(nextBadge) ?? nextBadge.trim();
+    if (!code) return;
     setPending(true);
     setError(null);
     try {
-      if (opening) await arrive(nextBadge);
-      const result = await fetch(`/api/tracking/badge/${encodeURIComponent(nextBadge)}`).then(async (res) => {
+      const result = await fetch(`/api/tracking/badge/${encodeURIComponent(code)}`).then(async (res) => {
         const body = (await res.json()) as Context & { message?: string };
         if (!res.ok) throw new ApiError(res.status, body.message ?? "That badge is not on the floor.");
         return body;
@@ -270,9 +383,36 @@ function FloorPhone() {
     }
   }
 
-  async function finish() {
-    setConfirmEnd(false);
-    await run("/tracking/tasks/stop", { badge });
+  // Ends the running or paused task, or (with an id) any other task on their list without touching the clock.
+  async function finish(taskId?: string) {
+    setConfirmEnd(null);
+    await run("/tracking/tasks/stop", taskId ? { badge, taskId } : { badge });
+  }
+
+  function endConfirm(key: string, label: string, onYes: () => void) {
+    return (
+      <div className="mt-3 space-y-2">
+        <p className="text-center text-sm font-medium">{label}</p>
+        <div className="grid grid-cols-2 gap-3">
+          <button className="btn btn-ghost tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setConfirmEnd(null)}>
+            Keep it open
+          </button>
+          <button className="btn btn-primary tap min-h-14 text-base" type="button" disabled={saving} aria-label={`Yes, end ${key}`} onClick={onYes}>
+            Yes, end
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  async function checkOut() {
+    setConfirmOut(false);
+    const done = await run("/tracking/clock", { badge, action: "out" });
+    // Checked out: hand the iPad back to the next person, and keep the summary message on screen.
+    if (done) {
+      setContext(null);
+      setBadge("");
+    }
   }
 
   function startTask(item: Context["tasks"][number]) {
@@ -308,15 +448,12 @@ function FloorPhone() {
           : wanted;
 
   return (
-    <main className={`mx-auto min-h-screen max-w-lg px-4 py-6 ${working || paused ? "pb-40" : ""}`}>
-      <div className="mb-5 flex items-center justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-moss">Floor phone</p>
-          <h1 className="text-2xl font-semibold">{working ? "You're working" : paused ? "You're paused" : "Your tasks"}</h1>
-        </div>
-        <Link className="text-sm text-moss" href="/gate">
-          QR gate
-        </Link>
+    <main className="mx-auto min-h-screen max-w-lg px-4 py-6 pb-10">
+      <div className="mb-5">
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-moss">Check-in station</p>
+        <h1 className="text-2xl font-semibold">
+          {!context ? "Scan your badge" : !checkedIn ? "Welcome" : working ? "You're working" : paused ? "You're paused" : "You're on shift"}
+        </h1>
       </div>
       {message ? <div className="mb-3"><Notice tone="ok">{message}</Notice></div> : null}
       {error ? <div className="mb-3"><Notice tone="bad">{error}</Notice></div> : null}
@@ -325,7 +462,7 @@ function FloorPhone() {
           className="card space-y-4 p-4"
           onSubmit={(event) => {
             event.preventDefault();
-            void load(badge, true);
+            void load(badge);
           }}
         >
           <div id="floor-qr-reader" className="overflow-hidden rounded-xl bg-black/5" />
@@ -339,11 +476,13 @@ function FloorPhone() {
               Scan my QR code
             </button>
           )}
-          <p className="text-center text-sm text-muted">or type the badge</p>
+          <p className="text-center text-sm text-muted">or use the scanner, or type the badge</p>
           <Field label="Badge">
             <input
+              ref={badgeInput}
               className="field font-mono text-lg"
               value={badge}
+              autoComplete="off"
               onChange={(event) => setBadge(event.target.value)}
               placeholder="Badge"
             />
@@ -370,27 +509,90 @@ function FloorPhone() {
                 {context.checkout ? <span className="text-muted">holding {context.checkout}</span> : null}
               </p>
             </div>
-            <button
-              className="btn btn-ghost shrink-0"
-              type="button"
-              onClick={() => {
-                setContext(null);
-                setConfirmEnd(false);
-              }}
-            >
-              Not you?
+            <button className="btn btn-ghost shrink-0" type="button" onClick={reset}>
+              {checkedIn ? "Done" : "Not you?"}
             </button>
           </section>
 
           {!checkedIn ? (
-            <section className="card space-y-2 border-rust/30 p-4">
-              <p className="font-medium">Check in before you start</p>
-              <p className="text-sm text-muted">
-                Time only counts after a scan at the QR gate. Once you are checked in, come back here.
-              </p>
-              <Link className="btn btn-primary tap w-full" href="/gate">
-                Open the QR gate
-              </Link>
+            <section className="card space-y-3 p-4">
+              <p className="font-medium">You are off shift</p>
+              <p className="text-sm text-muted">Check in to start your time. Everything you do counts from here until you check out.</p>
+              <button
+                className="btn btn-primary tap min-h-16 w-full text-lg"
+                type="button"
+                disabled={saving}
+                onClick={() => void run("/tracking/clock", { badge, action: "in" })}
+              >
+                Check in
+              </button>
+            </section>
+          ) : null}
+
+          {checkedIn && context.shift ? (
+            <section className="card space-y-3 p-4">
+              <div className="flex items-end justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">On shift since {when(context.shift.clockIn)}</p>
+                  <p className="mt-1 font-mono text-4xl font-semibold tabular-nums">
+                    <Elapsed since={context.shift.clockIn} />
+                  </p>
+                </div>
+              </div>
+              <dl className="grid grid-cols-2 gap-2 text-center text-sm sm:grid-cols-4">
+                <div className="rounded-lg bg-moss/10 px-2 py-2">
+                  <dt className="text-xs text-muted">On tasks</dt>
+                  <dd className="font-semibold">{hoursLabel(context.shift.taskSeconds)}</dd>
+                </div>
+                <div className="rounded-lg bg-clay/10 px-2 py-2">
+                  <dt className="text-xs text-muted">Paused</dt>
+                  <dd className="font-semibold">{hoursLabel(context.shift.pausedSeconds)}</dd>
+                </div>
+                <div className="rounded-lg bg-clay/10 px-2 py-2">
+                  <dt className="text-xs text-muted">Meal</dt>
+                  <dd className="font-semibold">{hoursLabel(context.shift.mealSeconds)}</dd>
+                </div>
+                <div className="rounded-lg bg-black/[0.05] px-2 py-2">
+                  <dt className="text-xs text-muted">Unaccounted</dt>
+                  <dd className="font-semibold">{hoursLabel(context.shift.unaccountedSeconds)}</dd>
+                </div>
+              </dl>
+              {context.shift.pauses.length > 0 ? (
+                <p className="text-xs text-muted">
+                  Paused for: {context.shift.pauses.map((item) => `${item.reason} ${hoursLabel(item.seconds)}`).join(" · ")}
+                </p>
+              ) : null}
+              {confirmOut ? (
+                <div className="space-y-2">
+                  <p className="text-center text-sm font-medium">
+                    {working || paused ? "Check out now? Your current task ends and is saved." : "Check out now and end your shift?"}
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button className="btn btn-ghost tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setConfirmOut(false)}>
+                      Stay on shift
+                    </button>
+                    <button className="btn btn-warn tap min-h-14 text-base" type="button" disabled={saving} onClick={() => void checkOut()}>
+                      Yes, check out
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className={`grid gap-3 ${onMeal ? "grid-cols-1" : "grid-cols-2"}`}>
+                  {!onMeal ? (
+                    <button
+                      className="btn btn-ghost tap min-h-14 text-base"
+                      type="button"
+                      disabled={saving}
+                      onClick={() => void run("/tracking/clock", { badge, action: "meal_start" })}
+                    >
+                      Start meal break
+                    </button>
+                  ) : null}
+                  <button className="btn btn-warn tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setConfirmOut(true)}>
+                    Check out
+                  </button>
+                </div>
+              )}
             </section>
           ) : null}
 
@@ -429,6 +631,30 @@ function FloorPhone() {
                   </p>
                 ) : null}
                 <p className="text-sm text-muted">Total time on this task</p>
+                {choosingPause ? (
+                  <div className="pt-3">
+                    <PauseReasonPicker
+                      saving={saving}
+                      onCancel={() => setChoosingPause(false)}
+                      onPause={(reason) => {
+                        void run("/tracking/tasks/pause", { badge, reason }).then((done) => {
+                          if (done) setChoosingPause(false);
+                        });
+                      }}
+                    />
+                  </div>
+                ) : confirmEnd === "current" ? (
+                  endConfirm(working.activityName, "End this task and save its time?", () => void finish())
+                ) : (
+                  <div className="grid grid-cols-2 gap-3 pt-3">
+                    <button className="btn btn-ghost tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setChoosingPause(true)}>
+                      Pause
+                    </button>
+                    <button className="btn btn-primary tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setConfirmEnd("current")}>
+                      End
+                    </button>
+                  </div>
+                )}
               </div>
             </section>
           ) : null}
@@ -436,8 +662,11 @@ function FloorPhone() {
           {checkedIn && !onMeal && paused ? (
             <section className="card overflow-hidden">
               <div className="bg-clay px-4 py-4 text-paper">
-                <p className="text-xs font-semibold uppercase tracking-[0.16em]">Paused</p>
-                <p className="mt-1 text-lg font-semibold">The timer is stopped</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em]">
+                  Paused{paused.pausedAt ? ` for ` : ""}
+                  {paused.pausedAt ? <Elapsed since={paused.pausedAt} /> : null}
+                </p>
+                <p className="mt-1 text-lg font-semibold">{paused.pauseReason ?? "The task timer is stopped"}</p>
               </div>
               <div className="space-y-1 p-4">
                 <p className="text-lg font-semibold">{paused.activityName}</p>
@@ -449,8 +678,20 @@ function FloorPhone() {
                 ) : null}
                 <p className="text-sm text-muted">
                   {spentLabel(paused.spentSeconds) ? `${spentLabel(paused.spentSeconds)} on this task so far. ` : ""}
-                  Resume to keep counting, or switch to another task below.
+                  Resume to keep counting, or start another task below.
                 </p>
+                {confirmEnd === "current" ? (
+                  endConfirm(paused.activityName, "End this task and save its time?", () => void finish())
+                ) : (
+                  <div className="grid grid-cols-2 gap-3 pt-3">
+                    <button className="btn btn-primary tap min-h-14 text-base" type="button" disabled={saving} onClick={() => void run("/tracking/tasks/resume", { badge })}>
+                      Resume
+                    </button>
+                    <button className="btn btn-ghost tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setConfirmEnd("current")}>
+                      End
+                    </button>
+                  </div>
+                )}
               </div>
             </section>
           ) : null}
@@ -474,7 +715,7 @@ function FloorPhone() {
             <section aria-label="Your tasks">
               {busy ? (
                 <p className="mb-2 text-sm font-semibold">
-                  Your other tasks <span className="font-normal text-muted">· switching pauses the current one</span>
+                  Your other tasks <span className="font-normal text-muted">· starting one pauses the current one</span>
                 </p>
               ) : null}
               {myTasks.length === 0 && internalWork.length === 0 ? (
@@ -503,16 +744,37 @@ function FloorPhone() {
                       ) : null}
                       {item.blocked ? (
                         <p className="mt-3 rounded-lg bg-black/[0.04] px-3 py-2.5 text-center text-sm font-medium text-muted">Waiting on an earlier task</p>
+                      ) : confirmEnd === item.id ? (
+                        endConfirm(
+                          item.title,
+                          spentLabel(item.spentSeconds) ? `End ${item.title}? Its ${spentLabel(item.spentSeconds)} stays saved.` : `End ${item.title} without starting it?`,
+                          () => void finish(item.id),
+                        )
                       ) : (
-                        <button
-                          className={`btn tap mt-3 min-h-14 w-full text-base ${busy ? "btn-ghost" : "btn-primary"}`}
-                          type="button"
-                          disabled={saving}
-                          aria-label={`${busy ? "Switch to" : "Start"} ${item.title}`}
-                          onClick={() => startTask(item)}
-                        >
-                          {busy ? "Switch to this task" : spentLabel(item.spentSeconds) ? "Continue" : "Start"}
-                        </button>
+                        // One clock per person: Start or Resume here pauses whatever is running, so time is never counted twice.
+                        <div className={`mt-3 grid gap-3 ${item.fromJob ? "grid-cols-1" : "grid-cols-2"}`}>
+                          <button
+                            className={`btn tap min-h-14 text-base ${busy ? "btn-ghost" : "btn-primary"}`}
+                            type="button"
+                            disabled={saving}
+                            aria-label={`${spentLabel(item.spentSeconds) ? "Resume" : "Start"} ${item.title}`}
+                            onClick={() => startTask(item)}
+                          >
+                            {spentLabel(item.spentSeconds) ? "Resume" : "Start"}
+                          </button>
+                          {/* Crew work has no task record of its own, so it ends from its timer card once started. */}
+                          {!item.fromJob ? (
+                            <button
+                              className="btn btn-ghost tap min-h-14 text-base"
+                              type="button"
+                              disabled={saving}
+                              aria-label={`End ${item.title}`}
+                              onClick={() => setConfirmEnd(item.id)}
+                            >
+                              End
+                            </button>
+                          ) : null}
+                        </div>
                       )}
                     </li>
                   ))}
@@ -537,45 +799,6 @@ function FloorPhone() {
           ) : null}
         </div>
       )}
-      {context && checkedIn && !onMeal && (working || paused) ? (
-        <div className="fixed inset-x-0 bottom-0 z-10 border-t border-black/10 bg-paper/95 px-4 pb-5 pt-3 backdrop-blur">
-          <div className="mx-auto max-w-lg space-y-2">
-            {working && !confirmEnd ? (
-              <div className="grid grid-cols-2 gap-3">
-                <button className="btn btn-ghost tap min-h-14 text-base" type="button" disabled={saving} onClick={() => void run("/tracking/tasks/pause", { badge })}>
-                  Pause
-                </button>
-                <button className="btn btn-primary tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setConfirmEnd(true)}>
-                  End
-                </button>
-              </div>
-            ) : null}
-            {paused && !confirmEnd ? (
-              <div className="grid grid-cols-2 gap-3">
-                <button className="btn btn-primary tap min-h-14 text-base" type="button" disabled={saving} onClick={() => void run("/tracking/tasks/resume", { badge })}>
-                  Resume
-                </button>
-                <button className="btn btn-ghost tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setConfirmEnd(true)}>
-                  End
-                </button>
-              </div>
-            ) : null}
-            {(working || paused) && confirmEnd ? (
-              <>
-                <p className="text-center text-sm font-medium">End now and save this time on the project?</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <button className="btn btn-ghost tap min-h-14 text-base" type="button" disabled={saving} onClick={() => setConfirmEnd(false)}>
-                    Keep going
-                  </button>
-                  <button className="btn btn-primary tap min-h-14 text-base" type="button" disabled={saving} onClick={() => void finish()}>
-                    Yes, end
-                  </button>
-                </div>
-              </>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
     </main>
   );
 }

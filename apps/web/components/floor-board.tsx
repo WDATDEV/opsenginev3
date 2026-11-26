@@ -390,12 +390,10 @@ function PersonRow({ person, now }: { person: Person; now: number }) {
       : task
         ? capitalize(task.department)
         : status === "idle"
-          ? person.entry === "qr"
-            ? `Checked in at ${person.entryPlace ?? "the QR gate"}`
-            : "Clocked in, no task yet"
+          ? "Checked in, no task yet (unaccounted)"
           : `Home: ${capitalize(person.departmentHome)}`;
   const context = status === "working" ? where || "Not on a client job" : status === "off" ? null : `Home: ${capitalize(person.departmentHome)}`;
-  const extras = [person.place, status === "working" && person.entryPlace ? `In at ${person.entryPlace}` : null].filter(Boolean).join(" · ");
+  const extras = [person.place].filter(Boolean).join(" · ");
 
   return (
     <li className={`grid grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-4 py-3 sm:grid-cols-[2.5rem_minmax(0,1fr)_minmax(0,1.3fr)_8rem] sm:px-5 ${status === "off" ? "text-ink/70" : ""}`}>

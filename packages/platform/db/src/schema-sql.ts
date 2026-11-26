@@ -506,6 +506,7 @@ CREATE TABLE IF NOT EXISTS tracking.activity_segments (
 ALTER TABLE tracking.activity_segments ADD COLUMN IF NOT EXISTS job_id uuid;
 ALTER TABLE tracking.activity_segments ADD COLUMN IF NOT EXISTS activity_id uuid;
 ALTER TABLE tracking.activity_segments ADD COLUMN IF NOT EXISTS end_reason text;
+ALTER TABLE tracking.activity_segments ADD COLUMN IF NOT EXISTS pause_reason text;
 
 CREATE UNIQUE INDEX IF NOT EXISTS segments_one_open
   ON tracking.activity_segments (employee_id) WHERE ended_at IS NULL;

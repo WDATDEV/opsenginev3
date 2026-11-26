@@ -33,7 +33,13 @@ export class FloorDevicesController {
   async me(@Req() req: Request) {
     const device = await this.devices.find(deviceToken(req));
     const principal = (req as unknown as AuthedRequest).user;
-    return { allowed: floorAllowed({ deviceApproved: Boolean(device), principal }), approved: Boolean(device), name: device?.name ?? null };
+    return {
+      allowed: floorAllowed({ deviceApproved: Boolean(device), principal }),
+      approved: Boolean(device),
+      name: device?.name ?? null,
+      // The station warns when someone is signed in on it, so staff cannot reach the rest of the app.
+      signedIn: Boolean(principal),
+    };
   }
 
   @Get()

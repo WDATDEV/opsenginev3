@@ -1,5 +1,5 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { and, asc, desc, eq, gte, isNull, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import type { Principal } from "@opsengine/kernel";
 import { can } from "@opsengine/kernel";
 import type { Database } from "@opsengine/db";
@@ -11,8 +11,6 @@ import {
   deviceCheckouts,
   devices,
   employees,
-  gateConfig,
-  gatePlaces,
   gaylords,
   jobAssignees,
   jobs,
@@ -25,7 +23,6 @@ import {
   shifts,
   shipmentWorkers,
   shipments,
-  site,
   sortScans,
   stationSessions,
   tasks,
@@ -34,7 +31,6 @@ import {
   TrackingError,
   assertBillableJob,
   assertCanJoinShipment,
-  assertDeviceLocation,
   assertCrewSource,
   assertSortPlacement,
   normalizeDevice,
@@ -45,17 +41,23 @@ import {
   trackingPolicy,
   type Department,
 } from "@opsengine/tracking";
-import type { ClientService, GateMode } from "@opsengine/contracts";
+import type { ClientService } from "@opsengine/contracts";
 import { assertClientService, enabledServiceList } from "../clients/access.js";
 import { DbService } from "../db.service.js";
 import { jobWorkCodes, workFitsJob } from "./job-work.js";
+import { shiftTime } from "./shift-time.js";
 
 type Conn = Database;
 type Employee = typeof employees.$inferSelect;
 type Device = typeof devices.$inferSelect;
 
 const SCHEDULE_WINDOW_MS = 12 * 60 * 60 * 1000;
-const DEFAULT_GATE_PLACES = ["Front gate", "Dock", "Packing", "Picking", "Receiving", "Unloading", "Sorting"];
+
+function hoursLabel(seconds: number) {
+  const minutes = Math.round(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  return hours > 0 ? `${hours} h ${minutes % 60} min` : `${minutes} min`;
+}
 
 function stintDisplayStart(
   rows: { jobId: string | null; taskCode: string; startedAt: Date; endedAt: Date | null; endReason: string | null }[],
@@ -350,7 +352,10 @@ export class TrackingService {
         jobId: string | null;
         department: string;
         startedAt: Date;
+        endedAt?: Date | null;
         note?: string | null;
+        pauseReason?: string | null;
+        endReason?: string | null;
       }) => {
         const job = row.jobId ? jobById.get(row.jobId) : null;
         const spent = row.note
@@ -368,6 +373,9 @@ export class TrackingService {
           jobId: row.jobId,
           jobReference: job?.reference ?? null,
           clientName: job ? clientNameById.get(job.clientId) ?? null : null,
+          // Only set on a paused task: why, and since when.
+          pauseReason: row.endReason === "pause" ? row.pauseReason ?? null : null,
+          pausedAt: row.endReason === "pause" ? row.endedAt ?? null : null,
         };
       };
       const completedCodesByJob = new Map<string, Set<string>>();
@@ -429,6 +437,7 @@ export class TrackingService {
           }));
         });
 
+      const shiftMeals = shift ? await tx.select().from(breaks).where(eq(breaks.shiftId, shift.id)) : [];
       return {
         employee: {
           id: employee.id,
@@ -440,6 +449,18 @@ export class TrackingService {
           clockedIn: Boolean(shift),
           onMeal: Boolean(meal),
         },
+        shift: shift
+          ? {
+              clockIn: shift.clockIn,
+              mealStartedAt: meal?.startedAt ?? null,
+              ...shiftTime(
+                shift,
+                employeeSegments.filter((row) => row.shiftId === shift.id),
+                shiftMeals,
+                now,
+              ),
+            }
+          : null,
         task: segment ? describe(segment) : null,
         paused: paused ? describe(paused) : null,
         tasks: [
@@ -567,6 +588,7 @@ export class TrackingService {
     });
   }
 
+  /** Today's shifts, each split into time on tasks, meal breaks, and unaccounted (dead) time. */
   async checkins() {
     const orm = this.db.db;
     const start = new Date();
@@ -580,219 +602,36 @@ export class TrackingService {
         clockIn: shifts.clockIn,
         clockOut: shifts.clockOut,
         source: shifts.source,
-        clockInPlace: shifts.clockInPlace,
-        clockInLat: shifts.clockInLat,
-        clockInLng: shifts.clockInLng,
-        clockOutPlace: shifts.clockOutPlace,
-        clockOutLat: shifts.clockOutLat,
-        clockOutLng: shifts.clockOutLng,
         clientId: employees.clientId,
       })
       .from(shifts)
       .innerJoin(employees, eq(employees.id, shifts.employeeId))
       .where(or(isNull(shifts.clockOut), gte(shifts.clockIn, start), gte(shifts.clockOut, start)))
       .orderBy(desc(shifts.clockIn));
-    const refusedRows = await orm
-      .select()
-      .from(activity)
-      .where(eq(activity.action, "tracking.location_refused"))
-      .orderBy(desc(activity.createdAt))
-      .limit(20);
+    const ids = rows.map((row) => row.id);
+    const [segmentRows, mealRows] = ids.length
+      ? await Promise.all([
+          orm.select().from(segments).where(inArray(segments.shiftId, ids)),
+          orm.select().from(breaks).where(inArray(breaks.shiftId, ids)),
+        ])
+      : [[], []];
+    const now = new Date();
     return {
-      visits: rows,
-      refused: refusedRows.map((row) => ({
-        at: row.createdAt,
-        text:
-          row.after && typeof row.after === "object" && "summary" in row.after && typeof row.after.summary === "string"
-            ? row.after.summary
-            : "A location check was refused.",
+      visits: rows.map((row) => ({
+        ...row,
+        time: shiftTime(
+          row,
+          segmentRows.filter((item) => item.shiftId === row.id),
+          mealRows.filter((item) => item.shiftId === row.id),
+          now,
+        ),
       })),
     };
   }
 
-  private async gateMode(): Promise<GateMode> {
-    const [row] = await this.db.db.select().from(gateConfig).limit(1);
-    return row?.mode === "qr_gate" ? "qr_gate" : "location";
-  }
-
-  private async gatePlaceNames() {
-    const orm = this.db.db;
-    let rows = await orm.select().from(gatePlaces).orderBy(asc(gatePlaces.createdAt), asc(gatePlaces.name));
-    if (rows.length === 0) {
-      const base = Date.now();
-      await orm
-        .insert(gatePlaces)
-        .values(DEFAULT_GATE_PLACES.map((name, index) => ({ name, createdAt: new Date(base + index) })))
-        .onConflictDoNothing();
-      rows = await orm.select().from(gatePlaces).orderBy(asc(gatePlaces.createdAt), asc(gatePlaces.name));
-    }
-    return rows;
-  }
-
-  async gateStatus() {
-    const mode = await this.gateMode();
-    const [row] = await this.db.db.select({ id: site.id }).from(site).limit(1);
-    const places = await this.gatePlaceNames();
-    return {
-      mode,
-      ready: mode === "qr_gate" || Boolean(row),
-      locationCheck: mode === "location" ? ("on" as const) : ("off" as const),
-      places: places.map((place) => ({ id: place.id, name: place.name })),
-    };
-  }
-
-  async setGateMode(mode: GateMode) {
-    await this.inTx(async (tx) => {
-      await tx
-        .insert(gateConfig)
-        .values({ id: 1, mode })
-        .onConflictDoUpdate({ target: gateConfig.id, set: { mode, updatedAt: new Date() } });
-      await this.audit(
-        tx,
-        null,
-        "tracking.gate_mode",
-        "gate",
-        "gate",
-        mode === "qr_gate"
-          ? "Check-in method set to the QR gate. The floor phone only checks that a person is checked in."
-          : "Check-in method set to location. Devices must be at the warehouse.",
-      );
-    });
-    return this.gateStatus();
-  }
-
-  async addGatePlace(name: string) {
-    const label = name.trim().replace(/\s+/g, " ");
-    const existing = await this.gatePlaceNames();
-    if (existing.some((place) => place.name.toLowerCase() === label.toLowerCase())) {
-      throw new TrackingError(`"${label}" is already a gate location.`);
-    }
-    await this.db.db.insert(gatePlaces).values({ name: label });
-    return this.gateStatus();
-  }
-
-  async removeGatePlace(id: string) {
-    const existing = await this.gatePlaceNames();
-    if (!existing.some((place) => place.id === id)) throw new TrackingError("That gate location is not on the list.");
-    if (existing.length <= 1) throw new TrackingError("Keep at least one gate location.");
-    await this.db.db.delete(gatePlaces).where(eq(gatePlaces.id, id));
-    return this.gateStatus();
-  }
-
-  /**
-   * Floor phone entry. In location mode the device must be at the warehouse, and that
-   * also checks the person in. In QR gate mode nothing is checked here: the person
-   * must already be checked in at the gate.
-   */
-  async phoneArrive(input: {
-    badge: string;
-    latitude?: number;
-    longitude?: number;
-    accuracy?: number;
-    capturedAt?: number;
-  }) {
-    const mode = await this.gateMode();
-    const orm = this.db.db;
-    const [employee] = await orm
-      .select()
-      .from(employees)
-      .where(eq(employees.badgeCode, clean(input.badge)))
-      .limit(1);
-    if (!employee || !employee.active) throw new TrackingError("That badge is not on the floor.");
-    const open = await this.openShift(orm, employee.id);
-    // A client with the Check-in service turned off has no gate and no location check.
-    let checkinOff = false;
-    if (employee.clientId) {
-      const [client] = await orm
-        .select({ enabledServices: clientRecords.enabledServices })
-        .from(clientRecords)
-        .where(eq(clientRecords.id, employee.clientId))
-        .limit(1);
-      checkinOff = Boolean(client) && !(client?.enabledServices ?? []).includes("checkin");
-    }
-    if (checkinOff) {
-      if (open) return { mode, checkedIn: true, needsLocation: false, message: `${employee.name} is on the clock.` };
-      const result = await this.clock(input.badge, "in", "kiosk", { place: "Floor phone" });
-      return { mode, checkedIn: true, needsLocation: false, message: result.message };
-    }
-    if (mode === "qr_gate") {
-      return {
-        mode,
-        checkedIn: Boolean(open),
-        needsLocation: false,
-        message: open ? `${employee.name} is checked in.` : `${employee.name} is not checked in. Use the QR gate first.`,
-      };
-    }
-    // Location mode. With no position yet, tell the phone to read one and ask again.
-    if (input.latitude == null && input.longitude == null && input.accuracy == null && input.capturedAt == null) {
-      return { mode, checkedIn: Boolean(open), needsLocation: true, message: "This device must share its location." };
-    }
-    await this.requireDeviceAtWarehouse(input.badge, "in", input, "floor phone");
-    if (open) return { mode, checkedIn: true, needsLocation: false, message: `${employee.name} is checked in.` };
-    const result = await this.clock(input.badge, "in", "kiosk", { ...input, place: "Floor phone" });
-    return { mode, checkedIn: true, needsLocation: false, message: result.message };
-  }
-
-  async readSite() {
-    const [row] = await this.db.db.select().from(site).limit(1);
-    if (!row) return { site: null };
-    return {
-      site: {
-        latitude: row.latitude,
-        longitude: row.longitude,
-        radiusMeters: row.radiusMeters,
-        updatedAt: row.updatedAt,
-      },
-    };
-  }
-
-  async saveSite(input: { latitude: number; longitude: number; radiusMeters: number }) {
-    return this.inTx(async (tx) => {
-      await tx.delete(site);
-      const [row] = await tx
-        .insert(site)
-        .values({
-          latitude: input.latitude,
-          longitude: input.longitude,
-          radiusMeters: input.radiusMeters,
-        })
-        .returning();
-      if (!row) throw new TrackingError("Could not save the warehouse location.");
-      await this.audit(tx, null, "tracking.site_set", "site", row.id, "The warehouse location check was set.");
-      return {
-        site: {
-          latitude: row.latitude,
-          longitude: row.longitude,
-          radiusMeters: row.radiusMeters,
-          updatedAt: row.updatedAt,
-        },
-      };
-    });
-  }
-
-  async clock(
-    badge: string,
-    action: "in" | "out" | "meal_start" | "meal_end",
-    source: "kiosk" | "qr" = "kiosk",
-    where?: {
-      place?: string;
-      latitude?: number;
-      longitude?: number;
-      accuracy?: number;
-      capturedAt?: number;
-    },
-  ) {
-    if (source === "qr" && (action === "in" || action === "out")) {
-      const places = await this.gatePlaceNames();
-      const place = where?.place?.trim();
-      if (place && !places.some((item) => item.name === place)) {
-        throw new TrackingError("Choose a gate location from the list.");
-      }
-      if ((await this.gateMode()) === "location") {
-        await this.requireDeviceAtWarehouse(badge, action, where, "QR");
-      }
-    }
-    const result = await this.clockInTx(badge, action, source, where);
+  /** Check in, check out, and meal breaks from the check-in station. No location is read or stored. */
+  async clock(badge: string, action: "in" | "out" | "meal_start" | "meal_end") {
+    const result = await this.clockInTx(badge, action);
     if (action === "in" || action === "meal_end") {
       const employee = await this.db.db.select().from(employees).where(eq(employees.badgeCode, clean(badge))).limit(1);
       if (employee[0]) await this.startScheduled(employee[0].id);
@@ -800,97 +639,42 @@ export class TrackingService {
     return result;
   }
 
-  private async clockInTx(
-    badge: string,
-    action: "in" | "out" | "meal_start" | "meal_end",
-    source: "kiosk" | "qr",
-    where?: {
-      place?: string;
-      latitude?: number;
-      longitude?: number;
-      accuracy?: number;
-      capturedAt?: number;
-    },
-  ) {
+  private async clockInTx(badge: string, action: "in" | "out" | "meal_start" | "meal_end") {
     return this.inTx(async (tx) => {
       const employee = await this.employeeByBadge(tx, badge);
       const shift = await this.openShift(tx, employee.id);
       const now = new Date();
-      const arrived = source === "qr" ? "checked in" : "clocked in";
-      const left = source === "qr" ? "checked out" : "clocked out";
-      const place = where?.place?.trim();
-      const latitude = where?.latitude;
-      const longitude = where?.longitude;
-      const accuracy = where?.accuracy;
-      if (source === "qr" && (action === "in" || action === "out") && !place) {
-        throw new TrackingError("Choose the gate location before scanning.");
-      }
-      if ((latitude == null) !== (longitude == null)) {
-        throw new TrackingError("A map position needs both latitude and longitude.");
-      }
-      const at = place ? ` at ${place}` : "";
 
       if (action === "in") {
-        if (shift) throw new TrackingError(`${employee.name} is already ${arrived}.`);
-        await tx.insert(shifts).values({
-          employeeId: employee.id,
-          clockIn: now,
-          source,
-          clockInPlace: place ?? null,
-          clockInLat: latitude ?? null,
-          clockInLng: longitude ?? null,
-          clockInAccuracy: accuracy ?? null,
-        });
-        await this.audit(
-          tx,
-          employee.id,
-          "tracking.clock_in",
-          "employee",
-          employee.id,
-          source === "qr" ? `${employee.name} checked in by QR${at}.` : `${employee.name} clocked in${at}.`,
-        );
-        return {
-          message: `${employee.name} is ${arrived}${at}.`,
-          name: employee.name,
-          badgeCode: employee.badgeCode,
-          action,
-          place: place ?? null,
-        };
+        if (shift) throw new TrackingError(`${employee.name} is already checked in.`);
+        await tx.insert(shifts).values({ employeeId: employee.id, clockIn: now, source: "station" });
+        await this.audit(tx, employee.id, "tracking.clock_in", "employee", employee.id, `${employee.name} checked in at the station.`);
+        return { message: `${employee.name} is checked in. Your time is running.`, name: employee.name, badgeCode: employee.badgeCode, action };
       }
 
-      if (!shift) {
-        throw new TrackingError(
-          `${employee.name} is not ${source === "qr" ? "checked in" : "clocked in"}.`,
-        );
-      }
+      if (!shift) throw new TrackingError(`${employee.name} is not checked in.`);
 
       if (action === "out") {
         const meal = await this.openBreak(tx, shift.id);
         if (meal) {
           await tx.update(breaks).set({ endedAt: now }).where(eq(breaks.id, meal.id));
         }
-        await tx.update(shifts).set({
-          clockOut: now,
-          clockOutPlace: place ?? null,
-          clockOutLat: latitude ?? null,
-          clockOutLng: longitude ?? null,
-          clockOutAccuracy: accuracy ?? null,
-        }).where(eq(shifts.id, shift.id));
+        await tx.update(shifts).set({ clockOut: now }).where(eq(shifts.id, shift.id));
         await this.closeOpenWork(tx, employee.id, now);
-        await this.audit(
-          tx,
-          employee.id,
-          "tracking.clock_out",
-          "employee",
-          employee.id,
-          source === "qr" ? `${employee.name} checked out by QR${at}.` : `${employee.name} clocked out${at}.`,
-        );
+        const [segmentRows, mealRows] = await Promise.all([
+          tx.select().from(segments).where(eq(segments.shiftId, shift.id)),
+          tx.select().from(breaks).where(eq(breaks.shiftId, shift.id)),
+        ]);
+        const time = shiftTime({ clockIn: shift.clockIn, clockOut: now }, segmentRows, mealRows, now);
+        await this.audit(tx, employee.id, "tracking.clock_out", "employee", employee.id, `${employee.name} checked out at the station.`);
         return {
-          message: `${employee.name} is ${left}${at}.`,
+          message: `${employee.name} is checked out. Shift ${hoursLabel(time.totalSeconds)}, on tasks ${hoursLabel(time.taskSeconds)}${
+            time.pausedSeconds > 0 ? `, paused ${hoursLabel(time.pausedSeconds)}` : ""
+          }, unaccounted ${hoursLabel(time.unaccountedSeconds)}.`,
           name: employee.name,
           badgeCode: employee.badgeCode,
           action,
-          place: place ?? null,
+          time,
         };
       }
 
@@ -974,7 +758,10 @@ export class TrackingService {
     });
   }
 
-  async pauseTask(badge: string) {
+  /** Pauses the running task. The reason is kept, and the paused time is tracked until the next task, meal, or check-out. */
+  async pauseTask(badge: string, reason: string) {
+    const why = reason.trim().replace(/\s+/g, " ").slice(0, 120);
+    if (!why) throw new TrackingError("Say why you are pausing.");
     return this.inTx(async (tx) => {
       const employee = await this.employeeByBadge(tx, badge);
       await this.requireReady(tx, employee);
@@ -982,16 +769,16 @@ export class TrackingService {
       const plan = planPause({ open: open ? { id: open.id } : null });
       if (!plan.ok) throw new TrackingError(plan.reason);
       const now = new Date();
-      await tx.update(segments).set({ endedAt: now, endReason: "pause" }).where(eq(segments.id, plan.closeId));
+      await tx.update(segments).set({ endedAt: now, endReason: "pause", pauseReason: why }).where(eq(segments.id, plan.closeId));
       await this.audit(
         tx,
         employee.id,
         "tracking.task_paused",
         "activity_segment",
         plan.closeId,
-        `${employee.name} paused ${open?.taskCode ?? "the current task"}.`,
+        `${employee.name} paused ${open?.taskCode ?? "the current task"}: ${why}.`,
       );
-      return { message: `${employee.name} paused. The time already recorded stays on the job.` };
+      return { message: `${employee.name} paused: ${why}. Paused time is being tracked.` };
     });
   }
 
@@ -1394,6 +1181,48 @@ export class TrackingService {
       if (!created) throw new TrackingError("Could not add that employee.");
       return created;
     });
+  }
+
+  /** Changes name, badge, and the work someone may do. Work already running is left alone; the new list applies to the next switch. */
+  async updateEmployee(principal: Principal, id: string, input: { name: string; badgeCode: string; departments: Department[] }) {
+    const allowed = [...new Set(input.departments)];
+    if (allowed.length === 0) throw new TrackingError("Choose at least one kind of work.");
+    const badgeCode = clean(input.badgeCode);
+    const employee = await this.employeeById(this.db.db as unknown as Conn, id);
+    if (employee.clientId) {
+      for (const department of allowed) {
+        if (department !== "indirect") await assertClientService(this.db.db, employee.clientId, department);
+      }
+    }
+    try {
+      return await this.db.db.transaction(async (raw) => {
+        const tx = raw as unknown as Conn;
+        if (badgeCode !== employee.badgeCode) {
+          const [taken] = await tx.select({ id: employees.id }).from(employees).where(eq(employees.badgeCode, badgeCode)).limit(1);
+          if (taken && taken.id !== employee.id) throw new TrackingError("That badge is already used by someone else.");
+        }
+        const departmentHome = allowed.includes(employee.departmentHome as Department) ? employee.departmentHome : allowed[0]!;
+        const [updated] = await tx
+          .update(employees)
+          .set({ name: input.name.trim(), badgeCode, departments: allowed, departmentHome })
+          .where(eq(employees.id, employee.id))
+          .returning();
+        if (!updated) throw new TrackingError("Could not update that person.");
+        const changes = [
+          updated.name !== employee.name ? `name to ${updated.name}` : "",
+          updated.badgeCode !== employee.badgeCode ? `badge to ${updated.badgeCode}` : "",
+          JSON.stringify(allowed) !== JSON.stringify(employee.departments ?? [employee.departmentHome]) ? `work to ${allowed.join(", ")}` : "",
+        ].filter(Boolean);
+        if (changes.length > 0) {
+          await this.audit(tx, principal.id, "tracking.employee_updated", "employee", employee.id, `${principal.name} changed ${employee.name}: ${changes.join("; ")}.`);
+        }
+        return { message: changes.length > 0 ? `Saved ${updated.name}.` : "Nothing changed.", employee: updated };
+      });
+    } catch (err) {
+      if (err instanceof TrackingError) throw err;
+      if (isUnique(err)) throw new TrackingError("That badge is already used by someone else.");
+      throw err;
+    }
   }
 
   /** Turning someone off ends any open shift, so their badge and running time stop right away. */
@@ -2013,44 +1842,6 @@ export class TrackingService {
     }
   }
 
-  private async requireDeviceAtWarehouse(
-    badge: string,
-    action: "in" | "out",
-    where?: { latitude?: number; longitude?: number; accuracy?: number; capturedAt?: number },
-    via = "QR",
-  ) {
-    const orm = this.db.db;
-    const [employee] = await orm
-      .select()
-      .from(employees)
-      .where(eq(employees.badgeCode, clean(badge)))
-      .limit(1);
-    if (!employee || !employee.active) throw new TrackingError("That badge is not on the floor.");
-    const [row] = await orm.select().from(site).limit(1);
-    const verdict = assertDeviceLocation({
-      latitude: where?.latitude,
-      longitude: where?.longitude,
-      accuracy: where?.accuracy,
-      capturedAt: where?.capturedAt,
-      now: Date.now(),
-      site: row
-        ? { latitude: row.latitude, longitude: row.longitude, radiusMeters: row.radiusMeters }
-        : null,
-    });
-    if (verdict.ok) return;
-    const away = verdict.distanceMeters == null ? "" : ` ${Math.round(verdict.distanceMeters)} m away.`;
-    const verb = action === "in" ? "check-in" : "check-out";
-    await orm.insert(activity).values({
-      actorId: employee.id,
-      action: "tracking.location_refused",
-      module: "tracking",
-      entityType: "employee",
-      entityId: employee.id,
-      after: { summary: `${employee.name}'s ${via} ${verb} was refused. ${verdict.reason}${away}` },
-    });
-    throw new TrackingError(verdict.reason);
-  }
-
   private async employeeByBadge(tx: Conn, badge: string) {
     const [employee] = await tx
       .select()
@@ -2126,7 +1917,7 @@ export class TrackingService {
 
   private async requireReady(tx: Conn, employee: Employee) {
     const shift = await this.openShift(tx, employee.id);
-    if (!shift) throw new TrackingError(`${employee.name} is not checked in. Use the QR gate first.`);
+    if (!shift) throw new TrackingError(`${employee.name} is not checked in. Tap Check in first.`);
     const meal = await this.openBreak(tx, shift.id);
     if (meal) throw new TrackingError(`${employee.name} is on a meal break. End it before starting work.`);
     return shift;

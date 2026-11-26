@@ -9,12 +9,8 @@ import {
   Post,
   UseGuards,
 } from "@nestjs/common";
-import type { GateMode } from "@opsengine/contracts";
 import {
   addCrewSchema,
-  arriveSchema,
-  gateModeSchema,
-  gatePlaceSchema,
   badgeSchema,
   checkoutSchema,
   claimStationSchema,
@@ -23,8 +19,8 @@ import {
   createActivitySchema,
   createEmployeeSchema,
   employeeStatusSchema,
-  siteSchema,
   createGaylordSchema,
+  pauseSchema,
   createLoadSchema,
   createShipmentSchema,
   finishLoadSchema,
@@ -33,12 +29,12 @@ import {
   recordPickSchema,
   sortScanSchema,
   switchTaskSchema,
+  updateEmployeeSchema,
 } from "@opsengine/contracts";
 import { authorize, can, ForbiddenError, type Principal, type RequestContext } from "@opsengine/kernel";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentPrincipal, CurrentUser } from "../auth/current-user.js";
 import { ZodPipe } from "../http.js";
-import { directClockAllowed } from "./floor-access.js";
 import { FloorAccessGuard } from "./floor-access.guard.js";
 import { TrackingService } from "./tracking.service.js";
 
@@ -92,64 +88,6 @@ export class TrackingController {
     return this.tracking.badgeContext(badge);
   }
 
-  @Get("gate")
-  gate() {
-    return this.tracking.gateStatus();
-  }
-
-  @Post("gate/mode")
-  @UseGuards(AuthGuard)
-  gateMode(
-    @CurrentUser() ctx: RequestContext,
-    @Body(new ZodPipe(gateModeSchema)) body: { mode: GateMode },
-  ) {
-    authorize(ctx, "tracking.manage");
-    return this.tracking.setGateMode(body.mode);
-  }
-
-  @Post("gate/places")
-  @UseGuards(AuthGuard)
-  addGatePlace(
-    @CurrentUser() ctx: RequestContext,
-    @Body(new ZodPipe(gatePlaceSchema)) body: { name: string },
-  ) {
-    authorize(ctx, "tracking.manage");
-    return this.tracking.addGatePlace(body.name);
-  }
-
-  @Delete("gate/places/:id")
-  @UseGuards(AuthGuard)
-  removeGatePlace(@CurrentUser() ctx: RequestContext, @Param("id") id: string) {
-    authorize(ctx, "tracking.manage");
-    return this.tracking.removeGatePlace(id);
-  }
-
-  @Post("phone/arrive")
-  @UseGuards(FloorAccessGuard)
-  arrive(
-    @Body(new ZodPipe(arriveSchema))
-    body: { badge: string; latitude?: number; longitude?: number; accuracy?: number; capturedAt?: number },
-  ) {
-    return this.tracking.phoneArrive(body);
-  }
-
-  @Get("site")
-  @UseGuards(AuthGuard)
-  site(@CurrentUser() ctx: RequestContext) {
-    authorize(ctx, "tracking.read");
-    return this.tracking.readSite();
-  }
-
-  @Post("site")
-  @UseGuards(AuthGuard)
-  saveSite(
-    @CurrentUser() ctx: RequestContext,
-    @Body(new ZodPipe(siteSchema)) body: { latitude: number; longitude: number; radiusMeters: number },
-  ) {
-    authorize(ctx, "tracking.manage");
-    return this.tracking.saveSite(body);
-  }
-
   @Get("checkins")
   @UseGuards(AuthGuard)
   checkins(@CurrentUser() ctx: RequestContext) {
@@ -159,29 +97,8 @@ export class TrackingController {
 
   @Post("clock")
   @UseGuards(FloorAccessGuard)
-  clock(
-    @Body(new ZodPipe(clockSchema))
-    body: {
-      badge: string;
-      action: "in" | "out" | "meal_start" | "meal_end";
-      source: "kiosk" | "qr";
-      place?: string;
-      latitude?: number;
-      longitude?: number;
-      accuracy?: number;
-      capturedAt?: number;
-    },
-  ) {
-    if (!directClockAllowed(body.action, body.source)) {
-      throw new ForbiddenError("Check in and out at the QR gate.");
-    }
-    return this.tracking.clock(body.badge, body.action, body.source, {
-      place: body.place,
-      latitude: body.latitude,
-      longitude: body.longitude,
-      accuracy: body.accuracy,
-      capturedAt: body.capturedAt,
-    });
+  clock(@Body(new ZodPipe(clockSchema)) body: { badge: string; action: "in" | "out" | "meal_start" | "meal_end" }) {
+    return this.tracking.clock(body.badge, body.action);
   }
 
   @Post("tasks/switch")
@@ -195,8 +112,8 @@ export class TrackingController {
 
   @Post("tasks/pause")
   @UseGuards(FloorAccessGuard)
-  pause(@Body(new ZodPipe(badgeSchema)) body: { badge: string }) {
-    return this.tracking.pauseTask(body.badge);
+  pause(@Body(new ZodPipe(pauseSchema)) body: { badge: string; reason: string }) {
+    return this.tracking.pauseTask(body.badge, body.reason);
   }
 
   @Post("tasks/resume")
@@ -304,6 +221,18 @@ export class TrackingController {
   ) {
     authorize(ctx, "tracking.manage");
     return this.tracking.createEmployee(body);
+  }
+
+  @Post("employees/:id")
+  @UseGuards(AuthGuard)
+  updateEmployee(
+    @CurrentUser() ctx: RequestContext,
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @Body(new ZodPipe(updateEmployeeSchema))
+    body: { name: string; badgeCode: string; departments: ("packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect")[] },
+  ) {
+    authorize(ctx, "tracking.manage");
+    return this.tracking.updateEmployee(ctx.principal, id, body);
   }
 
   @Post("employees/:id/status")

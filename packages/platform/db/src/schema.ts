@@ -601,6 +601,8 @@ export const segments = tracking.table("activity_segments", {
   endReason: text("end_reason"),
   deviceId: uuid("device_id"),
   note: text("note"),
+  // Why the person paused this task, picked or typed at the station. Paused time runs from ended_at.
+  pauseReason: text("pause_reason"),
 });
 
 export const stationSessions = tracking.table("station_sessions", {

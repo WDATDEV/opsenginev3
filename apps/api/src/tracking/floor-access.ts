@@ -19,9 +19,3 @@ export function floorAllowed(input: { deviceApproved: boolean; principal?: Princ
   const principal = input.principal;
   return Boolean(principal && (can(principal, "tracking.record") || can(principal, "tracking.manage")));
 }
-
-// A kiosk punch has no location check, so a direct clock in or out must go through the QR gate.
-// The floor phone's own check-in runs on the server after its location check.
-export function directClockAllowed(action: "in" | "out" | "meal_start" | "meal_end", source: "kiosk" | "qr") {
-  return source === "qr" || action === "meal_start" || action === "meal_end";
-}

@@ -94,11 +94,8 @@ export function FloorDevicesPanel() {
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <Badge tone="ok" dot>Approved</Badge>
             <span className="text-sm">{thisDevice.name}</span>
-            <Link className="text-sm font-medium text-moss hover:underline" href="/phone">
-              Open floor phone
-            </Link>
-            <Link className="text-sm font-medium text-moss hover:underline" href="/gate">
-              Open QR gate
+            <Link className="text-sm font-medium text-moss hover:underline" href="/station">
+              Open the check-in station
             </Link>
           </div>
         ) : (
@@ -112,8 +109,8 @@ export function FloorDevicesPanel() {
             }}
           >
             <div className="min-w-0 flex-1 basis-56">
-              <Field label="Device name" hint="Do this on the phone, kiosk, or gate you want to approve.">
-                <input className="field" required maxLength={60} value={name} onChange={(event) => setName(event.target.value)} placeholder="Front gate tablet" />
+              <Field label="Device name" hint="Do this on the iPad you want to use as a check-in station, then sign out on it.">
+                <input className="field" required maxLength={60} value={name} onChange={(event) => setName(event.target.value)} placeholder="Front door iPad" />
               </Field>
             </div>
             <button className="btn btn-primary mb-6" type="submit" disabled={busy}>
@@ -124,7 +121,7 @@ export function FloorDevicesPanel() {
       </section>
       <Panel title="Approved devices" count={active.length}>
         {devices.loading && !devices.data ? <div className="p-4"><SkeletonList rows={2} /></div> : null}
-        {devices.data && active.length === 0 ? <EmptyRow title="No devices approved yet">Floor phones and QR gates stay locked until a manager approves them.</EmptyRow> : null}
+        {devices.data && active.length === 0 ? <EmptyRow title="No devices approved yet">Check-in stations stay locked until a manager approves them.</EmptyRow> : null}
         <ul className="divide-y divide-black/5">
           {active.map((device) => (
             <li key={device.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5">

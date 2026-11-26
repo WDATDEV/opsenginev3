@@ -570,6 +570,21 @@ export const floorDevices = tracking.table("floor_devices", {
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 });
 
+// A phone tied to one employee by a one-time link. It can only record that employee's own time.
+// invite_hash is set until the link is opened; token_hash is set once it is.
+export const employeePhones = tracking.table("employee_phones", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  employeeId: uuid("employee_id").notNull(),
+  inviteHash: text("invite_hash").unique(),
+  inviteExpiresAt: timestamp("invite_expires_at", { withTimezone: true }),
+  tokenHash: text("token_hash").unique(),
+  createdBy: uuid("created_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  claimedAt: timestamp("claimed_at", { withTimezone: true }),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+});
+
 export const breaks = tracking.table("breaks", {
   id: uuid("id").defaultRandom().primaryKey(),
   shiftId: uuid("shift_id").notNull(),

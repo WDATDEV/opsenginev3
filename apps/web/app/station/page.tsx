@@ -4,7 +4,7 @@
 // Staff scan a badge, check in or out with a tap, and run their tasks. It links to nothing else in Ops Engine.
 
 import { useEffect, useRef, useState } from "react";
-import { FloorGate } from "@/components/floor-access";
+import { FloorGate, type LinkedPhone } from "@/components/floor-access";
 import { Field, Notice } from "@/components/ui";
 import { api, ApiError, post, when } from "@/lib/api";
 import { badgeFromScan } from "@/lib/qr";
@@ -208,11 +208,48 @@ function hoursLabel(seconds: number) {
 }
 
 export default function StationPage() {
+  // A manager's phone link lands here as ?link=…. Opening it ties this phone to that employee, once.
+  const [ready, setReady] = useState(false);
+  const [linked, setLinked] = useState<string | null>(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get("link");
+    if (!token) {
+      setReady(true);
+      return;
+    }
+    // The link is used up either way, so it leaves the address bar and the browser history.
+    window.history.replaceState(null, "", "/station");
+    void post<{ message: string }>("/tracking/phones/claim", { token })
+      .then((result) => setLinked(result.message))
+      .catch((err) => setLinkError(err instanceof ApiError ? err.message : "Could not open that phone link."))
+      .finally(() => setReady(true));
+  }, []);
+
+  if (!ready) {
+    return (
+      <main className="grid min-h-screen place-items-center px-4">
+        <p className="text-sm text-muted">Linking this phone…</p>
+      </main>
+    );
+  }
   return (
-    <FloorGate>
-      <SignedInWarning />
-      <Station />
-    </FloorGate>
+    <>
+      {linked || linkError ? (
+        <div className="mx-auto max-w-lg px-4 pt-4">
+          <Notice tone={linkError ? "bad" : "ok"}>{linkError ?? linked}</Notice>
+        </div>
+      ) : null}
+      <FloorGate allowPhone>
+        {(phone) => (
+          <>
+            <SignedInWarning />
+            <Station phone={phone} />
+          </>
+        )}
+      </FloorGate>
+    </>
   );
 }
 
@@ -243,8 +280,10 @@ function SignedInWarning() {
   );
 }
 
-function Station() {
-  const [badge, setBadge] = useState("");
+function Station({ phone }: { phone: LinkedPhone | null }) {
+  const [badge, setBadge] = useState(phone?.badgeCode ?? "");
+  const [view, setView] = useState<"today" | "records">("today");
+  const [confirmUnlink, setConfirmUnlink] = useState(false);
   const [context, setContext] = useState<Context | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -265,18 +304,26 @@ function Station() {
   function reset() {
     setContext(null);
     setBadge("");
+    setView("today");
     setConfirmEnd(null);
     setConfirmOut(false);
     setChoosingPause(false);
     setError(null);
   }
 
+  // Someone's own phone opens straight to them. There is no badge to scan.
+  useEffect(() => {
+    if (phone) void load(phone.badgeCode);
+  }, [phone?.badgeCode]);
+
   // Shared iPad: go back to the scan screen after a quiet spell, so the next person never sees someone else.
+  // An employee's own phone stays on them.
   useEffect(() => {
     if (!context) {
-      badgeInput.current?.focus();
+      if (!phone) badgeInput.current?.focus();
       return;
     }
+    if (phone) return;
     let timer = setTimeout(reset, IDLE_RESET_MS);
     const touched = () => {
       clearTimeout(timer);
@@ -409,7 +456,8 @@ function Station() {
     setConfirmOut(false);
     const done = await run("/tracking/clock", { badge, action: "out" });
     // Checked out: hand the iPad back to the next person, and keep the summary message on screen.
-    if (done) {
+    // On their own phone they stay on their screen.
+    if (done && !phone) {
       setContext(null);
       setBadge("");
     }
@@ -450,14 +498,23 @@ function Station() {
   return (
     <main className="mx-auto min-h-screen max-w-lg px-4 py-6 pb-10">
       <div className="mb-5">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-moss">Check-in station</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-moss">{phone ? "Floor phone" : "Check-in station"}</p>
         <h1 className="text-2xl font-semibold">
-          {!context ? "Scan your badge" : !checkedIn ? "Welcome" : working ? "You're working" : paused ? "You're paused" : "You're on shift"}
+          {!context ? (phone ? `Hi ${phone.name}` : "Scan your badge") : view === "records" ? "Your past records" : !checkedIn ? "Welcome" : working ? "You're working" : paused ? "You're paused" : "You're on shift"}
         </h1>
       </div>
       {message ? <div className="mb-3"><Notice tone="ok">{message}</Notice></div> : null}
       {error ? <div className="mb-3"><Notice tone="bad">{error}</Notice></div> : null}
-      {!context ? (
+      {!context && phone ? (
+        <div className="card space-y-3 p-4 text-center">
+          <p className="text-sm text-muted">{pending ? "Loading your shift…" : "Could not load your shift."}</p>
+          {!pending ? (
+            <button className="btn btn-primary tap w-full" type="button" onClick={() => void load(phone.badgeCode)}>
+              Try again
+            </button>
+          ) : null}
+        </div>
+      ) : !context ? (
         <form
           className="card space-y-4 p-4"
           onSubmit={(event) => {
@@ -509,11 +566,37 @@ function Station() {
                 {context.checkout ? <span className="text-muted">holding {context.checkout}</span> : null}
               </p>
             </div>
-            <button className="btn btn-ghost shrink-0" type="button" onClick={reset}>
-              {checkedIn ? "Done" : "Not you?"}
-            </button>
+            {!phone ? (
+              <button className="btn btn-ghost shrink-0" type="button" onClick={reset}>
+                {checkedIn ? "Done" : "Not you?"}
+              </button>
+            ) : null}
           </section>
 
+          <div className="grid grid-cols-2 gap-1 rounded-xl bg-black/[0.05] p-1" role="tablist" aria-label="Station view">
+            {(
+              [
+                ["today", "Today"],
+                ["records", "Past records"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={view === key}
+                onClick={() => setView(key)}
+                className={`min-h-11 rounded-lg text-sm font-semibold transition-colors ${view === key ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {view === "records" ? (
+            <PastRecords badge={context.employee.badgeCode} />
+          ) : (
+          <>
           {!checkedIn ? (
             <section className="card space-y-3 p-4">
               <p className="font-medium">You are off shift</p>
@@ -797,9 +880,168 @@ function Station() {
               )}
             </section>
           ) : null}
+          </>
+          )}
         </div>
       )}
+      {phone ? (
+        <div className="mt-8 text-center text-sm">
+          {confirmUnlink ? (
+            <div className="card space-y-3 p-4">
+              <p className="font-medium">Unlink this phone?</p>
+              <p className="text-muted">It stops recording {phone.name}&apos;s time. You would need a new link from a manager.</p>
+              <div className="grid grid-cols-2 gap-3">
+                <button className="btn btn-ghost tap" type="button" onClick={() => setConfirmUnlink(false)}>
+                  Keep it
+                </button>
+                <button
+                  className="btn btn-warn tap"
+                  type="button"
+                  onClick={() => {
+                    void post("/tracking/phones/forget", {}).finally(() => window.location.reload());
+                  }}
+                >
+                  Unlink
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button className="text-muted underline" type="button" onClick={() => setConfirmUnlink(true)}>
+              Not {phone.name}? Unlink this phone
+            </button>
+          )}
+        </div>
+      ) : null}
     </main>
+  );
+}
+
+type PastShift = {
+  id: string;
+  clockIn: string;
+  clockOut: string | null;
+  addedByManager: boolean;
+  time: {
+    totalSeconds: number;
+    taskSeconds: number;
+    mealSeconds: number;
+    pausedSeconds: number;
+    pauses: { reason: string; seconds: number }[];
+    unaccountedSeconds: number;
+  };
+  work: { title: string; seconds: number }[];
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function dayLabel(iso: string) {
+  return new Date(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+function clockLabel(iso: string) {
+  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+/** The person's own shifts from the last 30 days: when they were in, and where the time went. */
+function PastRecords({ badge }: { badge: string }) {
+  const [shifts, setShifts] = useState<PastShift[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setShifts(null);
+    setError(null);
+    fetch(`/api/tracking/badge/${encodeURIComponent(badge)}/records`)
+      .then(async (res) => {
+        const body = (await res.json()) as { shifts?: PastShift[]; message?: string };
+        if (!res.ok) throw new Error(body.message ?? "Could not load your records.");
+        if (live) setShifts(body.shifts ?? []);
+      })
+      .catch((err: unknown) => {
+        if (live) setError(err instanceof Error ? err.message : "Could not load your records.");
+      });
+    return () => {
+      live = false;
+    };
+  }, [badge]);
+
+  if (error) return <Notice tone="bad">{error}</Notice>;
+  if (!shifts) return <p className="card p-4 text-center text-sm text-muted">Loading your records…</p>;
+  if (shifts.length === 0) {
+    return (
+      <div className="card p-6 text-center">
+        <p className="font-semibold">No shifts in the last 30 days</p>
+        <p className="mt-1 text-sm text-muted">Your shifts show here after you check in.</p>
+      </div>
+    );
+  }
+
+  const weekAgo = Date.now() - 7 * DAY_MS;
+  const sum = (rows: PastShift[], key: "totalSeconds" | "taskSeconds") => rows.reduce((total, row) => total + row.time[key], 0);
+  const thisWeek = shifts.filter((row) => new Date(row.clockIn).getTime() >= weekAgo);
+
+  return (
+    <div className="space-y-3">
+      <dl className="grid grid-cols-2 gap-2 text-center text-sm">
+        <div className="card px-2 py-3">
+          <dt className="text-xs text-muted">Last 7 days</dt>
+          <dd className="text-lg font-semibold">{hoursLabel(sum(thisWeek, "totalSeconds"))}</dd>
+          <dd className="text-xs text-muted">{thisWeek.length} {thisWeek.length === 1 ? "shift" : "shifts"}</dd>
+        </div>
+        <div className="card px-2 py-3">
+          <dt className="text-xs text-muted">Last 30 days</dt>
+          <dd className="text-lg font-semibold">{hoursLabel(sum(shifts, "totalSeconds"))}</dd>
+          <dd className="text-xs text-muted">{shifts.length} {shifts.length === 1 ? "shift" : "shifts"}</dd>
+        </div>
+      </dl>
+      <ul className="space-y-3">
+        {shifts.map((row) => (
+          <li key={row.id} className="card space-y-2 p-4">
+            <div className="flex items-baseline justify-between gap-3">
+              <p className="font-semibold">{dayLabel(row.clockIn)}</p>
+              <p className="font-mono text-sm font-semibold tabular-nums">{hoursLabel(row.time.totalSeconds)}</p>
+            </div>
+            <p className="text-sm text-muted">
+              {clockLabel(row.clockIn)} – {row.clockOut ? clockLabel(row.clockOut) : "still on shift"}
+              {row.addedByManager ? " · added by a manager" : ""}
+            </p>
+            <dl className="grid grid-cols-4 gap-1.5 text-center text-xs">
+              <div className="rounded-lg bg-moss/10 px-1 py-1.5">
+                <dt className="text-muted">Tasks</dt>
+                <dd className="font-semibold">{hoursLabel(row.time.taskSeconds)}</dd>
+              </div>
+              <div className="rounded-lg bg-clay/10 px-1 py-1.5">
+                <dt className="text-muted">Paused</dt>
+                <dd className="font-semibold">{hoursLabel(row.time.pausedSeconds)}</dd>
+              </div>
+              <div className="rounded-lg bg-clay/10 px-1 py-1.5">
+                <dt className="text-muted">Meal</dt>
+                <dd className="font-semibold">{hoursLabel(row.time.mealSeconds)}</dd>
+              </div>
+              <div className="rounded-lg bg-black/[0.05] px-1 py-1.5">
+                <dt className="text-muted">Unaccounted</dt>
+                <dd className="font-semibold">{hoursLabel(row.time.unaccountedSeconds)}</dd>
+              </div>
+            </dl>
+            {row.work.length > 0 ? (
+              <ul className="divide-y divide-black/5 text-sm">
+                {row.work.map((item) => (
+                  <li key={item.title} className="flex justify-between gap-3 py-1.5">
+                    <span className="min-w-0 break-words">{item.title}</span>
+                    <span className="shrink-0 tabular-nums text-muted">{hoursLabel(item.seconds)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted">No tasks recorded.</p>
+            )}
+            {row.time.pauses.length > 0 ? (
+              <p className="text-xs text-muted">Paused for: {row.time.pauses.map((item) => `${item.reason} ${hoursLabel(item.seconds)}`).join(" · ")}</p>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

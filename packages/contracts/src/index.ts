@@ -189,6 +189,11 @@ export const floorDeviceSchema = z.object({
   name: z.string().trim().min(1, "Name this device.").max(60),
 });
 
+/** The one-time link a manager gives an employee to tie their own phone to them. */
+export const phoneClaimSchema = z.object({
+  token: z.string().trim().min(20, "That phone link is not complete.").max(200),
+});
+
 export const employeeStatusSchema = z.object({ active: z.boolean() });
 
 export const updateEmployeeSchema = z.object({

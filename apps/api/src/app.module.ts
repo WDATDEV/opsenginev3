@@ -16,7 +16,9 @@ import { JobsController } from "./jobs/jobs.controller.js";
 import { JobsService } from "./jobs/jobs.service.js";
 import { HealthController } from "./health.controller.js";
 import { InternalController } from "./internal/internal.controller.js";
-import { FloorAccessGuard, FloorSessionGuard } from "./tracking/floor-access.guard.js";
+import { EmployeePhonesController } from "./tracking/employee-phones.controller.js";
+import { EmployeePhonesService } from "./tracking/employee-phones.service.js";
+import { FloorAccessGuard, FloorSessionGuard, StationAccessGuard } from "./tracking/floor-access.guard.js";
 import { FloorDevicesController } from "./tracking/floor-devices.controller.js";
 import { FloorDevicesService } from "./tracking/floor-devices.service.js";
 import { SchedulerService } from "./tracking/scheduler.service.js";
@@ -52,6 +54,7 @@ import { WorkService } from "./work/work.service.js";
     JobsChatController,
     BillingController,
     FloorDevicesController,
+    EmployeePhonesController,
     TrackingController,
     WorkController,
     SettingsController,
@@ -68,7 +71,9 @@ import { WorkService } from "./work/work.service.js";
     SectionGuard,
     FloorSessionGuard,
     FloorAccessGuard,
+    StationAccessGuard,
     FloorDevicesService,
+    EmployeePhonesService,
     TrackingService,
     SchedulerService,
     JobsService,

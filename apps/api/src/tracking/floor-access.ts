@@ -13,6 +13,14 @@ export function hashDeviceToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
+export const EMPLOYEE_PHONE_COOKIE = "oe_employee_phone";
+
+/** A phone tied to one employee may act only for that employee's badge. Badges are matched the way they are stored. */
+export function phoneMayAct(phoneBadge: string, requested: unknown) {
+  if (typeof requested !== "string" || !requested.trim()) return false;
+  return requested.trim().toUpperCase() === phoneBadge.trim().toUpperCase();
+}
+
 /** A floor action needs an approved device, or a signed-in person who may record floor work. */
 export function floorAllowed(input: { deviceApproved: boolean; principal?: Principal | null }) {
   if (input.deviceApproved) return true;

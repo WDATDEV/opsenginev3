@@ -6,11 +6,21 @@ import { useSession } from "@/components/shell";
 import { Badge, EmptyRow, Field, Flash, Notice, Panel, SkeletonList, Spinner, timeAgo, useResource } from "@/components/ui";
 import { api, ApiError, canManage, post } from "@/lib/api";
 
-type Access = { allowed: boolean; approved: boolean; name: string | null };
+export type LinkedPhone = { name: string; badgeCode: string };
+type Access = { allowed: boolean; approved: boolean; name: string | null; phone?: LinkedPhone | null };
 type Device = { id: string; name: string; createdAt: string; lastSeenAt: string | null; revokedAt: string | null; current: boolean };
 
-/** Shows the floor screens only on an approved device or to a signed-in floor user. */
-export function FloorGate({ children }: { children: React.ReactNode }) {
+/**
+ * Shows the floor screens only on an approved device or to a signed-in floor user.
+ * With allowPhone, an employee's own linked phone gets in too, and children learn whose phone it is.
+ */
+export function FloorGate({
+  children,
+  allowPhone = false,
+}: {
+  children: React.ReactNode | ((phone: LinkedPhone | null) => React.ReactNode);
+  allowPhone?: boolean;
+}) {
   const [access, setAccess] = useState<Access | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -23,7 +33,8 @@ export function FloorGate({ children }: { children: React.ReactNode }) {
 
   useEffect(check, [check]);
 
-  if (access?.allowed) return <>{children}</>;
+  const phone = allowPhone && !access?.allowed ? access?.phone ?? null : null;
+  if (access?.allowed || phone) return <>{typeof children === "function" ? children(phone) : children}</>;
   return (
     <main className="grid min-h-screen place-items-center px-4 py-8">
       <div className="card w-full max-w-md space-y-4 p-6 text-center">
@@ -42,6 +53,11 @@ export function FloorGate({ children }: { children: React.ReactNode }) {
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-moss">Floor access</p>
             <h1 className="text-2xl font-semibold">This device is not approved</h1>
             <p className="text-sm leading-6 text-muted">Floor scans only work on approved warehouse devices. A manager can approve this one in a few seconds.</p>
+            {allowPhone ? (
+              <p className="text-sm leading-6 text-muted">
+                Is this your own phone? Ask a manager for your phone link, then open it here once.
+              </p>
+            ) : null}
             <Link className="btn btn-primary w-full" href="/floor-devices">
               Manager: approve this device
             </Link>

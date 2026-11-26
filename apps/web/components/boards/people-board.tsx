@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useSession } from "@/components/shell";
 import { Avatar, EmptyRow, Field, Flash, MoreButton, Notice, PageTitle, Panel, SearchBox, SkeletonList, usePaged, useResource } from "@/components/ui";
 import { ApiError, canManage, post } from "@/lib/api";
+import { PhoneLink } from "@/components/phone-link";
 
 type Employee = {
   id: string;
@@ -132,6 +133,7 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string; e
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
+  const [phoneFor, setPhoneFor] = useState<string | null>(null);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -241,6 +243,14 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string; e
                       Edit
                     </button>
                     <button
+                      className="btn btn-ghost btn-sm"
+                      type="button"
+                      aria-expanded={phoneFor === person.id}
+                      onClick={() => setPhoneFor(phoneFor === person.id ? null : person.id)}
+                    >
+                      Phone link
+                    </button>
+                    <button
                       className={`btn btn-ghost btn-sm ${person.active ? "btn-danger" : ""}`}
                       type="button"
                       onClick={() => void setStatus(person, !person.active)}
@@ -263,6 +273,7 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string; e
                     }}
                   />
                 ) : null}
+                {manage && phoneFor === person.id ? <PhoneLink key={`phone-${person.id}`} person={person} onClose={() => setPhoneFor(null)} /> : null}
               </li>
             ))}
           </ul>

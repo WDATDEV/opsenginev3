@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import type { Principal } from "@opsengine/kernel";
 import { DEV_JWT_SECRET, jwtSecret } from "../auth/jwt-secret.js";
 import { LOGIN_LOCK_MS, LOGIN_MAX_FAILURES, LoginLimiter } from "../auth/login-limit.js";
-import { floorAllowed, hashDeviceToken, newDeviceToken } from "./floor-access.js";
+import { floorAllowed, hashDeviceToken, newDeviceToken, phoneMayAct } from "./floor-access.js";
 
 const person = (role: Principal["role"]): Principal => ({ id: "u", email: "a@example.test", name: "A", role, clientIds: null, sections: [] });
 
@@ -36,6 +36,35 @@ describe("floor access", () => {
     // Location checks are gone: no route reads or stores a device position.
     assert.equal(/latitude|phone\/arrive|"site"|gate\//.test(source), false);
     assert.equal(source.includes("OptionalAuthGuard"), false);
+  });
+
+  it("lets a linked phone act only for its own badge", () => {
+    assert.equal(phoneMayAct("E-102", "E-102"), true);
+    assert.equal(phoneMayAct("E-102", " e-102 "), true);
+    assert.equal(phoneMayAct("E-102", "E-103"), false);
+    assert.equal(phoneMayAct("E-102", undefined), false);
+    assert.equal(phoneMayAct("E-102", ""), false);
+    assert.equal(phoneMayAct("E-102", ["E-102"]), false);
+  });
+
+  it("lets a linked phone reach only the floor phone's own routes", () => {
+    const source = readFileSync(new URL("./tracking.controller.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+    const routes = [...source.matchAll(/@(Get|Post|Delete)\("([^"]+)"\)\n\s+@UseGuards\(StationAccessGuard\)\n/g)].map((route) => route[2]);
+    assert.deepEqual(routes.sort(), [
+      "badge/:badge",
+      "badge/:badge/records",
+      "clock",
+      "packing",
+      "picking",
+      "receiving/:id/join",
+      "receiving/:id/lines",
+      "sorting/scan",
+      "tasks/pause",
+      "tasks/resume",
+      "tasks/stop",
+      "tasks/switch",
+      "unloading/:id/crew",
+    ]);
   });
 });
 

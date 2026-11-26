@@ -45,6 +45,7 @@ import type { ClientService } from "@opsengine/contracts";
 import { assertClientService, enabledServiceList } from "../clients/access.js";
 import { DbService } from "../db.service.js";
 import { jobWorkCodes, workFitsJob } from "./job-work.js";
+import { shiftWork } from "./my-records.js";
 import { shiftTime } from "./shift-time.js";
 
 type Conn = Database;
@@ -655,6 +656,45 @@ export class TrackingService {
           now,
         ),
       })),
+    };
+  }
+
+  /** One person's own shifts from the last 30 days, for the floor phone's past records. */
+  async myRecords(badge: string) {
+    const orm = this.db.db;
+    const employee = await this.employeeByBadge(orm, badge);
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const rows = await orm
+      .select()
+      .from(shifts)
+      .where(and(eq(shifts.employeeId, employee.id), gte(shifts.clockIn, since)))
+      .orderBy(desc(shifts.clockIn))
+      .limit(60);
+    const ids = rows.map((row) => row.id);
+    const [segmentRows, mealRows, activityRows] = ids.length
+      ? await Promise.all([
+          orm.select().from(segments).where(inArray(segments.shiftId, ids)),
+          orm.select().from(breaks).where(inArray(breaks.shiftId, ids)),
+          orm.select({ code: activityTypes.code, name: activityTypes.name }).from(activityTypes),
+        ])
+      : [[], [], []];
+    const taskIds = [...new Set(segmentRows.map((row) => row.note).filter((note): note is string => Boolean(note) && !note!.startsWith("Added by")))];
+    const taskRows = taskIds.length ? await orm.select({ id: tasks.id, title: tasks.title }).from(tasks).where(inArray(tasks.id, taskIds)) : [];
+    const titles = { task: new Map(taskRows.map((row) => [row.id, row.title])), activity: new Map(activityRows.map((row) => [row.code, row.name])) };
+    const now = new Date();
+    return {
+      name: employee.name,
+      shifts: rows.map((row) => {
+        const own = segmentRows.filter((item) => item.shiftId === row.id);
+        return {
+          id: row.id,
+          clockIn: row.clockIn,
+          clockOut: row.clockOut,
+          addedByManager: row.source === "manual",
+          time: shiftTime(row, own, mealRows.filter((item) => item.shiftId === row.id), now),
+          work: shiftWork(own, titles, now),
+        };
+      }),
     };
   }
 

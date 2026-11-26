@@ -36,7 +36,7 @@ import { authorize, can, ForbiddenError, type Principal, type RequestContext } f
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentPrincipal, CurrentUser } from "../auth/current-user.js";
 import { ZodPipe } from "../http.js";
-import { FloorAccessGuard } from "./floor-access.guard.js";
+import { FloorAccessGuard, StationAccessGuard } from "./floor-access.guard.js";
 import { TrackingService } from "./tracking.service.js";
 
 @Controller("tracking")
@@ -84,9 +84,15 @@ export class TrackingController {
   }
 
   @Get("badge/:badge")
-  @UseGuards(FloorAccessGuard)
+  @UseGuards(StationAccessGuard)
   badge(@Param("badge") badge: string) {
     return this.tracking.badgeContext(badge);
+  }
+
+  @Get("badge/:badge/records")
+  @UseGuards(StationAccessGuard)
+  records(@Param("badge") badge: string) {
+    return this.tracking.myRecords(badge);
   }
 
   @Get("checkins")
@@ -97,13 +103,13 @@ export class TrackingController {
   }
 
   @Post("clock")
-  @UseGuards(FloorAccessGuard)
+  @UseGuards(StationAccessGuard)
   clock(@Body(new ZodPipe(clockSchema)) body: { badge: string; action: "in" | "out" | "meal_start" | "meal_end" }) {
     return this.tracking.clock(body.badge, body.action);
   }
 
   @Post("tasks/switch")
-  @UseGuards(FloorAccessGuard)
+  @UseGuards(StationAccessGuard)
   switchTask(
     @Body(new ZodPipe(switchTaskSchema))
     body: { badge: string; department?: "packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect"; activityCode?: string; jobId?: string; taskId?: string },
@@ -112,19 +118,19 @@ export class TrackingController {
   }
 
   @Post("tasks/pause")
-  @UseGuards(FloorAccessGuard)
+  @UseGuards(StationAccessGuard)
   pause(@Body(new ZodPipe(pauseSchema)) body: { badge: string; reason: string }) {
     return this.tracking.pauseTask(body.badge, body.reason);
   }
 
   @Post("tasks/resume")
-  @UseGuards(FloorAccessGuard)
+  @UseGuards(StationAccessGuard)
   resume(@Body(new ZodPipe(badgeSchema)) body: { badge: string }) {
     return this.tracking.resumeTask(body.badge);
   }
 
   @Post("tasks/stop")
-  @UseGuards(FloorAccessGuard)
+  @UseGuards(StationAccessGuard)
   stop(@Body(new ZodPipe(stopSchema)) body: { badge: string; taskId?: string }) {
     return this.tracking.stopTask(body.badge, body.taskId);
   }
@@ -142,7 +148,7 @@ export class TrackingController {
   }
 
   @Post("packing")
-  @UseGuards(FloorAccessGuard)
+  @UseGuards(StationAccessGuard)
   pack(
     @CurrentPrincipal() principal: Principal | null,
     @Body(new ZodPipe(completePackSchema))
@@ -164,7 +170,7 @@ export class TrackingController {
   }
 
   @Post("picking")
-  @UseGuards(FloorAccessGuard)
+  @UseGuards(StationAccessGuard)
   pick(
     @CurrentPrincipal() principal: Principal | null,
     @Body(new ZodPipe(recordPickSchema))
@@ -266,7 +272,7 @@ export class TrackingController {
   }
 
   @Post("receiving/:id/join")
-  @UseGuards(FloorAccessGuard)
+  @UseGuards(StationAccessGuard)
   join(
     @Param("id") id: string,
     @Body(new ZodPipe(joinShipmentSchema)) body: { badge: string; role: "lead" | "counter" },
@@ -275,7 +281,7 @@ export class TrackingController {
   }
 
   @Post("receiving/:id/lines")
-  @UseGuards(FloorAccessGuard)
+  @UseGuards(StationAccessGuard)
   line(
     @CurrentPrincipal() principal: Principal | null,
     @Param("id") id: string,
@@ -311,7 +317,7 @@ export class TrackingController {
   }
 
   @Post("unloading/:id/crew")
-  @UseGuards(FloorAccessGuard)
+  @UseGuards(StationAccessGuard)
   crew(
     @CurrentPrincipal() principal: Principal | null,
     @Param("id") id: string,
@@ -351,7 +357,7 @@ export class TrackingController {
   }
 
   @Post("sorting/scan")
-  @UseGuards(FloorAccessGuard)
+  @UseGuards(StationAccessGuard)
   scan(
     @Body(new ZodPipe(sortScanSchema))
     body: {

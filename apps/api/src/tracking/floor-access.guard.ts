@@ -6,7 +6,8 @@ import { eq } from "drizzle-orm";
 import { SESSION_COOKIE, type AuthedRequest } from "../auth/auth.types.js";
 import { principalFromUser } from "../auth/principal.js";
 import { DbService } from "../db.service.js";
-import { FLOOR_DEVICE_COOKIE, FLOOR_DEVICE_REFUSED, floorAllowed } from "./floor-access.js";
+import { EmployeePhonesService } from "./employee-phones.service.js";
+import { EMPLOYEE_PHONE_COOKIE, FLOOR_DEVICE_COOKIE, FLOOR_DEVICE_REFUSED, floorAllowed, phoneMayAct } from "./floor-access.js";
 import { FloorDevicesService } from "./floor-devices.service.js";
 
 /** Reads a sign-in if there is one. An expired sign-in must not lock an approved floor device. */
@@ -54,4 +55,37 @@ export class FloorAccessGuard implements CanActivate {
     }
     return true;
   }
+}
+
+/**
+ * The floor phone's own actions (check in/out, tasks, pauses, past records).
+ * An approved iPad or a signed-in floor user may act for any badge, as before.
+ * A phone linked to one employee may act only for that employee's badge.
+ */
+@Injectable()
+export class StationAccessGuard implements CanActivate {
+  constructor(
+    @Inject(FloorSessionGuard) private readonly sessions: FloorSessionGuard,
+    @Inject(FloorDevicesService) private readonly devices: FloorDevicesService,
+    @Inject(EmployeePhonesService) private readonly phones: EmployeePhonesService,
+  ) {}
+
+  async canActivate(context: ExecutionContext) {
+    const req = context.switchToHttp().getRequest<AuthedRequest>();
+    req.user = await this.sessions.read(req);
+    const device = await this.devices.find(req.cookies?.[FLOOR_DEVICE_COOKIE]);
+    if (floorAllowed({ deviceApproved: Boolean(device), principal: req.user })) return true;
+    const phone = await this.phones.find(req.cookies?.[EMPLOYEE_PHONE_COOKIE]);
+    if (!phone) throw new ForbiddenError(FLOOR_DEVICE_REFUSED);
+    if (!phoneMayAct(phone.badgeCode, badgeOf(req))) {
+      throw new ForbiddenError(`This phone can only record ${phone.name}'s own time.`);
+    }
+    return true;
+  }
+}
+
+function badgeOf(req: AuthedRequest): unknown {
+  const params = (req as unknown as { params?: Record<string, unknown> }).params;
+  const body = (req as unknown as { body?: Record<string, unknown> }).body;
+  return params?.badge ?? body?.badge;
 }

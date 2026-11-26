@@ -6,7 +6,8 @@ import { AuthGuard } from "../auth/auth.guard.js";
 import type { AuthedRequest } from "../auth/auth.types.js";
 import { CurrentUser } from "../auth/current-user.js";
 import { ZodPipe } from "../http.js";
-import { FLOOR_DEVICE_COOKIE, FLOOR_DEVICE_MAX_AGE_MS, floorAllowed } from "./floor-access.js";
+import { EmployeePhonesService } from "./employee-phones.service.js";
+import { EMPLOYEE_PHONE_COOKIE, FLOOR_DEVICE_COOKIE, FLOOR_DEVICE_MAX_AGE_MS, floorAllowed } from "./floor-access.js";
 import { FloorSessionGuard } from "./floor-access.guard.js";
 import { FloorDevicesService } from "./floor-devices.service.js";
 
@@ -26,19 +27,26 @@ function deviceToken(req: Request) {
 
 @Controller("tracking/floor-devices")
 export class FloorDevicesController {
-  constructor(@Inject(FloorDevicesService) private readonly devices: FloorDevicesService) {}
+  constructor(
+    @Inject(FloorDevicesService) private readonly devices: FloorDevicesService,
+    @Inject(EmployeePhonesService) private readonly phones: EmployeePhonesService,
+  ) {}
 
   @Get("me")
   @UseGuards(FloorSessionGuard)
   async me(@Req() req: Request) {
     const device = await this.devices.find(deviceToken(req));
     const principal = (req as unknown as AuthedRequest).user;
+    const allowed = floorAllowed({ deviceApproved: Boolean(device), principal });
+    // A shared iPad wins. Otherwise a phone linked to one employee opens the floor phone for that person only.
+    const phone = allowed ? null : await this.phones.find((req.cookies as Record<string, string> | undefined)?.[EMPLOYEE_PHONE_COOKIE]);
     return {
-      allowed: floorAllowed({ deviceApproved: Boolean(device), principal }),
+      allowed,
       approved: Boolean(device),
       name: device?.name ?? null,
       // The station warns when someone is signed in on it, so staff cannot reach the rest of the app.
       signedIn: Boolean(principal),
+      phone: phone ? { name: phone.name, badgeCode: phone.badgeCode } : null,
     };
   }
 

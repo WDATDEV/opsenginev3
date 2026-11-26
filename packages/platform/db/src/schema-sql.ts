@@ -543,6 +543,20 @@ CREATE TABLE IF NOT EXISTS tracking.floor_devices (
   revoked_at timestamptz
 );
 
+CREATE TABLE IF NOT EXISTS tracking.employee_phones (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id uuid NOT NULL REFERENCES tracking.employees(id),
+  invite_hash text UNIQUE,
+  invite_expires_at timestamptz,
+  token_hash text UNIQUE,
+  created_by uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  claimed_at timestamptz,
+  last_seen_at timestamptz,
+  revoked_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS employee_phones_employee_idx ON tracking.employee_phones (employee_id);
+
 CREATE TABLE IF NOT EXISTS tracking.pack_events (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   order_number text NOT NULL UNIQUE,

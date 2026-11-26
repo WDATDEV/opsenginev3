@@ -39,6 +39,8 @@ const FLOOR_LINKS = [
 const ADMIN_LINKS = [
   ["/", "Clients"],
   ["/floor", "Floor"],
+  // The iPads that may run the floor phone. Only owners and warehouse managers approve them.
+  ["/floor-devices", "Floor devices"],
 ] as const;
 
 function linksFor(role?: string): readonly (readonly [string, string])[] {

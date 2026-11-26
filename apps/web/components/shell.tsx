@@ -373,7 +373,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
                           <div className="mt-3 space-y-1.5 px-3 text-sm">
                             {/* Opens in a new tab: the station is a separate screen for iPads, not part of this app's menu. */}
                             <a className="block text-moss hover:underline" href="/station" target="_blank" rel="noreferrer">
-                              Open check-in station
+                              Open floor phone
                             </a>
                           </div>
                         ) : null}

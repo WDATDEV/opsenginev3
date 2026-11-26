@@ -79,7 +79,7 @@ export function CheckInBoard({ client }: { client?: { id: string; name: string }
         detail="Who is on shift, how their time splits between tasks, pauses (with the reason given), meals, and unaccounted time, and their QR badges."
         actions={
           <a className="btn btn-primary" href="/station" target="_blank" rel="noreferrer">
-            Open check-in station
+            Open floor phone
           </a>
         }
       />

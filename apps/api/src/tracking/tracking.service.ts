@@ -211,6 +211,23 @@ export class TrackingService {
       indirect: 0,
     };
 
+    // What each person on shift last did this shift, so "paused" and "just finished" are not shown as "no task".
+    const openShiftIds = openShifts.map((shift) => shift.id);
+    const [shiftSegments, taskRows, activityRows] = await Promise.all([
+      openShiftIds.length ? orm.select().from(segments).where(inArray(segments.shiftId, openShiftIds)) : Promise.resolve([]),
+      orm.select({ id: tasks.id, title: tasks.title }).from(tasks),
+      orm.select({ code: activityTypes.code, name: activityTypes.name }).from(activityTypes),
+    ]);
+    const taskTitle = new Map(taskRows.map((row) => [row.id, row.title]));
+    const activityName = new Map(activityRows.map((row) => [row.code, row.name]));
+    const titleOf = (row: { note: string | null; taskCode: string }) =>
+      (row.note ? taskTitle.get(row.note) : null) ?? activityName.get(row.taskCode) ?? row.taskCode;
+    const lastByShift = new Map<string, (typeof shiftSegments)[number]>();
+    for (const row of shiftSegments) {
+      const seen = lastByShift.get(row.shiftId);
+      if (!seen || row.startedAt.getTime() > seen.startedAt.getTime()) lastByShift.set(row.shiftId, row);
+    }
+
     const roster = people
       .filter((person) => person.active)
       .map((person) => {
@@ -225,6 +242,7 @@ export class TrackingService {
           (checkout && deviceById.get(checkout.deviceId)?.code) ||
           (segment?.deviceId && deviceById.get(segment.deviceId)?.code) ||
           null;
+        const last = !segment && shift ? lastByShift.get(shift.id) ?? null : null;
         return {
           id: person.id,
           name: person.name,
@@ -232,11 +250,22 @@ export class TrackingService {
           departmentHome: person.departmentHome,
           clockedIn: Boolean(shift),
           onMeal,
+          shiftStartedAt: shift?.clockIn ?? null,
           entry: shift?.source ?? null,
           entryPlace: shift?.clockInPlace ?? null,
           place,
+          // Not on a task now: paused with a reason, or what they last did this shift.
+          paused:
+            last && last.endReason === "pause" && last.endedAt
+              ? { reason: last.pauseReason ?? null, since: last.endedAt, title: titleOf(last) }
+              : null,
+          lastTask:
+            last && last.endReason !== "pause" && last.endedAt
+              ? { title: titleOf(last), endedAt: last.endedAt, ended: last.endReason }
+              : null,
           task: segment
             ? {
+                title: titleOf(segment),
                 department: segment.department,
                 taskCode: segment.taskCode,
                 startedAt: segment.startedAt,

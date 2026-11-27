@@ -887,6 +887,15 @@ const WORK_KINDS = [
   ["sorting", "Sorting"],
 ] as const;
 
+// Work with no record form of its own: it is a timed task with the matching work kind, priced by the client's hourly rate.
+const TASK_KINDS = [
+  ["qc", "qc_check", "Quality check"],
+  ["putaway", "putaway", "Putaway"],
+  ["returns", "returns", "Returns"],
+  ["replenishment", "replenish", "Replenishment"],
+  ["cycle_count", "cycle_count", "Cycle count"],
+] as const;
+
 const CARRIERS = ["usps", "ups", "fedex", "dhl", "other"] as const;
 
 function TaskForm({
@@ -917,7 +926,11 @@ function TaskForm({
   onAddWork: (body: Record<string, unknown>) => Promise<boolean>;
 }) {
   const kinds = WORK_KINDS.filter(([code]) => services.includes(code));
+  const taskKinds = TASK_KINDS.filter(([service, code]) => services.includes(service) && activities.some((item) => item.code === code));
   const [kind, setKind] = useState("");
+  // A chosen kind like "qc" that is plain timed work (no record form).
+  const taskKind = TASK_KINDS.find(([service]) => service === kind) ?? null;
+  const recordKind = kind !== "" && !taskKind;
   const [title, setTitle] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
   const [dueOn, setDueOn] = useState("");
@@ -976,13 +989,17 @@ function TaskForm({
       onSubmit={(event) => {
         event.preventDefault();
         if (kind === "" && (!title.trim() || !hourlyReady)) return;
-        const send = kind ? onAddWork(body()) : onAdd({ title, ...common });
+        const send = taskKind
+          ? onAdd({ title: title.trim() || taskKind[2], activityCode: taskKind[1], ...common })
+          : kind
+            ? onAddWork(body())
+            : onAdd({ title, ...common });
         void send.then((ok) => {
           if (ok) reset();
         });
       }}
     >
-      {kinds.length > 0 && !closed ? (
+      {kinds.length + taskKinds.length > 0 && !closed ? (
         <Field label="Type">
           <select className="field" value={kind} onChange={(event) => setKind(event.target.value)}>
             <option value="">Task</option>
@@ -991,8 +1008,27 @@ function TaskForm({
                 {label}
               </option>
             ))}
+            {taskKinds.map(([service, , label]) => (
+              <option key={service} value={service}>
+                {label}
+              </option>
+            ))}
           </select>
         </Field>
+      ) : null}
+      {taskKind ? (
+        <>
+          <Field label="Task">
+            <input
+              className="field"
+              autoComplete="off"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder={taskKind[2]}
+            />
+          </Field>
+          <p className="self-end text-xs text-muted">{rateHint(chosenRate)}</p>
+        </>
       ) : null}
       {kind === "" ? (
         <>
@@ -1015,9 +1051,9 @@ function TaskForm({
             </div>
           </Field>
         </>
-      ) : (
+      ) : recordKind ? (
         <p className="self-end text-xs text-muted md:col-span-2">{rateHint(chosenRate)}</p>
-      )}
+      ) : null}
       {kind === "receiving" ? (
         <>
           <Field label="Shipment number">
@@ -1133,9 +1169,16 @@ function TaskForm({
       </Field>
       <div className="md:col-span-4">
         <button className="btn btn-ghost" type="submit" disabled={kind === "" && (!title.trim() || !hourlyReady)}>
-          {kind ? `Add ${WORK_KINDS.find(([code]) => code === kind)?.[1].toLowerCase()}` : "Add task"}
+          {taskKind
+            ? `Add ${taskKind[2].toLowerCase()}`
+            : kind
+              ? `Add ${WORK_KINDS.find(([code]) => code === kind)?.[1].toLowerCase()}`
+              : "Add task"}
         </button>
-        {kind ? (
+        {taskKind ? (
+          <span className="ml-3 text-sm text-muted">The person starts it from the floor phone, and the time is billed at the client&apos;s hourly price.</span>
+        ) : null}
+        {recordKind ? (
           <span className="ml-3 text-sm text-muted">
             {kind === "receiving" || kind === "unloading"
               ? `Adds a task. The live ${kind} work still happens on the ${kind} page, attached to this job.`

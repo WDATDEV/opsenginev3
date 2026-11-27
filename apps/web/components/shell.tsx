@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useState } from "react";
-import { api, canOpenService, CLIENT_SERVICES, hasSection, hasServicePage, post, type User } from "@/lib/api";
+import { api, canOpenService, CLIENT_SERVICES, hasSection, hasServicePage, post, type User, WORK_ONLY_SERVICES } from "@/lib/api";
 import { initials } from "@/components/ui";
 
 const SessionContext = createContext<User | null>(null);
@@ -273,7 +273,9 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
                             {clientServices.some(([service]) => service === "jobs") ? (
                               <SubLink href={`/clients/${insideClient.id}/jobs`} label="Jobs" active={under(pathname, `/clients/${insideClient.id}/jobs`)} />
                             ) : null}
-                            {clientServices.some(([service]) => JOB_WORK.has(service)) ? (
+                            {insideClient.enabledServices.some(
+                              (service) => (JOB_WORK.has(service) || WORK_ONLY_SERVICES.has(service)) && canOpenService(user?.role, service),
+                            ) ? (
                               <SubLink
                                 href={`/clients/${insideClient.id}/floor-work`}
                                 label="Floor work"

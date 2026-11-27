@@ -2,10 +2,10 @@
 
 import { Suspense } from "react";
 import { ClientService } from "@/components/client-service";
-import { FLOOR_WORK_KINDS, FloorWorkBoard } from "@/components/boards/floor-work-board";
+import { FLOOR_WORK_SERVICES, FloorWorkBoard } from "@/components/boards/floor-work-board";
 import { SkeletonList } from "@/components/ui";
 
-const KINDS = FLOOR_WORK_KINDS.map(([kind]) => kind);
+const KINDS = FLOOR_WORK_SERVICES;
 
 export default function ClientFloorWorkPage() {
   return (

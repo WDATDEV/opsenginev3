@@ -9,6 +9,13 @@ describe("work a job is for", () => {
     assert.deepEqual(jobWorkCodes("Kit 300 boxes"), ["kitting"]);
   });
 
+  it("reads QC, replenishment and cycle counts, and keeps cycle counts apart from receiving", () => {
+    assert.deepEqual(jobWorkCodes("QC 200 returns"), ["qc_check", "returns"]);
+    assert.deepEqual(jobWorkCodes("Replenish aisle 4"), ["replenish"]);
+    assert.deepEqual(jobWorkCodes("Cycle count zone B"), ["cycle_count"]);
+    assert.deepEqual(jobWorkCodes("Count the inbound cartons"), ["receive_shipment"]);
+  });
+
   it("keeps every kind of work a title names", () => {
     assert.deepEqual(jobWorkCodes("Unload and sort the truck"), ["unload_trailer", "sort_gaylord"]);
   });

@@ -7,6 +7,11 @@ export type Department =
   | "receiving"
   | "unloading"
   | "sorting"
+  | "qc"
+  | "putaway"
+  | "returns"
+  | "replenishment"
+  | "cycle_count"
   | "indirect";
 
 export type PackAttribution = "assigned" | "station_badge" | "manual";
@@ -288,6 +293,16 @@ export function taskFor(department: Department): string {
       return "unload_trailer";
     case "sorting":
       return "sort_gaylord";
+    case "qc":
+      return "qc_check";
+    case "putaway":
+      return "putaway";
+    case "returns":
+      return "returns";
+    case "replenishment":
+      return "replenish";
+    case "cycle_count":
+      return "cycle_count";
     default:
       return "indirect";
   }

@@ -57,7 +57,7 @@ type JobBoard = {
   people: { id: string; name: string; clientId: string | null }[];
 };
 
-const SERVICE_FOR_DEPARTMENT = ["receiving", "unloading", "packing", "picking", "sorting"];
+const SERVICE_FOR_DEPARTMENT = ["receiving", "unloading", "packing", "picking", "sorting", "qc", "putaway", "returns", "replenishment", "cycle_count"];
 const JOB_VIEWS = [
   ["open", "Open"],
   ["done", "Closed"],

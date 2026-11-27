@@ -2,11 +2,14 @@ import "./load-env.js";
 import "reflect-metadata";
 import cookieParser from "cookie-parser";
 import { NestFactory } from "@nestjs/core";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import { AppModule } from "./app.module.js";
 import { ForbiddenErrorFilter, TrackingErrorFilter } from "./http.js";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // Problem reports can carry one photo, shrunk on the device to well under this.
+  app.useBodyParser("json", { limit: "3mb" });
   app.use(cookieParser());
   app.useGlobalFilters(new ForbiddenErrorFilter(), new TrackingErrorFilter());
   app.enableCors({

@@ -4,7 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useSession } from "@/components/shell";
 import { Notice, SkeletonList, useResource } from "@/components/ui";
-import { canOpenService, CLIENT_SERVICES } from "@/lib/api";
+import { canOpenService, CLIENT_SERVICES, hasServicePage } from "@/lib/api";
 import type { ClientRecord } from "@/components/client-dashboard";
 
 // Opening a client lands on its first service, which is Jobs when it is on. The setup page is
@@ -18,7 +18,7 @@ export default function ClientHomePage() {
 
   useEffect(() => {
     if (!client || !user) return;
-    const first = CLIENT_SERVICES.find(([service]) => client.enabledServices.includes(service) && canOpenService(user.role, service));
+    const first = CLIENT_SERVICES.find(([service]) => client.enabledServices.includes(service) && hasServicePage(service) && canOpenService(user.role, service));
     router.replace(first ? `/clients/${client.id}/${first[0]}` : `/clients/${client.id}/settings`);
   }, [client, user, router]);
 

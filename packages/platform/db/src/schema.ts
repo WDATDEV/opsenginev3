@@ -479,6 +479,51 @@ export const tasks = work.table("tasks", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+// A problem to follow up: a discrepancy, damage, a missort, a system exception, or a suspected employee error.
+// An employee error stays "suspected" until a manager confirms it, and is kept apart from system exceptions.
+export const cases = work.table("cases", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  kind: text("kind").notNull(),
+  status: text("status").notNull().default("open"),
+  title: text("title").notNull(),
+  details: text("details"),
+  clientId: uuid("client_id"),
+  jobId: uuid("job_id"),
+  // Who the case is about, for an employee error.
+  employeeId: uuid("employee_id"),
+  errorConfirmed: boolean("error_confirmed").notNull().default(false),
+  ownerUserId: uuid("owner_user_id"),
+  reportedByUserId: uuid("reported_by_user_id"),
+  reportedByEmployeeId: uuid("reported_by_employee_id"),
+  trackingNumber: text("tracking_number"),
+  orderNumber: text("order_number"),
+  sku: text("sku"),
+  shipmentId: uuid("shipment_id"),
+  loadId: uuid("load_id"),
+  gaylordId: uuid("gaylord_id"),
+  rootCause: text("root_cause"),
+  correctiveAction: text("corrective_action"),
+  correctiveDueOn: date("corrective_due_on"),
+  correctiveDoneAt: timestamp("corrective_done_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+});
+
+// The case's timeline: notes, photos, and every change to it.
+export const caseNotes = work.table("case_notes", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  caseId: uuid("case_id").notNull(),
+  authorName: text("author_name").notNull(),
+  authorUserId: uuid("author_user_id"),
+  authorEmployeeId: uuid("author_employee_id"),
+  text: text("text"),
+  // A JPEG/PNG/WebP data URL, shrunk on the device before upload.
+  photo: text("photo"),
+  system: boolean("system").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const activity = audit.table("activity", {
   id: uuid("id").defaultRandom().primaryKey(),
   actorId: uuid("actor_id"),
@@ -503,6 +548,8 @@ export const employees = tracking.table("employees", {
   employmentType: text("employment_type").notNull().default("employee"),
   warehanceUserId: text("warehance_user_id").unique(),
   clientId: uuid("client_id"),
+  // The staffing agency a temp comes from. Used to print that agency's timecards together.
+  agency: text("agency"),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -583,6 +630,46 @@ export const employeePhones = tracking.table("employee_phones", {
   claimedAt: timestamp("claimed_at", { withTimezone: true }),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
+});
+
+// One row: overtime limits, the first day of a timecard week, and the warehouse's time zone.
+export const timekeepingSettings = tracking.table("timekeeping_settings", {
+  id: integer("id").primaryKey().default(1),
+  dailyOvertimeMinutes: integer("daily_overtime_minutes").notNull().default(480),
+  weeklyOvertimeMinutes: integer("weekly_overtime_minutes").notNull().default(2400),
+  weekStartsOn: integer("week_starts_on").notNull().default(1),
+  // Null until a manager sets it. Days and weeks then follow the browser's zone.
+  timeZone: text("time_zone"),
+  updatedBy: uuid("updated_by"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// Every correction to a check-in or check-out: who, why, and the shift (with its task and meal time) before and after.
+export const shiftEdits = tracking.table("shift_edits", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  shiftId: uuid("shift_id").notNull(),
+  employeeId: uuid("employee_id").notNull(),
+  editedBy: uuid("edited_by"),
+  editorName: text("editor_name").notNull(),
+  reason: text("reason").notNull(),
+  before: jsonb("before").notNull(),
+  after: jsonb("after").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// A person's week: the employee confirms their hours, a manager approves them. A later correction revokes it.
+export const timecardApprovals = tracking.table("timecard_approvals", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  employeeId: uuid("employee_id").notNull(),
+  weekStart: date("week_start").notNull(),
+  approvedBy: uuid("approved_by"),
+  managerName: text("manager_name"),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  employeeConfirmedAt: timestamp("employee_confirmed_at", { withTimezone: true }),
+  totals: jsonb("totals"),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  revokedReason: text("revoked_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 export const breaks = tracking.table("breaks", {

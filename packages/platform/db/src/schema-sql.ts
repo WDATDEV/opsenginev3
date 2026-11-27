@@ -321,6 +321,48 @@ CREATE TABLE IF NOT EXISTS clients.invoices (
   paid_at timestamptz
 );
 
+CREATE TABLE IF NOT EXISTS work.cases (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  kind text NOT NULL,
+  status text NOT NULL DEFAULT 'open',
+  title text NOT NULL,
+  details text,
+  client_id uuid,
+  job_id uuid,
+  employee_id uuid,
+  error_confirmed boolean NOT NULL DEFAULT false,
+  owner_user_id uuid,
+  reported_by_user_id uuid,
+  reported_by_employee_id uuid,
+  tracking_number text,
+  order_number text,
+  sku text,
+  shipment_id uuid,
+  load_id uuid,
+  gaylord_id uuid,
+  root_cause text,
+  corrective_action text,
+  corrective_due_on date,
+  corrective_done_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  resolved_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS cases_status_idx ON work.cases (status, created_at);
+
+CREATE TABLE IF NOT EXISTS work.case_notes (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  case_id uuid NOT NULL REFERENCES work.cases(id) ON DELETE CASCADE,
+  author_name text NOT NULL,
+  author_user_id uuid,
+  author_employee_id uuid,
+  text text,
+  photo text,
+  system boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS case_notes_case_idx ON work.case_notes (case_id, created_at);
+
 CREATE TABLE IF NOT EXISTS work.tasks (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   title text NOT NULL,
@@ -380,6 +422,7 @@ CREATE TABLE IF NOT EXISTS work.job_assignees (
 );
 
 ALTER TABLE tracking.employees ADD COLUMN IF NOT EXISTS departments jsonb;
+ALTER TABLE tracking.employees ADD COLUMN IF NOT EXISTS agency text;
 ALTER TABLE work.job_assignees ADD COLUMN IF NOT EXISTS start_at timestamptz;
 ALTER TABLE work.job_assignees ADD COLUMN IF NOT EXISTS activity_code text;
 ALTER TABLE work.job_assignees ADD COLUMN IF NOT EXISTS auto_started_at timestamptz;
@@ -542,6 +585,44 @@ CREATE TABLE IF NOT EXISTS tracking.floor_devices (
   last_seen_at timestamptz,
   revoked_at timestamptz
 );
+
+CREATE TABLE IF NOT EXISTS tracking.timekeeping_settings (
+  id integer PRIMARY KEY DEFAULT 1,
+  daily_overtime_minutes integer NOT NULL DEFAULT 480,
+  weekly_overtime_minutes integer NOT NULL DEFAULT 2400,
+  week_starts_on integer NOT NULL DEFAULT 1,
+  time_zone text,
+  updated_by uuid,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS tracking.shift_edits (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  shift_id uuid NOT NULL REFERENCES tracking.shifts(id),
+  employee_id uuid NOT NULL REFERENCES tracking.employees(id),
+  edited_by uuid,
+  editor_name text NOT NULL,
+  reason text NOT NULL,
+  before jsonb NOT NULL,
+  after jsonb NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS shift_edits_employee_idx ON tracking.shift_edits (employee_id, created_at);
+
+CREATE TABLE IF NOT EXISTS tracking.timecard_approvals (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id uuid NOT NULL REFERENCES tracking.employees(id),
+  week_start date NOT NULL,
+  approved_by uuid,
+  manager_name text,
+  approved_at timestamptz,
+  employee_confirmed_at timestamptz,
+  totals jsonb,
+  revoked_at timestamptz,
+  revoked_reason text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS timecard_approvals_live ON tracking.timecard_approvals (employee_id, week_start) WHERE revoked_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS tracking.employee_phones (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -92,6 +92,12 @@ export const clientServices = [
   "packing",
   "picking",
   "sorting",
+  // Work that is billed like the departments above, but has no board of its own. It runs as tasks on Jobs.
+  "qc",
+  "putaway",
+  "returns",
+  "replenishment",
+  "cycle_count",
   "activities",
   "people",
   "checkin",
@@ -106,6 +112,11 @@ export const departments = [
   "receiving",
   "unloading",
   "sorting",
+  "qc",
+  "putaway",
+  "returns",
+  "replenishment",
+  "cycle_count",
   "indirect",
 ] as const;
 
@@ -189,6 +200,101 @@ export const floorDeviceSchema = z.object({
   name: z.string().trim().min(1, "Name this device.").max(60),
 });
 
+// ---------------------------------------------------------------- timekeeping
+
+export const timekeepingSettingsSchema = z.object({
+  dailyOvertimeMinutes: z.number().int().min(60, "At least 1 hour a day.").max(24 * 60),
+  weeklyOvertimeMinutes: z.number().int().min(60, "At least 1 hour a week.").max(7 * 24 * 60),
+  weekStartsOn: z.number().int().min(0).max(6),
+  timeZone: z.string().trim().min(1, "Choose the warehouse's time zone.").max(60),
+});
+
+const isoTime = z.string().datetime({ offset: true, message: "Enter a date and time." });
+
+/** A manager's correction to one shift. The reason is kept with the change. */
+export const shiftEditSchema = z.object({
+  clockIn: isoTime,
+  clockOut: isoTime.nullable(),
+  reason: z.string().trim().min(3, "Say why the time is being changed.").max(300),
+});
+
+/** Which week, and the browser's time zone (used until a manager sets the warehouse's). */
+export const timecardWeekSchema = z.object({
+  weekOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Choose a date.").optional(),
+  tz: z.string().trim().max(60).optional(),
+});
+
+// ---------------------------------------------------------------- problems (cases)
+
+export const caseKinds = [
+  "receiving_discrepancy",
+  "damage",
+  "missort",
+  "inventory_discrepancy",
+  "employee_error",
+  "system_exception",
+  "other",
+] as const;
+export type CaseKind = (typeof caseKinds)[number];
+
+/** What someone on the floor may report. Employee errors are only opened by managers. */
+export const floorCaseKinds = ["damage", "receiving_discrepancy", "missort", "inventory_discrepancy", "other"] as const;
+
+export const caseStatuses = ["open", "investigating", "resolved", "closed"] as const;
+export type CaseStatus = (typeof caseStatuses)[number];
+
+// A photo shrunk on the device: a data URL, at most about 1.5 MB.
+const casePhoto = z
+  .string()
+  .max(2_000_000, "That photo is too large.")
+  .regex(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/, "That is not a photo.");
+
+const caseRefs = {
+  trackingNumber: z.string().trim().max(60).optional(),
+  orderNumber: z.string().trim().max(60).optional(),
+  sku: z.string().trim().max(80).optional(),
+  shipmentId: z.string().uuid().optional(),
+  loadId: z.string().uuid().optional(),
+  gaylordId: z.string().uuid().optional(),
+};
+
+export const createCaseSchema = z.object({
+  kind: z.enum(caseKinds),
+  title: z.string().trim().min(3, "Give the problem a short title.").max(120),
+  details: z.string().trim().max(2000).optional(),
+  clientId: z.string().uuid().optional(),
+  jobId: z.string().uuid().optional(),
+  employeeId: z.string().uuid().optional(),
+  ownerUserId: z.string().uuid().optional(),
+  photo: casePhoto.optional(),
+  ...caseRefs,
+});
+
+export const updateCaseSchema = z.object({
+  status: z.enum(caseStatuses).optional(),
+  ownerUserId: z.string().uuid().nullable().optional(),
+  rootCause: z.string().trim().max(2000).nullable().optional(),
+  correctiveAction: z.string().trim().max(2000).nullable().optional(),
+  correctiveDueOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  correctiveDone: z.boolean().optional(),
+  errorConfirmed: z.boolean().optional(),
+});
+
+export const caseNoteSchema = z
+  .object({
+    text: z.string().trim().max(2000).optional(),
+    photo: casePhoto.optional(),
+  })
+  .refine((value) => Boolean(value.text || value.photo), "Write a note or add a photo.");
+
+export const floorProblemSchema = z.object({
+  kind: z.enum(floorCaseKinds),
+  details: z.string().trim().min(3, "Say what is wrong.").max(2000),
+  jobId: z.string().uuid().optional(),
+  photo: casePhoto.optional(),
+  ...caseRefs,
+});
+
 /** The one-time link a manager gives an employee to tie their own phone to them. */
 export const phoneClaimSchema = z.object({
   token: z.string().trim().min(20, "That phone link is not complete.").max(200),
@@ -200,6 +306,9 @@ export const updateEmployeeSchema = z.object({
   name: z.string().trim().min(1).max(80),
   badgeCode: code,
   departments: z.array(z.enum(departments)).min(1, "Choose at least one kind of work.").max(departments.length),
+  // Left out by older screens: then the stored values stay as they are.
+  employmentType: z.enum(["employee", "temp"]).optional(),
+  agency: z.string().trim().max(80).nullable().optional(),
 });
 
 export const completePackSchema = z.object({
@@ -229,6 +338,7 @@ export const createEmployeeSchema = z.object({
   departmentHome: z.enum(departments).optional(),
   departments: z.array(z.enum(departments)).max(departments.length).optional(),
   employmentType: z.enum(["employee", "temp"]).default("employee"),
+  agency: z.string().trim().max(80).optional(),
   clientId: z.string().uuid().optional(),
 });
 
@@ -435,7 +545,7 @@ export const createActivitySchema = z.object({
 });
 
 // The services a client is billed hourly for. One price per hour for each.
-export const hourlyServices = ["receiving", "unloading", "packing", "picking", "sorting"] as const;
+export const hourlyServices = ["receiving", "unloading", "packing", "picking", "sorting", "qc", "putaway", "returns", "replenishment", "cycle_count"] as const;
 
 export type HourlyService = (typeof hourlyServices)[number];
 

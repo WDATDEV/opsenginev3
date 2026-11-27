@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 import { useReloadClientNav, useSession } from "@/components/shell";
 import { Field, Flash, Notice, PageTitle, SkeletonList, Spinner, Switch, useResource } from "@/components/ui";
-import { ApiError, CLIENT_SERVICES, canManage, canManageJobs, money, post } from "@/lib/api";
+import { ApiError, CLIENT_SERVICES, WORK_ONLY_SERVICES, canManage, canManageJobs, money, post } from "@/lib/api";
 import type { ClientRecord } from "@/components/client-dashboard";
 
 const SERVICE_HINT: Record<string, string> = {
@@ -15,6 +15,11 @@ const SERVICE_HINT: Record<string, string> = {
   packing: "Who packed which order, recorded by badge.",
   picking: "Who picked what, recorded by badge.",
   sorting: "Scan packages into a carrier bin. Work on the Sorting page.",
+  qc: "Inspections and quality checks. Runs as tasks on Jobs.",
+  putaway: "Moving received stock to its location. Runs as tasks on Jobs.",
+  returns: "Processing customer returns. Runs as tasks on Jobs.",
+  replenishment: "Refilling pick locations from reserve. Runs as tasks on Jobs.",
+  cycle_count: "Counting stock by location. Runs as tasks on Jobs.",
   people: "Badges and which departments each person may work.",
   checkin: "Clock in at the gate or floor phone.",
   reports: "Hours and charges rolled up by job.",
@@ -28,6 +33,11 @@ const HOURLY: [string, string][] = [
   ["packing", "Packing"],
   ["picking", "Picking"],
   ["sorting", "Sorting"],
+  ["qc", "Quality control"],
+  ["putaway", "Putaway"],
+  ["returns", "Returns"],
+  ["replenishment", "Replenishment"],
+  ["cycle_count", "Cycle counts"],
 ];
 
 // Prices that are not per hour. Each one is tied to the work billing already counts.
@@ -193,7 +203,7 @@ function HourlyPrices({
       <h2 className="font-semibold">3. Hourly prices</h2>
       <p className="mt-1 text-sm text-muted">What {client.name} pays for each hour of work. Leave a service empty if it is not billed by the hour.</p>
       <div className="mt-4 divide-y divide-black/5">
-        {HOURLY.map(([service, label]) => (
+        {HOURLY.filter(([service]) => !WORK_ONLY_SERVICES.has(service) || client.enabledServices.includes(service) || current(service) !== "").map(([service, label]) => (
           <div key={service} className="flex items-center justify-between gap-3 py-3">
             <label htmlFor={`hourly-${service}`} className="font-medium">
               {label}

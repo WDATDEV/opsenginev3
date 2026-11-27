@@ -22,7 +22,6 @@ import type { ClientService, addTaskTimeSchema, createJobWorkSchema } from "@ops
 import { assertClientVisible, canSeeClient, ForbiddenError, type Principal } from "@opsengine/kernel";
 import { assertClientService, enabledServiceList } from "../clients/access.js";
 import { DbService } from "../db.service.js";
-import { jobWorkCodes } from "../tracking/job-work.js";
 import { taskLog } from "../tracking/task-log.js";
 
 function isUnique(err: unknown): boolean {
@@ -218,57 +217,17 @@ export class JobsService {
     return { message: `${job.reference} is closed.` };
   }
 
-  /** Puts someone on the crew and makes sure they have a task, because the floor phone shows only tasks. */
+  /**
+   * Puts someone on the crew. It adds no task: tasks are added only on purpose.
+   * The floor phone still offers the job's work to a crew member who has no task of their own.
+   */
   async assign(
     principal: Principal,
     jobId: string,
     employeeId: string,
     schedule?: { startAt?: string | null; activityCode?: string },
   ) {
-    const result = await this.addToCrew(principal, jobId, employeeId, schedule);
-    const job = await this.requireJob(principal, jobId);
-    if (job.status !== "done") {
-      await this.ensureTask(this.db.db, job, await this.activeEmployee(employeeId), schedule?.activityCode);
-    }
-    return result;
-  }
-
-  /** Gives this person the job's unclaimed task, or one named after the job if none is waiting. */
-  private async ensureTask(
-    conn: Pick<typeof this.db.db, "select" | "update" | "insert">,
-    job: typeof jobs.$inferSelect,
-    person: { id: string },
-    activityCode?: string,
-  ) {
-    const open = await conn
-      .select()
-      .from(tasks)
-      .where(and(eq(tasks.jobId, job.id), ne(tasks.status, "done")))
-      .orderBy(asc(tasks.createdAt));
-    if (open.some((task) => task.assigneeId === person.id)) return;
-    const waiting = open.find((task) => !task.assigneeId);
-    if (waiting) {
-      await conn.update(tasks).set({ assigneeId: person.id }).where(eq(tasks.id, waiting.id));
-      return;
-    }
-    let code = activityCode ?? null;
-    if (!code) {
-      const named = jobWorkCodes(job.title);
-      if (named?.length === 1) {
-        const [client] = await conn.select().from(clientRecords).where(eq(clientRecords.id, job.clientId)).limit(1);
-        const kinds = await conn.select().from(activityTypes).where(eq(activityTypes.code, named[0]!));
-        const kind = kinds.find((row) => row.active && (row.clientId == null || row.clientId === job.clientId));
-        if (kind && enabledServiceList(client?.enabledServices).includes(kind.department as ClientService)) code = kind.code;
-      }
-    }
-    await conn.insert(tasks).values({
-      title: job.title,
-      status: "open",
-      clientId: job.clientId,
-      jobId: job.id,
-      assigneeId: person.id,
-      activityCode: code,
-    });
+    return this.addToCrew(principal, jobId, employeeId, schedule);
   }
 
   /** Adds one task from a confirmed chat card, with its person on the crew. Never makes a duplicate. */
@@ -407,7 +366,6 @@ export class JobsService {
             .where(and(eq(jobAssignees.jobId, job.id), eq(jobAssignees.employeeId, person.id)))
             .limit(1);
           if (!onCrew) await tx.insert(jobAssignees).values({ jobId: job.id, employeeId: person.id });
-          await this.ensureTask(tx, { ...current, ...patch }, person);
         }
         const reference = patch.reference ?? current.reference;
         const changes = [

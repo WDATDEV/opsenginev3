@@ -2,8 +2,12 @@ const TITLE_WORDS: [string, RegExp][] = [
   ["unload_trailer", /\b(unload|unloads|unloading|unloaded|offload|offloading)\b/],
   ["pack_orders", /\b(pack|packs|packing|packed)\b/],
   ["pick_batch", /\b(pick|picks|picking|picked)\b/],
-  ["receive_shipment", /\b(receive|receives|receiving|received|count|counts|counting)\b/],
+  // "Cycle count" is its own work, not receiving.
+  ["receive_shipment", /\b(receive|receives|receiving|received|(?<!cycle )count|(?<!cycle )counts|(?<!cycle )counting)\b/],
   ["inspect", /\b(inspect|inspects|inspecting|inspection)\b/],
+  ["qc_check", /\b(qc|quality check|quality control)\b/],
+  ["replenish", /\b(replenish|replenishes|replenishing|replenishment)\b/],
+  ["cycle_count", /\b(cycle count|cycle counts|cycle counting)\b/],
   ["putaway", /\b(putaway|put away)\b/],
   ["sort_gaylord", /\b(sort|sorts|sorting|sorted)\b/],
   ["kitting", /\b(kit|kits|kitting)\b/],

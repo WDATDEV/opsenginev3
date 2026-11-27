@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useSession } from "@/components/shell";
 import { Avatar, Badge, EmptyRow, Field, Flash, MoreButton, Notice, PageTitle, SearchBox, Segmented, SkeletonList, Stat, StatGrid, usePaged, useResource } from "@/components/ui";
 import { ApiError, canManage, post, when } from "@/lib/api";
+import { problemHref } from "@/lib/problems";
 
 type Board = {
   loads: {
@@ -214,6 +215,11 @@ function LoadCard({
           <p className="mt-0.5 text-sm capitalize text-muted">
             {[load.kind, load.dock, load.clientName, load.jobReference, load.seal ? `Seal ${load.seal}` : null].filter(Boolean).join(" · ")}
           </p>
+          {manage ? (
+            <a className="mt-1 inline-block text-sm text-moss hover:underline" href={problemHref({ kind: "damage", loadId: load.id, clientId: load.clientId, title: `${load.reference}: ` })}>
+              Open a problem
+            </a>
+          ) : null}
         </div>
         {load.palletCount != null ? (
           <div className="flex gap-4 text-right">

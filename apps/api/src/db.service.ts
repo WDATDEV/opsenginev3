@@ -66,15 +66,22 @@ export class DbService implements OnModuleInit {
       ["pack_orders", "Pack orders", "packing", true],
       ["pick_batch", "Pick batch", "picking", true],
       ["receive_shipment", "Count and receive", "receiving", true],
-      ["inspect", "Inspect", "receiving", true],
-      ["putaway", "Putaway", "receiving", true],
+      ["inspect", "Inspect", "qc", true],
+      ["putaway", "Putaway", "putaway", true],
       ["unload_trailer", "Unload trailer", "unloading", true],
       ["sort_gaylord", "Sort to carrier", "sorting", true],
       ["kitting", "Kitting", "packing", true],
       ["labeling", "Labeling", "packing", true],
-      ["returns", "Returns", "receiving", true],
+      ["returns", "Returns", "returns", true],
       ["indirect", "Internal work", "indirect", false],
+      ["qc_check", "Quality check", "qc", true],
+      ["replenish", "Replenish pick locations", "replenishment", true],
+      ["cycle_count", "Cycle count", "cycle_count", true],
+      ["cleaning", "Cleaning", "indirect", false],
+      ["maintenance", "Maintenance", "indirect", false],
+      ["closing", "Daily closing", "indirect", false],
     ] as const;
+    await this.moveWorkToOwnDepartments();
     const rows = await this.db.select({ code: activityTypes.code, clientId: activityTypes.clientId }).from(activityTypes);
     const have = new Set(rows.filter((row) => row.clientId == null).map((row) => row.code));
     const missing = standard.filter(([code]) => !have.has(code));
@@ -84,6 +91,50 @@ export class DbService implements OnModuleInit {
       .values(missing.map(([code, name, department, billable]) => ({ code, name, department, billable })))
       .onConflictDoNothing();
     this.log.log(`Added ${missing.length} missing standard work type(s).`);
+  }
+
+  /**
+   * Inspect, putaway and returns used to be filed under receiving. Each now has its own department.
+   * Runs once: only while a standard type is still under receiving. Nothing a client already had stops working:
+   * clients with receiving get the new service turned on and keep their receiving hourly price for it,
+   * and people who work receiving may also do this work.
+   */
+  private async moveWorkToOwnDepartments() {
+    const moves = [
+      ["inspect", "qc", "Quality control per hour"],
+      ["putaway", "putaway", "Putaway per hour"],
+      ["returns", "returns", "Returns per hour"],
+    ] as const;
+    await this.db.transaction(async (tx) => {
+      const moved: (typeof moves)[number][] = [];
+      for (const move of moves) {
+        const [code, department] = move;
+        const rows = await tx.execute<{ id: string }>(
+          sql`update tracking.activity_types set department = ${department}
+              where code = ${code} and client_id is null and department = 'receiving' returning id`,
+        );
+        if (rows.length > 0) moved.push(move);
+      }
+      if (moved.length === 0) return;
+      for (const [, department, label] of moved) {
+        await tx.execute(sql`
+          update clients.clients set enabled_services = enabled_services || to_jsonb(${department}::text)
+          where enabled_services ? 'receiving' and not enabled_services ? ${department}`);
+        await tx.execute(sql`
+          insert into clients.rate_cards (client_id, activity_code, department, unit, rate_cents, label)
+          select r.client_id, null, ${department}, 'hour', r.rate_cents, ${label}
+          from clients.rate_cards r
+          where r.department = 'receiving' and r.unit = 'hour' and r.activity_code is null
+            and not exists (
+              select 1 from clients.rate_cards x
+              where x.client_id = r.client_id and x.department = ${department} and x.unit = 'hour'
+            )`);
+        await tx.execute(sql`
+          update tracking.employees set departments = departments || to_jsonb(${department}::text)
+          where departments ? 'receiving' and not departments ? ${department}`);
+      }
+      this.log.log(`Moved ${moved.map(([code]) => code).join(", ")} out of receiving into their own departments.`);
+    });
   }
 
   /** Connector keys saved before encryption was added are plain text. Encrypt them once, on boot. */

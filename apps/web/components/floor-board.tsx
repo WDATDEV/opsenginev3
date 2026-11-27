@@ -75,7 +75,11 @@ function statusOf(person: Person): Status {
   return person.paused ? "paused" : "idle";
 }
 
+// Departments whose stored name does not read well with just a capital letter.
+const DEPARTMENT_NAMES: Record<string, string> = { qc: "Quality control", cycle_count: "Cycle counts", indirect: "Internal work" };
+
 function capitalize(text: string) {
+  if (DEPARTMENT_NAMES[text]) return DEPARTMENT_NAMES[text];
   return text ? `${text.charAt(0).toUpperCase()}${text.slice(1)}` : text;
 }
 
@@ -163,7 +167,11 @@ export function FloorBoard() {
   const onShift = tally.working + tally.paused + tally.idle + tally.meal;
   const listTitle = query ? "Search results" : department ? `${capitalize(department)} now` : VIEW_TITLES[view];
   const filtered = Boolean(query || department || view !== "here");
-  const departments = data && (data.counts.indirect ?? 0) > 0 ? [...DEPARTMENTS, "indirect"] : [...DEPARTMENTS];
+  // The main departments always show. The rest show only while someone is working in them.
+  const departments = [
+    ...DEPARTMENTS,
+    ...Object.keys(data?.counts ?? {}).filter((key) => !(DEPARTMENTS as readonly string[]).includes(key) && (data?.counts[key] ?? 0) > 0),
+  ];
   const busiest = Math.max(1, ...departments.map((key) => data?.counts[key] ?? 0));
   const feed = data ? (allFeed ? data.feed : data.feed.slice(0, FEED_PREVIEW)) : [];
 

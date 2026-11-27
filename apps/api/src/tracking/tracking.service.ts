@@ -41,10 +41,12 @@ import {
   trackingPolicy,
   type Department,
 } from "@opsengine/tracking";
-import type { ClientService } from "@opsengine/contracts";
+import { departments, type ClientService } from "@opsengine/contracts";
 import { assertClientService, enabledServiceList } from "../clients/access.js";
 import { DbService } from "../db.service.js";
 import { jobWorkCodes, workFitsJob } from "./job-work.js";
+import { openCase } from "../work/case-store.js";
+import { carrierMismatch, carrierName } from "./carrier.js";
 import { shiftWork } from "./my-records.js";
 import { shiftTime } from "./shift-time.js";
 
@@ -85,18 +87,10 @@ function clean(value: string) {
   return value.trim().toUpperCase();
 }
 
+const KNOWN_DEPARTMENTS = new Set<string>(departments);
+
 function asDepartment(value: string): Department {
-  if (
-    value === "packing" ||
-    value === "picking" ||
-    value === "receiving" ||
-    value === "unloading" ||
-    value === "sorting" ||
-    value === "indirect"
-  ) {
-    return value;
-  }
-  return "indirect";
+  return KNOWN_DEPARTMENTS.has(value) ? (value as Department) : "indirect";
 }
 
 function packSentence(input: {
@@ -209,6 +203,11 @@ export class TrackingService {
       receiving: 0,
       unloading: 0,
       sorting: 0,
+      qc: 0,
+      putaway: 0,
+      returns: 0,
+      replenishment: 0,
+      cycle_count: 0,
       indirect: 0,
     };
 
@@ -1251,6 +1250,7 @@ export class TrackingService {
     departmentHome?: Department;
     departments?: Department[];
     employmentType: "employee" | "temp";
+    agency?: string;
     clientId?: string;
   }) {
     const owner = input.clientId ? await assertClientService(this.db.db, input.clientId, "people") : null;
@@ -1270,6 +1270,7 @@ export class TrackingService {
           departmentHome: allowed[0] ?? "packing",
           departments: allowed,
           employmentType: input.employmentType,
+          agency: input.employmentType === "temp" ? input.agency?.trim() || null : null,
           clientId: owner?.id ?? null,
         })
         .returning();
@@ -1279,7 +1280,11 @@ export class TrackingService {
   }
 
   /** Changes name, badge, and the work someone may do. Work already running is left alone; the new list applies to the next switch. */
-  async updateEmployee(principal: Principal, id: string, input: { name: string; badgeCode: string; departments: Department[] }) {
+  async updateEmployee(
+    principal: Principal,
+    id: string,
+    input: { name: string; badgeCode: string; departments: Department[]; employmentType?: "employee" | "temp"; agency?: string | null },
+  ) {
     const allowed = [...new Set(input.departments)];
     if (allowed.length === 0) throw new TrackingError("Choose at least one kind of work.");
     const badgeCode = clean(input.badgeCode);
@@ -1297,9 +1302,12 @@ export class TrackingService {
           if (taken && taken.id !== employee.id) throw new TrackingError("That badge is already used by someone else.");
         }
         const departmentHome = allowed.includes(employee.departmentHome as Department) ? employee.departmentHome : allowed[0]!;
+        const employmentType = input.employmentType ?? employee.employmentType;
+        // Only temps come from an agency.
+        const agency = employmentType === "temp" ? (input.agency === undefined ? employee.agency : input.agency?.trim() || null) : null;
         const [updated] = await tx
           .update(employees)
-          .set({ name: input.name.trim(), badgeCode, departments: allowed, departmentHome })
+          .set({ name: input.name.trim(), badgeCode, departments: allowed, departmentHome, employmentType, agency })
           .where(eq(employees.id, employee.id))
           .returning();
         if (!updated) throw new TrackingError("Could not update that person.");
@@ -1307,6 +1315,8 @@ export class TrackingService {
           updated.name !== employee.name ? `name to ${updated.name}` : "",
           updated.badgeCode !== employee.badgeCode ? `badge to ${updated.badgeCode}` : "",
           JSON.stringify(allowed) !== JSON.stringify(employee.departments ?? [employee.departmentHome]) ? `work to ${allowed.join(", ")}` : "",
+          updated.employmentType !== employee.employmentType ? `type to ${updated.employmentType}` : "",
+          (updated.agency ?? null) !== (employee.agency ?? null) ? `agency to ${updated.agency ?? "none"}` : "",
         ].filter(Boolean);
         if (changes.length > 0) {
           await this.audit(tx, principal.id, "tracking.employee_updated", "employee", employee.id, `${principal.name} changed ${employee.name}: ${changes.join("; ")}.`);
@@ -1767,6 +1777,14 @@ export class TrackingService {
         duplicateGaylordCode: duplicateCode,
       });
       if (!check.ok) throw new TrackingError(check.reason);
+      // A package in the wrong carrier's bin can get lost in the first mile. A scan is refused;
+      // a placement without a scan is kept (with its reason) and opens a missort case for a manager.
+      const mismatch = carrierMismatch(trackingNumber, gaylord.carrier);
+      if (mismatch && input.method === "scan") {
+        throw new TrackingError(
+          `This looks like a ${carrierName(mismatch.expected)} package, but ${gaylord.code} is a ${carrierName(gaylord.carrier)} bin. Put it in a ${carrierName(mismatch.expected)} bin.`,
+        );
+      }
       let deviceId: string | null = null;
       if (input.deviceCode) {
         const device = await this.deviceByCode(tx, input.deviceCode);
@@ -1791,10 +1809,26 @@ export class TrackingService {
       if (!created) throw new TrackingError("Could not record that scan.");
       const segmentId = await this.touchSegment(tx, employee, shift.id, "sorting", deviceId);
       void segmentId;
-      const message =
+      let message =
         input.method === "scan"
           ? `${employee.name} scanned ${trackingNumber} into ${gaylord.code} (${gaylord.carrier.toUpperCase()}).`
           : `${employee.name} placed ${trackingNumber} into ${gaylord.code} without a scan. ${input.reason}`;
+      if (mismatch) {
+        await openCase(
+          tx,
+          {
+            kind: "missort",
+            title: `${trackingNumber} looks like ${carrierName(mismatch.expected)} but is in ${gaylord.code} (${carrierName(gaylord.carrier)})`,
+            details: input.reason ?? null,
+            clientId: gaylord.clientId,
+            trackingNumber,
+            gaylordId: gaylord.id,
+            reportedByEmployeeId: employee.id,
+          },
+          { authorName: "Ops Engine", text: `${employee.name} placed it without a scan. Reason given: ${input.reason ?? "none"}` },
+        );
+        message += ` It looks like a ${carrierName(mismatch.expected)} package, so a missort case was opened for a manager.`;
+      }
       await this.audit(tx, employee.id, "tracking.sort_scanned", "sort_scan", created.id, message);
       return { message };
     });

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useState } from "react";
-import { api, canOpenService, CLIENT_SERVICES, hasSection, post, type User } from "@/lib/api";
+import { api, canOpenService, CLIENT_SERVICES, hasSection, hasServicePage, post, type User } from "@/lib/api";
 import { initials } from "@/components/ui";
 
 const SessionContext = createContext<User | null>(null);
@@ -39,6 +39,8 @@ const FLOOR_LINKS = [
 const ADMIN_LINKS = [
   ["/", "Clients"],
   ["/floor", "Floor"],
+  ["/timecards", "Timecards"],
+  ["/problems", "Problems"],
   // The iPads that may run the floor phone. Only owners and warehouse managers approve them.
   ["/floor-devices", "Floor devices"],
 ] as const;
@@ -46,7 +48,7 @@ const ADMIN_LINKS = [
 function linksFor(role?: string): readonly (readonly [string, string])[] {
   if (role === "external_customer") return [["/", "Clients"]];
   if (role === "client_services") return [["/", "Clients"]];
-  if (role === "hr_finance") return [["/", "Clients"], ["/floor", "Floor"]];
+  if (role === "hr_finance") return [["/", "Clients"], ["/floor", "Floor"], ["/timecards", "Timecards"], ["/problems", "Problems"]];
   if (role === "owner" || role === "warehouse_manager") return ADMIN_LINKS;
   return FLOOR_LINKS;
 }
@@ -274,7 +276,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
 
   const insideClient = navClients?.find((client) => client.id === clientId) ?? null;
   const clientServices = insideClient
-    ? CLIENT_SERVICES.filter(([service]) => insideClient.enabledServices.includes(service) && canOpenService(user?.role, service))
+    ? CLIENT_SERVICES.filter(([service]) => insideClient.enabledServices.includes(service) && hasServicePage(service) && canOpenService(user?.role, service))
     : [];
   const timeActive =
     !pathname.startsWith("/mail") && !pathname.startsWith("/settings") && !pathname.startsWith("/chat") && !pathname.startsWith("/users");

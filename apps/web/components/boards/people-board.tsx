@@ -13,15 +13,45 @@ type Employee = {
   departmentHome: string;
   departments?: string[] | null;
   employmentType: string;
+  agency?: string | null;
   active: boolean;
   clientId: string | null;
 };
 
-const DEPARTMENTS = ["packing", "picking", "receiving", "unloading", "sorting", "indirect"];
-const LABELS: Record<string, string> = { indirect: "Internal work" };
+const DEPARTMENTS = ["packing", "picking", "receiving", "unloading", "sorting", "qc", "putaway", "returns", "replenishment", "cycle_count", "indirect"];
+const LABELS: Record<string, string> = { indirect: "Internal work", qc: "Quality control", cycle_count: "Cycle counts" };
 
 function workOf(person: Employee) {
   return person.departments?.length ? person.departments : [person.departmentHome];
+}
+
+/** Employee or temp, and for a temp the staffing agency their timecards go to. */
+function EmploymentFields({
+  type,
+  agency,
+  onType,
+  onAgency,
+}: {
+  type: "employee" | "temp";
+  agency: string;
+  onType: (next: "employee" | "temp") => void;
+  onAgency: (next: string) => void;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <Field label="Type">
+        <select className="field" value={type} onChange={(event) => onType(event.target.value as "employee" | "temp")}>
+          <option value="employee">Employee</option>
+          <option value="temp">Temp (from an agency)</option>
+        </select>
+      </Field>
+      {type === "temp" ? (
+        <Field label="Agency" hint="Their weekly timecards print together by agency.">
+          <input className="field" maxLength={80} autoComplete="off" value={agency} onChange={(event) => onAgency(event.target.value)} placeholder="Agency name" />
+        </Field>
+      ) : null}
+    </div>
+  );
 }
 
 function WorkChips({ offered, picked, onChange }: { offered: string[]; picked: string[]; onChange: (next: string[]) => void }) {
@@ -64,6 +94,8 @@ function EditPerson({
   const [name, setName] = useState(person.name);
   const [badgeCode, setBadgeCode] = useState(person.badgeCode);
   const [picked, setPicked] = useState<string[]>(workOf(person));
+  const [type, setType] = useState<"employee" | "temp">(person.employmentType === "temp" ? "temp" : "employee");
+  const [agency, setAgency] = useState(person.agency ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Keep work they already have visible, even if the client turned that service off, so it can be removed.
@@ -82,6 +114,8 @@ function EditPerson({
         name,
         badgeCode,
         departments: DEPARTMENTS.filter((item) => picked.includes(item)),
+        employmentType: type,
+        agency: type === "temp" ? agency.trim() || null : null,
       });
       onSaved(result.message);
     } catch (err) {
@@ -101,6 +135,7 @@ function EditPerson({
           <input className="field font-mono" required autoComplete="off" value={badgeCode} onChange={(event) => setBadgeCode(event.target.value)} />
         </Field>
       </div>
+      <EmploymentFields type={type} agency={agency} onType={setType} onAgency={setAgency} />
       <fieldset>
         <legend className="mb-1.5 text-sm font-medium text-ink/80">Can do (choose one or more)</legend>
         <WorkChips offered={choices} picked={picked} onChange={setPicked} />
@@ -129,6 +164,8 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string; e
     ? DEPARTMENTS.filter((item) => client.enabledServices?.includes(item))
     : DEPARTMENTS;
   const [picked, setPicked] = useState<string[]>([]);
+  const [newType, setNewType] = useState<"employee" | "temp">("employee");
+  const [newAgency, setNewAgency] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -148,13 +185,16 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string; e
         name,
         badgeCode,
         departments: picked,
-        employmentType: "employee",
+        employmentType: newType,
+        ...(newType === "temp" && newAgency.trim() ? { agency: newAgency.trim() } : {}),
         ...(client ? { clientId: client.id } : {}),
       });
       setMessage(`${name} is on the floor.`);
       setName("");
       setBadgeCode("");
       setPicked([]);
+      setNewType("employee");
+      setNewAgency("");
       board.reload();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not add that person.");
@@ -198,6 +238,7 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string; e
             <Field label="Badge">
               <input className="field font-mono" required autoComplete="off" value={badgeCode} onChange={(event) => setBadgeCode(event.target.value)} />
             </Field>
+            <EmploymentFields type={newType} agency={newAgency} onType={setNewType} onAgency={setNewAgency} />
             <fieldset>
               <legend className="mb-1.5 text-sm font-medium text-ink/80">Can do (choose one or more)</legend>
               {offered.length === 0 ? (
@@ -223,7 +264,10 @@ export function PeopleBoard({ client }: { client?: { id: string; name: string; e
                     {person.name}
                     {person.active ? "" : " (inactive)"}
                   </p>
-                  <p className="truncate font-mono text-xs text-muted">{person.badgeCode}</p>
+                  <p className="truncate font-mono text-xs text-muted">
+                    {person.badgeCode}
+                    {person.employmentType === "temp" ? <span className="font-sans"> · Temp{person.agency ? `, ${person.agency}` : ""}</span> : null}
+                  </p>
                 </div>
                 <div className="col-start-2 flex flex-wrap gap-1 sm:col-start-3">
                   {workOf(person).map((item) => (

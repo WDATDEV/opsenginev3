@@ -23,6 +23,7 @@ import { assertClientVisible, canSeeClient, ForbiddenError, type Principal } fro
 import { assertClientService, enabledServiceList } from "../clients/access.js";
 import { DbService } from "../db.service.js";
 import { taskLog } from "../tracking/task-log.js";
+import { closeJobIfFinished } from "./auto-close.js";
 
 function isUnique(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
@@ -694,10 +695,11 @@ export class JobsService {
     }
     await this.db.db.update(tasks).set({ status: "done" }).where(eq(tasks.id, task.id));
     const ended = task.assigneeId ? await this.endAssigneeTimer(job.id, task) : false;
+    const closed = await closeJobIfFinished(this.db.db, job.id);
+    const done = ended ? `${task.title} is done. The timer on the floor phone is ended.` : `${task.title} is done.`;
     return {
-      message: ended
-        ? `${task.title} is done. The timer on the floor phone is ended.`
-        : `${task.title} is done.`,
+      message: closed ? `${done} Every task is done, so ${job.reference} is closed.` : done,
+      jobClosed: Boolean(closed),
     };
   }
 

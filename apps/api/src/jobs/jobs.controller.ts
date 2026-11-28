@@ -72,7 +72,20 @@ export class JobsController {
   @Post(":id/tasks/:taskId/done")
   taskDone(@CurrentUser() ctx: RequestContext, @Param("id") id: string, @Param("taskId") taskId: string) {
     authorize(ctx, "job.manage");
-    return this.jobs.completeTask(ctx.principal, id, taskId);
+    return this.finishTask(ctx, id, taskId);
+  }
+
+  // The last task done closes the job, and the job is billed the same way as Close job.
+  private async finishTask(ctx: RequestContext, id: string, taskId: string) {
+    const result = await this.jobs.completeTask(ctx.principal, id, taskId);
+    if (!result.jobClosed) return result;
+    try {
+      const billed = await this.billing.closeOut(ctx.principal, id, can(ctx.principal, "billing.approve"));
+      return { message: `${result.message} ${billed.message}` };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "Billing did not run.";
+      return { message: `${result.message} No invoice was made: ${reason}` };
+    }
   }
 
   @Post(":id/tasks")

@@ -44,6 +44,8 @@ import {
 import { departments, type ClientService } from "@opsengine/contracts";
 import { assertClientService, enabledServiceList } from "../clients/access.js";
 import { DbService } from "../db.service.js";
+import { BillingService } from "../billing/billing.service.js";
+import { closeJobIfFinished } from "../jobs/auto-close.js";
 import { jobWorkCodes, workFitsJob } from "./job-work.js";
 import { openCase } from "../work/case-store.js";
 import { carrierMismatch, carrierName } from "./carrier.js";
@@ -116,7 +118,10 @@ function packSentence(input: {
 
 @Injectable()
 export class TrackingService {
-  constructor(@Inject(DbService) private readonly db: DbService) {}
+  constructor(
+    @Inject(DbService) private readonly db: DbService,
+    @Inject(BillingService) private readonly billing: BillingService,
+  ) {}
 
   policy() {
     return trackingPolicy;
@@ -855,36 +860,47 @@ export class TrackingService {
    * With a taskId it ends that task: the running or paused one, or any other open task of theirs.
    */
   async stopTask(badge: string, taskId?: string) {
-    return this.inTx(async (tx) => {
-      const employee = await this.employeeByBadge(tx, badge);
-      await this.requireReady(tx, employee);
-      const open = await this.openSegment(tx, employee.id);
-      const [last] = open
-        ? []
-        : await tx
-            .select()
-            .from(segments)
-            .where(eq(segments.employeeId, employee.id))
-            .orderBy(desc(segments.startedAt))
-            .limit(1);
-      const target =
-        open ?? (last && (last.endReason === "pause" || last.endReason === "meal") ? last : null);
-      const targetId = target ? target.note ?? (target.jobId ? `job:${target.jobId}:${target.taskCode}` : null) : null;
-      if (taskId && taskId !== targetId) return this.endIdleTask(tx, employee, taskId);
-      if (!target) throw new TrackingError(`${employee.name} has nothing running to finish.`);
-      const now = new Date();
-      await tx.update(segments).set({ endedAt: target.endedAt ?? now, endReason: "complete" }).where(eq(segments.id, target.id));
-      const minutes = Math.max(0, Math.round(((target.endedAt ?? now).getTime() - target.startedAt.getTime()) / 60_000));
-      const span = minutes === 0 ? "less than a minute" : `${minutes} min`;
-      const job = target.jobId ? await this.jobById(tx, target.jobId) : null;
-      const message = job
-        ? `${employee.name} finished. ${span} is on ${job.reference}.`
-        : `${employee.name} finished. ${span} recorded.`;
-      await this.audit(tx, employee.id, "tracking.task_stopped", "activity_segment", target.id, message);
-      if (target.note) await this.completeTaskById(tx, employee.id, target.note);
-      else if (target.jobId) await this.completeMatchingTask(tx, employee.id, target.jobId, target.taskCode);
-      return { message };
+    const result = await this.inTx(async (tx) => {
+      const ended = await this.stopTaskTx(tx, badge, taskId);
+      const closed = ended.jobId ? await closeJobIfFinished(tx, ended.jobId) : null;
+      return { message: closed ? `${ended.message} Every task is done, so ${closed.reference} is closed.` : ended.message, closedJobId: closed?.id ?? null };
     });
+    if (result.closedJobId) {
+      // Charges are drafted after the close is saved. A billing problem never undoes the finish.
+      await this.billing.draftForClosedJob(result.closedJobId).catch(() => null);
+    }
+    return { message: result.message };
+  }
+
+  private async stopTaskTx(tx: Conn, badge: string, taskId?: string): Promise<{ message: string; jobId: string | null }> {
+    const employee = await this.employeeByBadge(tx, badge);
+    await this.requireReady(tx, employee);
+    const open = await this.openSegment(tx, employee.id);
+    const [last] = open
+      ? []
+      : await tx
+          .select()
+          .from(segments)
+          .where(eq(segments.employeeId, employee.id))
+          .orderBy(desc(segments.startedAt))
+          .limit(1);
+    const target =
+      open ?? (last && (last.endReason === "pause" || last.endReason === "meal") ? last : null);
+    const targetId = target ? target.note ?? (target.jobId ? `job:${target.jobId}:${target.taskCode}` : null) : null;
+    if (taskId && taskId !== targetId) return this.endIdleTask(tx, employee, taskId);
+    if (!target) throw new TrackingError(`${employee.name} has nothing running to finish.`);
+    const now = new Date();
+    await tx.update(segments).set({ endedAt: target.endedAt ?? now, endReason: "complete" }).where(eq(segments.id, target.id));
+    const minutes = Math.max(0, Math.round(((target.endedAt ?? now).getTime() - target.startedAt.getTime()) / 60_000));
+    const span = minutes === 0 ? "less than a minute" : `${minutes} min`;
+    const job = target.jobId ? await this.jobById(tx, target.jobId) : null;
+    const message = job
+      ? `${employee.name} finished. ${span} is on ${job.reference}.`
+      : `${employee.name} finished. ${span} recorded.`;
+    await this.audit(tx, employee.id, "tracking.task_stopped", "activity_segment", target.id, message);
+    if (target.note) await this.completeTaskById(tx, employee.id, target.note);
+    else if (target.jobId) await this.completeMatchingTask(tx, employee.id, target.jobId, target.taskCode);
+    return { message, jobId: target.jobId };
   }
 
   // Ends a task that is not on the clock right now. Its recorded time stays; the clock is not touched.
@@ -904,7 +920,7 @@ export class TrackingService {
     await tx.update(tasks).set({ status: "done" }).where(eq(tasks.id, task.id));
     const message = `${employee.name} ended ${task.title}.`;
     await this.audit(tx, employee.id, "tracking.task_stopped", "task", task.id, message);
-    return { message };
+    return { message, jobId: task.jobId };
   }
 
   private async completeTaskById(tx: Conn, employeeId: string, taskId: string) {

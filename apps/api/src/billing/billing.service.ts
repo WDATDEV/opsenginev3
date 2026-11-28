@@ -119,6 +119,20 @@ export class BillingService {
     const [job] = await this.db.db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
     if (!job) throw new NotFoundException("That job is not on file.");
     assertClientVisible(principal, job.clientId);
+    return this.draftCharges(job);
+  }
+
+  /**
+   * A job the floor closed on its own: its charges are drafted, and they wait for someone who
+   * approves billing. No one signed in did this, so nothing is approved or invoiced here.
+   */
+  async draftForClosedJob(jobId: string) {
+    const [job] = await this.db.db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
+    if (!job) return null;
+    return this.draftCharges(job);
+  }
+
+  private async draftCharges(job: typeof jobs.$inferSelect) {
     const orm = this.db.db;
     const [rates, jobSegments, activities, jobLoads, jobShipments, packs, jobTasks] = await Promise.all([
       orm.select().from(rateCards).where(eq(rateCards.clientId, job.clientId)),

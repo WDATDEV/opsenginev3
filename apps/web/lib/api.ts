@@ -94,7 +94,6 @@ export const CLIENT_SERVICES = [
   ["replenishment", "Replenishment"],
   ["cycle_count", "Cycle counts"],
   ["people", "People"],
-  ["checkin", "Check-in"],
   ["reports", "Report"],
   ["invoices", "Invoices"],
 ] as const;

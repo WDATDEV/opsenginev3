@@ -21,7 +21,6 @@ const SERVICE_HINT: Record<string, string> = {
   replenishment: "Refilling pick locations from reserve. Runs as tasks on Jobs.",
   cycle_count: "Counting stock by location. Runs as tasks on Jobs.",
   people: "Badges and which departments each person may work.",
-  checkin: "Shows a Check-in page with this client's own staff. Clocking in works either way.",
   reports: "Hours and charges rolled up by job.",
   invoices: "Approved charges billed to this client.",
 };

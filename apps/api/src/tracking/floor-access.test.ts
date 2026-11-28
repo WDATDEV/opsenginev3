@@ -6,6 +6,13 @@ import { DEV_JWT_SECRET, jwtSecret } from "../auth/jwt-secret.js";
 import { LOGIN_LOCK_MS, LOGIN_MAX_FAILURES, LoginLimiter } from "../auth/login-limit.js";
 import { floorAllowed, hashDeviceToken, newDeviceToken, phoneMayAct } from "./floor-access.js";
 
+// Every controller with routes a station or a linked phone can reach.
+const FLOOR_CONTROLLERS = ["./tracking.controller.ts", "./timecards.controller.ts", "../work/cases.controller.ts"];
+
+function floorSources() {
+  return FLOOR_CONTROLLERS.map((file) => readFileSync(new URL(file, import.meta.url), "utf8").replace(/\r\n/g, "\n")).join("\n");
+}
+
 const person = (role: Principal["role"]): Principal => ({ id: "u", email: "a@example.test", name: "A", role, clientIds: null, sections: [] });
 
 describe("floor access", () => {
@@ -29,7 +36,7 @@ describe("floor access", () => {
   });
 
   it("guards every route that acts on a badge", () => {
-    const source = readFileSync(new URL("./tracking.controller.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+    const source = floorSources();
     const routes = [...source.matchAll(/@(Get|Post|Delete)\("([^"]+)"\)\n(\s+@UseGuards\((\w+)\)\n)?/g)];
     const open = routes.filter((route) => !route[4]).map((route) => route[2]);
     assert.deepEqual(open, []);
@@ -48,7 +55,7 @@ describe("floor access", () => {
   });
 
   it("lets a linked phone reach only the floor phone's own routes", () => {
-    const source = readFileSync(new URL("./tracking.controller.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+    const source = floorSources();
     const routes = [...source.matchAll(/@(Get|Post|Delete)\("([^"]+)"\)\n\s+@UseGuards\(StationAccessGuard\)\n/g)].map((route) => route[2]);
     assert.deepEqual(routes.sort(), [
       "badge/:badge",
@@ -63,8 +70,11 @@ describe("floor access", () => {
       "tasks/resume",
       "tasks/stop",
       "tasks/switch",
+      "badge/:badge/timecard",
+      "badge/:badge/timecard/confirm",
+      "tracking/badge/:badge/problem",
       "unloading/:id/crew",
-    ]);
+    ].sort());
   });
 });
 

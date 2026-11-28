@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useSession } from "@/components/shell";
 import { Badge, EmptyRow, Field, Flash, MoreButton, Notice, PageTitle, Progress, SearchBox, Segmented, SkeletonList, Stat, StatGrid, usePaged, useResource } from "@/components/ui";
 import { ApiError, canManage, post, when } from "@/lib/api";
+import { problemHref } from "@/lib/problems";
 
 type Shipment = {
   id: string;
@@ -194,17 +195,27 @@ function ShipmentCard({
           </div>
           <p className="mt-0.5 text-sm text-muted">{[shipment.clientName, shipment.jobReference, shipment.carrier].filter(Boolean).join(" · ")}</p>
         </div>
-        {manage && !closed ? (
-          <button
-            className="btn btn-sm"
-            type="button"
-            onClick={() => {
-              if (window.confirm(`Close shipment ${shipment.reference}? No more counts can be added.`)) void onAct(`/tracking/receiving/${shipment.id}/close`, {});
-            }}
-          >
-            Close shipment
-          </button>
-        ) : null}
+        <div className="flex flex-wrap gap-2">
+          {manage ? (
+            <a
+              className="btn btn-ghost btn-sm"
+              href={problemHref({ kind: "receiving_discrepancy", shipmentId: shipment.id, clientId: shipment.clientId, title: `Shipment ${shipment.reference}: ` })}
+            >
+              Open a problem
+            </a>
+          ) : null}
+          {manage && !closed ? (
+            <button
+              className="btn btn-sm"
+              type="button"
+              onClick={() => {
+                if (window.confirm(`Close shipment ${shipment.reference}? No more counts can be added.`)) void onAct(`/tracking/receiving/${shipment.id}/close`, {});
+              }}
+            >
+              Close shipment
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <div className="mt-3">

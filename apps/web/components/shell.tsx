@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, useState } from "react";
-import { api, canOpenService, CLIENT_SERVICES, hasSection, post, type User } from "@/lib/api";
+import { api, canOpenService, CLIENT_SERVICES, hasSection, hasServicePage, post, type User, WORK_ONLY_SERVICES } from "@/lib/api";
 import { initials } from "@/components/ui";
 
 const SessionContext = createContext<User | null>(null);
@@ -26,11 +26,8 @@ function clientIdFromPath(pathname: string) {
 
 const FLOOR_LINKS = [
   ["/", "Floor"],
-  ["/packing", "Packing"],
-  ["/picking", "Picking"],
-  ["/receiving", "Receiving"],
-  ["/unloading", "Unloading"],
-  ["/sorting", "Sorting"],
+  // Receiving, unloading, packing, picking and sorting share one page with a filter.
+  ["/floor-work", "Floor work"],
   ["/people", "People"],
   ["/checkin", "Check-in"],
 ] as const;
@@ -39,6 +36,8 @@ const FLOOR_LINKS = [
 const ADMIN_LINKS = [
   ["/", "Clients"],
   ["/floor", "Floor"],
+  ["/timecards", "Timecards"],
+  ["/problems", "Problems"],
   // The iPads that may run the floor phone. Only owners and warehouse managers approve them.
   ["/floor-devices", "Floor devices"],
 ] as const;
@@ -46,14 +45,26 @@ const ADMIN_LINKS = [
 function linksFor(role?: string): readonly (readonly [string, string])[] {
   if (role === "external_customer") return [["/", "Clients"]];
   if (role === "client_services") return [["/", "Clients"]];
-  if (role === "hr_finance") return [["/", "Clients"], ["/floor", "Floor"]];
+  if (role === "hr_finance") return [["/", "Clients"], ["/floor", "Floor"], ["/timecards", "Timecards"], ["/problems", "Problems"]];
   if (role === "owner" || role === "warehouse_manager") return ADMIN_LINKS;
   return FLOOR_LINKS;
 }
 
+// Floor work that belongs to a job. It sits on one "Floor work" page with a filter instead of one menu link each.
+const JOB_WORK = new Set(["unloading", "receiving", "packing", "sorting", "picking"]);
+
+function under(pathname: string, href: string) {
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
 function linkActive(pathname: string, href: string) {
   if (href === "/") return pathname === "/" || pathname === "/clients";
-  return pathname === href || pathname.startsWith(`${href}/`);
+  // The old single-kind pages still open by their address, so keep Floor work lit there too.
+  if (href.endsWith("/floor-work")) {
+    const base = href.slice(0, -"/floor-work".length);
+    return under(pathname, href) || [...JOB_WORK].some((kind) => under(pathname, `${base}/${kind}`));
+  }
+  return under(pathname, href);
 }
 
 // ---------------------------------------------------------------- icons
@@ -144,77 +155,6 @@ function SubLink({ href, label, active }: { href: string; label: string; active:
   );
 }
 
-// Floor work that belongs to a job. These sit under Jobs and only show when Jobs is expanded.
-const JOB_WORK = new Set(["unloading", "receiving", "packing", "sorting", "picking"]);
-
-function isJobWork(href: string) {
-  return JOB_WORK.has(href.split("/").filter(Boolean).pop() ?? "");
-}
-
-function JobsGroup({
-  href,
-  items,
-  pathname,
-}: {
-  href: string | null;
-  items: readonly (readonly [string, string])[];
-  pathname: string;
-}) {
-  const childActive = items.some(([item]) => pathname === item || pathname.startsWith(`${item}/`));
-  const [open, setOpen] = useState(childActive);
-
-  useEffect(() => {
-    if (childActive) setOpen(true);
-  }, [childActive]);
-
-  if (!href && items.length === 0) return null;
-  const jobsActive = Boolean(href && (pathname === href || pathname.startsWith(`${href}/`)));
-  const toggle = (
-    <button
-      type="button"
-      aria-label={open ? "Hide job work" : "Show job work"}
-      aria-expanded={open}
-      onClick={() => setOpen((value) => !value)}
-      className="grid h-8 w-8 flex-none place-items-center rounded-lg text-ink/60 transition-colors hover:bg-black/5 hover:text-ink"
-    >
-      <svg aria-hidden="true" viewBox="0 0 20 20" className={`h-4 w-4 transition-transform ${open ? "rotate-90" : ""}`} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <path d="m8 5 5 5-5 5" />
-      </svg>
-    </button>
-  );
-
-  return (
-    <div>
-      <div className="flex items-center gap-1">
-        <div className="min-w-0 flex-1">
-          {href ? (
-            <SubLink href={href} label="Jobs" active={jobsActive} />
-          ) : (
-            <button
-              type="button"
-              aria-expanded={open}
-              onClick={() => setOpen((value) => !value)}
-              className={`mb-0.5 block w-full whitespace-nowrap rounded-lg py-2 pl-3 pr-3 text-left text-sm transition-colors ${
-                childActive ? "font-semibold text-moss" : "text-ink/75 hover:bg-black/5 hover:text-ink"
-              }`}
-            >
-              Jobs
-            </button>
-          )}
-        </div>
-        {items.length > 0 ? toggle : null}
-      </div>
-      {open && items.length > 0 ? (
-        <div className="mb-1 ml-3 border-l border-black/10 pl-2">
-          {items.map(([item, label]) => (
-            <SubLink key={item} href={item} label={label} active={pathname === item || pathname.startsWith(`${item}/`)} />
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function roleLabel(role?: string) {
   if (!role) return "";
   const text = role.replace(/_/g, " ");
@@ -274,7 +214,7 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
 
   const insideClient = navClients?.find((client) => client.id === clientId) ?? null;
   const clientServices = insideClient
-    ? CLIENT_SERVICES.filter(([service]) => insideClient.enabledServices.includes(service) && canOpenService(user?.role, service))
+    ? CLIENT_SERVICES.filter(([service]) => insideClient.enabledServices.includes(service) && hasServicePage(service) && canOpenService(user?.role, service))
     : [];
   const timeActive =
     !pathname.startsWith("/mail") && !pathname.startsWith("/settings") && !pathname.startsWith("/chat") && !pathname.startsWith("/users");
@@ -330,13 +270,18 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
                         {insideClient ? (
                           <>
                             <p className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">{insideClient.name}</p>
-                            <JobsGroup
-                              href={clientServices.some(([service]) => service === "jobs") ? `/clients/${insideClient.id}/jobs` : null}
-                              items={clientServices
-                                .filter(([service]) => JOB_WORK.has(service))
-                                .map(([service, label]) => [`/clients/${insideClient.id}/${service}`, label] as const)}
-                              pathname={pathname}
-                            />
+                            {clientServices.some(([service]) => service === "jobs") ? (
+                              <SubLink href={`/clients/${insideClient.id}/jobs`} label="Jobs" active={under(pathname, `/clients/${insideClient.id}/jobs`)} />
+                            ) : null}
+                            {insideClient.enabledServices.some(
+                              (service) => (JOB_WORK.has(service) || WORK_ONLY_SERVICES.has(service)) && canOpenService(user?.role, service),
+                            ) ? (
+                              <SubLink
+                                href={`/clients/${insideClient.id}/floor-work`}
+                                label="Floor work"
+                                active={linkActive(pathname, `/clients/${insideClient.id}/floor-work`)}
+                              />
+                            ) : null}
                             {clientServices
                               .filter(([service]) => service !== "jobs" && !JOB_WORK.has(service))
                               .map(([service, label]) => {
@@ -360,17 +305,9 @@ export function DesktopShell({ children }: { children: React.ReactNode }) {
                       </>
                     ) : (
                       <>
-                        {linksFor(user?.role)
-                          .filter(([href]) => !isJobWork(href))
-                          .map(([href, label], index) => (
-                            <div key={href}>
-                              <SubLink href={href} label={label} active={linkActive(pathname, href)} />
-                              {/* Job work goes right after the first link (Floor), folded under Jobs. */}
-                              {index === 0 ? (
-                                <JobsGroup href={null} items={linksFor(user?.role).filter(([item]) => isJobWork(item))} pathname={pathname} />
-                              ) : null}
-                            </div>
-                          ))}
+                        {linksFor(user?.role).map(([href, label]) => (
+                          <SubLink key={href} href={href} label={label} active={linkActive(pathname, href)} />
+                        ))}
                         {user && user.role !== "external_customer" && user.role !== "client_services" ? (
                           <div className="mt-3 space-y-1.5 px-3 text-sm">
                             {/* Opens in a new tab: the station is a separate screen for iPads, not part of this app's menu. */}

@@ -33,6 +33,7 @@ import {
   updateEmployeeSchema,
 } from "@opsengine/contracts";
 import { authorize, can, ForbiddenError, type Principal, type RequestContext } from "@opsengine/kernel";
+import type { Department } from "@opsengine/contracts";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentPrincipal, CurrentUser } from "../auth/current-user.js";
 import { ZodPipe } from "../http.js";
@@ -60,7 +61,7 @@ export class TrackingController {
     body: {
       code: string;
       name: string;
-      department: "packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect";
+      department: Department;
       billable: boolean;
       clientId?: string;
     },
@@ -112,7 +113,7 @@ export class TrackingController {
   @UseGuards(StationAccessGuard)
   switchTask(
     @Body(new ZodPipe(switchTaskSchema))
-    body: { badge: string; department?: "packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect"; activityCode?: string; jobId?: string; taskId?: string },
+    body: { badge: string; department?: Department; activityCode?: string; jobId?: string; taskId?: string },
   ) {
     return this.tracking.switchTask(body.badge, body);
   }
@@ -220,9 +221,10 @@ export class TrackingController {
     body: {
       name: string;
       badgeCode: string;
-      departmentHome?: "packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect";
-      departments?: ("packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect")[];
+      departmentHome?: Department;
+      departments?: (Department)[];
       employmentType: "employee" | "temp";
+      agency?: string;
       clientId?: string;
     },
   ) {
@@ -236,7 +238,7 @@ export class TrackingController {
     @CurrentUser() ctx: RequestContext,
     @Param("id", new ParseUUIDPipe()) id: string,
     @Body(new ZodPipe(updateEmployeeSchema))
-    body: { name: string; badgeCode: string; departments: ("packing" | "picking" | "receiving" | "unloading" | "sorting" | "indirect")[] },
+    body: { name: string; badgeCode: string; departments: Department[]; employmentType?: "employee" | "temp"; agency?: string | null },
   ) {
     authorize(ctx, "tracking.manage");
     return this.tracking.updateEmployee(ctx.principal, id, body);

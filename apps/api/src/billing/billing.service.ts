@@ -21,6 +21,19 @@ import { assertClientService } from "../clients/access.js";
 import { DbService } from "../db.service.js";
 import { planLaborLines, type LaborSegment } from "./labor-lines.js";
 
+const HOURLY_LABELS: Record<HourlyService, string> = {
+  receiving: "Receiving",
+  unloading: "Unloading",
+  packing: "Packing",
+  picking: "Picking",
+  sorting: "Sorting",
+  qc: "Quality control",
+  putaway: "Putaway",
+  returns: "Returns",
+  replenishment: "Replenishment",
+  cycle_count: "Cycle count",
+};
+
 type Rate = typeof rateCards.$inferSelect;
 
 @Injectable()
@@ -85,7 +98,7 @@ export class BillingService {
         if (existing) await this.db.db.delete(rateCards).where(eq(rateCards.id, existing.id));
         continue;
       }
-      const label = `${entry.department.charAt(0).toUpperCase()}${entry.department.slice(1)} per hour`;
+      const label = `${HOURLY_LABELS[entry.department]} per hour`;
       if (existing) {
         await this.db.db.update(rateCards).set({ rateCents: entry.rateCents, label }).where(eq(rateCards.id, existing.id));
       } else {

@@ -41,13 +41,13 @@ const activityCatalog = [
   ["pack_orders", "Pack orders", "packing", true],
   ["pick_batch", "Pick batch", "picking", true],
   ["receive_shipment", "Count and receive", "receiving", true],
-  ["inspect", "Inspect", "receiving", true],
-  ["putaway", "Putaway", "receiving", true],
+  ["inspect", "Inspect", "qc", true],
+  ["putaway", "Putaway", "putaway", true],
   ["unload_trailer", "Unload trailer", "unloading", true],
   ["sort_gaylord", "Sort to carrier", "sorting", true],
   ["kitting", "Kitting", "packing", true],
   ["labeling", "Labeling", "packing", true],
-  ["returns", "Returns", "receiving", true],
+  ["returns", "Returns", "returns", true],
   ["indirect", "Internal work", "indirect", false],
 ] as const;
 

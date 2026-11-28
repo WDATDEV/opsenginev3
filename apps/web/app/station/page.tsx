@@ -3,10 +3,12 @@
 // The check-in station: a stand-alone screen for shared warehouse iPads.
 // Staff scan a badge, check in or out with a tap, and run their tasks. It links to nothing else in Ops Engine.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { addDays, browserZone, hm, todayLocal, weekLabel, type Approval, type Card } from "@/lib/timecards";
 import { FloorGate, type LinkedPhone } from "@/components/floor-access";
 import { Field, Notice } from "@/components/ui";
 import { api, ApiError, post, when } from "@/lib/api";
+import { shrinkPhoto } from "@/lib/photo";
 import { badgeFromScan } from "@/lib/qr";
 
 // A shared iPad goes back to the scan screen when nobody touches it for this long.
@@ -880,6 +882,7 @@ function Station({ phone }: { phone: LinkedPhone | null }) {
               )}
             </section>
           ) : null}
+          <ReportProblem key={context.employee.badgeCode} badge={badge} jobId={currentJobId} />
           </>
           )}
         </div>
@@ -942,6 +945,183 @@ function clockLabel(iso: string) {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
+const PROBLEM_KINDS = [
+  ["damage", "Damaged item"],
+  ["receiving_discrepancy", "Wrong count or item"],
+  ["missort", "Wrong carrier bin"],
+  ["inventory_discrepancy", "Stock not where it should be"],
+  ["other", "Something else"],
+] as const;
+
+/** Tell a manager something is wrong, with a photo if it helps. Tied to the job they are on. */
+function ReportProblem({ badge, jobId }: { badge: string; jobId: string | null }) {
+  const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState<string>("damage");
+  const [details, setDetails] = useState("");
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!open) {
+    return (
+      <div className="text-center">
+        {done ? <div className="mb-2"><Notice tone="ok">{done}</Notice></div> : null}
+        <button className="btn btn-ghost tap w-full" type="button" onClick={() => { setOpen(true); setDone(null); }}>
+          Report a problem
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form
+      className="card space-y-3 p-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        setSaving(true);
+        setError(null);
+        post<{ message: string }>(`/tracking/badge/${encodeURIComponent(badge)}/problem`, {
+          kind,
+          details,
+          ...(jobId ? { jobId } : {}),
+          ...(photo ? { photo } : {}),
+        })
+          .then((result) => {
+            setDone(result.message);
+            setOpen(false);
+            setDetails("");
+            setPhoto(null);
+          })
+          .catch((err) => setError(err instanceof ApiError ? err.message : "Could not send that."))
+          .finally(() => setSaving(false));
+      }}
+    >
+      <p className="font-semibold">What is wrong?</p>
+      <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Kind of problem">
+        {PROBLEM_KINDS.map(([code, label]) => (
+          <button
+            key={code}
+            type="button"
+            role="radio"
+            aria-checked={kind === code}
+            onClick={() => setKind(code)}
+            className={`min-h-11 rounded-full border px-3.5 text-sm font-medium ${kind === code ? "border-moss bg-moss text-paper" : "border-black/15 bg-white"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <textarea
+        className="field min-h-24"
+        required
+        minLength={3}
+        maxLength={2000}
+        value={details}
+        onChange={(event) => setDetails(event.target.value)}
+        placeholder="What you see: item, count, tracking number, where it is"
+        aria-label="What you see"
+      />
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="btn btn-ghost tap cursor-pointer">
+          {preparing ? "Preparing photo…" : photo ? "Retake photo" : "Take a photo"}
+          <input
+            className="sr-only"
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (!file) return;
+              setPreparing(true);
+              shrinkPhoto(file)
+                .then(setPhoto)
+                .catch((err: unknown) => setError(err instanceof Error ? err.message : "Could not read that photo."))
+                .finally(() => setPreparing(false));
+            }}
+          />
+        </label>
+        {photo ? <img src={photo} alt="Photo to send" className="h-16 w-16 rounded-lg object-cover" /> : null}
+      </div>
+      {error ? <Notice tone="bad">{error}</Notice> : null}
+      <div className="grid grid-cols-2 gap-3">
+        <button className="btn btn-ghost tap min-h-14" type="button" disabled={saving} onClick={() => setOpen(false)}>
+          Cancel
+        </button>
+        <button className="btn btn-primary tap min-h-14" type="submit" disabled={saving || preparing || details.trim().length < 3}>
+          {saving ? "Sending…" : "Send to manager"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+type MyWeek = { weekStart: string; card: Card; approval: Approval; corrections: number };
+
+/** Last week's paid hours, for the person to confirm. A manager's later correction asks them again. */
+function ConfirmLastWeek({ badge }: { badge: string }) {
+  const zone = browserZone();
+  const weekOf = addDays(todayLocal(), -7);
+  const [week, setWeek] = useState<MyWeek | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    fetch(`/api/tracking/badge/${encodeURIComponent(badge)}/timecard?weekOf=${weekOf}&tz=${encodeURIComponent(zone)}`)
+      .then(async (res) => (res.ok ? ((await res.json()) as MyWeek) : null))
+      .then(setWeek)
+      .catch(() => setWeek(null));
+  }, [badge, weekOf, zone]);
+
+  useEffect(load, [load]);
+
+  if (!week || week.card.paidMinutes === 0) return null;
+  const confirmed = Boolean(week.approval?.employeeConfirmedAt);
+
+  return (
+    <section className="card space-y-2 p-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="font-semibold">Last week · {weekLabel(week.weekStart)}</p>
+        <p className="font-mono text-lg font-semibold tabular-nums">{hm(week.card.paidMinutes)}</p>
+      </div>
+      <p className="text-sm text-muted">
+        Paid hours, meals taken out.
+        {week.corrections ? ` A manager corrected ${week.corrections} ${week.corrections === 1 ? "shift" : "shifts"}.` : ""}
+        {week.approval?.approvedAt ? " Approved by your manager." : ""}
+      </p>
+      {note ? <Notice tone="ok">{note}</Notice> : null}
+      {error ? <Notice tone="bad">{error}</Notice> : null}
+      {confirmed ? (
+        <p className="text-sm font-medium text-moss">You confirmed these hours.</p>
+      ) : week.card.openShifts > 0 ? (
+        <p className="text-sm text-muted">A shift from that week is still open. Ask a manager to fix it before confirming.</p>
+      ) : (
+        <button
+          className="btn btn-primary tap w-full"
+          type="button"
+          disabled={saving}
+          onClick={() => {
+            setSaving(true);
+            setError(null);
+            post<{ message: string }>(`/tracking/badge/${encodeURIComponent(badge)}/timecard/confirm`, { weekOf, tz: zone })
+              .then((result) => {
+                setNote(result.message);
+                load();
+              })
+              .catch((err) => setError(err instanceof ApiError ? err.message : "Could not confirm."))
+              .finally(() => setSaving(false));
+          }}
+        >
+          These hours are right — confirm
+        </button>
+      )}
+    </section>
+  );
+}
+
 /** The person's own shifts from the last 30 days: when they were in, and where the time went. */
 function PastRecords({ badge }: { badge: string }) {
   const [shifts, setShifts] = useState<PastShift[] | null>(null);
@@ -982,6 +1162,7 @@ function PastRecords({ badge }: { badge: string }) {
 
   return (
     <div className="space-y-3">
+      <ConfirmLastWeek badge={badge} />
       <dl className="grid grid-cols-2 gap-2 text-center text-sm">
         <div className="card px-2 py-3">
           <dt className="text-xs text-muted">Last 7 days</dt>

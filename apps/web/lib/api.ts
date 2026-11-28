@@ -88,11 +88,24 @@ export const CLIENT_SERVICES = [
   ["packing", "Packing"],
   ["picking", "Picking"],
   ["sorting", "Sorting"],
+  ["qc", "Quality control"],
+  ["putaway", "Putaway"],
+  ["returns", "Returns"],
+  ["replenishment", "Replenishment"],
+  ["cycle_count", "Cycle counts"],
   ["people", "People"],
   ["checkin", "Check-in"],
   ["reports", "Report"],
   ["invoices", "Invoices"],
 ] as const;
+
+// Billed work with no page of its own: it runs as tasks on Jobs. It is turned on in client settings,
+// but never gets a menu link.
+export const WORK_ONLY_SERVICES = new Set(["qc", "putaway", "returns", "replenishment", "cycle_count"]);
+
+export function hasServicePage(service: string) {
+  return !WORK_ONLY_SERVICES.has(service);
+}
 
 export const BILL_BASES = [
   ["mixed", "Time and quantity"],

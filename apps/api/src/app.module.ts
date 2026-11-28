@@ -22,6 +22,8 @@ import { FloorAccessGuard, FloorSessionGuard, StationAccessGuard } from "./track
 import { FloorDevicesController } from "./tracking/floor-devices.controller.js";
 import { FloorDevicesService } from "./tracking/floor-devices.service.js";
 import { SchedulerService } from "./tracking/scheduler.service.js";
+import { TimecardsController } from "./tracking/timecards.controller.js";
+import { TimecardsService } from "./tracking/timecards.service.js";
 import { TrackingController } from "./tracking/tracking.controller.js";
 import { TrackingService } from "./tracking/tracking.service.js";
 import { SectionGuard } from "./auth/section.guard.js";
@@ -35,6 +37,8 @@ import { GmailService } from "./mail/gmail.service.js";
 import { MailController } from "./mail/mail.controller.js";
 import { SettingsController } from "./settings/settings.controller.js";
 import { SettingsService } from "./settings/settings.service.js";
+import { CasesController } from "./work/cases.controller.js";
+import { CasesService } from "./work/cases.service.js";
 import { WorkController } from "./work/work.controller.js";
 import { WorkService } from "./work/work.service.js";
 
@@ -56,7 +60,9 @@ import { WorkService } from "./work/work.service.js";
     FloorDevicesController,
     EmployeePhonesController,
     TrackingController,
+    TimecardsController,
     WorkController,
+    CasesController,
     SettingsController,
     MailController,
     AutomationController,
@@ -75,12 +81,14 @@ import { WorkService } from "./work/work.service.js";
     FloorDevicesService,
     EmployeePhonesService,
     TrackingService,
+    TimecardsService,
     SchedulerService,
     JobsService,
     JobsChatService,
     BillingService,
     WarehanceDirectoryService,
     WorkService,
+    CasesService,
     SettingsService,
     GmailService,
     AutomationService,

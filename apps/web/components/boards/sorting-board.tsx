@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useSession } from "@/components/shell";
 import { Badge, EmptyRow, Field, Flash, Notice, PageTitle, SearchBox, Segmented, SkeletonList, Stat, StatGrid, isToday, useResource } from "@/components/ui";
 import { ApiError, canManage, post, when } from "@/lib/api";
+import { problemHref } from "@/lib/problems";
 
 type Gaylord = {
   id: string;
@@ -229,6 +230,11 @@ function BinCard({ gaylord, manage, onClose }: { gaylord: Gaylord; manage: boole
             {gaylord.carrier.toUpperCase()} · {gaylord.scans.length} {gaylord.scans.length === 1 ? "package" : "packages"}
           </p>
         </div>
+        {manage ? (
+          <a className="btn btn-ghost btn-sm" href={problemHref({ kind: "missort", gaylordId: gaylord.id, clientId: gaylord.clientId, title: `Bin ${gaylord.code}: ` })}>
+            Problem
+          </a>
+        ) : null}
         {manage && open ? (
           <button className="btn btn-ghost btn-sm" type="button" onClick={onClose}>
             Close

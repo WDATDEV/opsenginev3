@@ -206,6 +206,7 @@ export class JobsService {
 
   async close(principal: Principal, id: string) {
     const job = await this.requireJob(principal, id);
+    if (job.status === "done") throw new ConflictException("That job is already closed.");
     const open = await this.db.db
       .select({ id: segments.id })
       .from(segments)

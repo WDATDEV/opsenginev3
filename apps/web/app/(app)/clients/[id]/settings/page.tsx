@@ -9,7 +9,7 @@ import { ApiError, CLIENT_SERVICES, WORK_ONLY_SERVICES, canManage, canManageJobs
 import type { ClientRecord } from "@/components/client-dashboard";
 
 const SERVICE_HINT: Record<string, string> = {
-  jobs: "Billable project. Open a job, then receive and unload on those boards picking that job.",
+  jobs: "Billable project. Open a job, then pick that job on the Receiving and Unloading pages.",
   receiving: "Inbound counts. Turn on, then work on the Receiving page.",
   unloading: "Trailers. Turn on, then work on the Unloading page.",
   packing: "Who packed which order, recorded by badge.",
@@ -21,7 +21,7 @@ const SERVICE_HINT: Record<string, string> = {
   replenishment: "Refilling pick locations from reserve. Runs as tasks on Jobs.",
   cycle_count: "Counting stock by location. Runs as tasks on Jobs.",
   people: "Badges and which departments each person may work.",
-  checkin: "Clock in at the gate or floor phone.",
+  checkin: "Shows a Check-in page with this client's own staff. Clocking in works either way.",
   reports: "Hours and charges rolled up by job.",
   invoices: "Approved charges billed to this client.",
 };

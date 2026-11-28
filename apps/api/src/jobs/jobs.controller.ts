@@ -128,9 +128,17 @@ export class JobsController {
   }
 
   @Post(":id/done")
-  done(@CurrentUser() ctx: RequestContext, @Param("id") id: string) {
+  async done(@CurrentUser() ctx: RequestContext, @Param("id") id: string) {
     authorize(ctx, "job.manage");
-    return this.jobs.close(ctx.principal, id);
+    const closed = await this.jobs.close(ctx.principal, id);
+    try {
+      const billed = await this.billing.closeOut(ctx.principal, id, can(ctx.principal, "billing.approve"));
+      return { ...billed, message: `${closed.message} ${billed.message}` };
+    } catch (err) {
+      // The job is already closed. A billing problem is reported, not hidden, and does not reopen it.
+      const reason = err instanceof Error ? err.message : "Billing did not run.";
+      return { message: `${closed.message} No invoice was made: ${reason}` };
+    }
   }
 
   @Post(":id/charges")

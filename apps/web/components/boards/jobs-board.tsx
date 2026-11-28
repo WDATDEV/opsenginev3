@@ -590,7 +590,7 @@ export function JobsBoard({ client }: { client?: { id: string; name: string; cod
                             className="btn btn-ghost btn-sm"
                             type="button"
                             onClick={() => {
-                              if (window.confirm(`Close job ${job.reference}? Everyone must be paused first.`)) void act(`/jobs/${job.id}/done`, {});
+                              if (window.confirm(`Close job ${job.reference}? Everyone must be paused first. Its charges are drafted and, if you approve billing, invoiced.`)) void act(`/jobs/${job.id}/done`, {});
                             }}
                           >
                             Close job

@@ -17,7 +17,7 @@ import {
 } from "@opsengine/db";
 import type { HourlyService } from "@opsengine/contracts";
 import { assertClientVisible, type Principal } from "@opsengine/kernel";
-import { assertClientService } from "../clients/access.js";
+import { assertClientService, enabledServiceList } from "../clients/access.js";
 import { DbService } from "../db.service.js";
 import { planLaborLines, type LaborSegment } from "./labor-lines.js";
 
@@ -413,25 +413,68 @@ export class BillingService {
   async issueInvoice(principal: Principal, clientId: string, jobId?: string) {
     const client = await assertClientService(this.db.db, clientId, "invoices");
     assertClientVisible(principal, client.id);
-    const orm = this.db.db;
-    const ready = await orm
-      .select()
+    return this.db.db.transaction(async (tx) => {
+      // Two invoices made at once must not take the same number or the same charges.
+      await tx.select({ id: clientRecords.id }).from(clientRecords).where(eq(clientRecords.id, client.id)).for("update");
+      const ready = await tx
+        .select()
+        .from(charges)
+        .where(and(eq(charges.clientId, client.id), eq(charges.status, "approved"), isNull(charges.invoiceId)));
+      const chosen = jobId ? ready.filter((charge) => charge.jobId === jobId) : ready;
+      if (chosen.length === 0) {
+        throw new ConflictException("Approve the charges on a job before an invoice can be made.");
+      }
+      // Next number after the highest one used, so a gap or a removed invoice never repeats a number.
+      const prefix = `INV-${client.code}-`;
+      const numbers = await tx.select({ number: invoices.number }).from(invoices).where(eq(invoices.clientId, client.id));
+      const highest = numbers.reduce((max, row) => {
+        const n = row.number.startsWith(prefix) ? Number.parseInt(row.number.slice(prefix.length), 10) : NaN;
+        return Number.isFinite(n) && n > max ? n : max;
+      }, 0);
+      const number = `${prefix}${String(highest + 1).padStart(3, "0")}`;
+      const [created] = await tx.insert(invoices).values({ clientId: client.id, number, status: "open" }).returning();
+      if (!created) throw new ConflictException("Could not make that invoice.");
+      await tx
+        .update(charges)
+        .set({ invoiceId: created.id })
+        .where(and(inArray(charges.id, chosen.map((charge) => charge.id)), isNull(charges.invoiceId)));
+      const amount = chosen.reduce((sum, charge) => sum + charge.amountCents, 0);
+      const dollars = (amount / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+      return { id: created.id, message: `${created.number} is open for ${client.name}. ${dollars}.` };
+    });
+  }
+
+  /**
+   * Runs when a job closes: drafts its charges, then, for someone who may approve billing,
+   * approves this job's drafts and issues one invoice for the job. Someone who may not approve
+   * gets the drafts only, and they wait for approval as before.
+   */
+  async closeOut(principal: Principal, jobId: string, canApprove: boolean) {
+    const [job] = await this.db.db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
+    if (!job) throw new NotFoundException("That job is not on file.");
+    assertClientVisible(principal, job.clientId);
+    await this.generate(principal, job.id);
+
+    const [client] = await this.db.db.select().from(clientRecords).where(eq(clientRecords.id, job.clientId)).limit(1);
+    if (!client || !enabledServiceList(client.enabledServices).includes("invoices")) {
+      return { message: "Charges are drafted. Invoices are turned off for this client, so no invoice was made." };
+    }
+    if (!canApprove) {
+      return { message: "Charges are drafted. Someone who approves billing must approve them before an invoice is made." };
+    }
+    await this.db.db
+      .update(charges)
+      .set({ status: "approved" })
+      .where(and(eq(charges.jobId, job.id), eq(charges.status, "draft"), isNull(charges.invoiceId)));
+    const ready = await this.db.db
+      .select({ id: charges.id })
       .from(charges)
-      .where(and(eq(charges.clientId, client.id), eq(charges.status, "approved"), isNull(charges.invoiceId)));
-    const chosen = jobId ? ready.filter((charge) => charge.jobId === jobId) : ready;
-    if (chosen.length === 0) {
-      throw new ConflictException("Approve the charges on a job before an invoice can be made.");
+      .where(and(eq(charges.jobId, job.id), eq(charges.status, "approved"), isNull(charges.invoiceId)));
+    if (ready.length === 0) {
+      return { message: "No invoice was made because the job has no charges. Check the client's rates." };
     }
-    const existing = await orm.select({ id: invoices.id }).from(invoices).where(eq(invoices.clientId, client.id));
-    const number = `INV-${client.code}-${String(existing.length + 1).padStart(3, "0")}`;
-    const [created] = await orm.insert(invoices).values({ clientId: client.id, number, status: "open" }).returning();
-    if (!created) throw new ConflictException("Could not make that invoice.");
-    for (const charge of chosen) {
-      await orm.update(charges).set({ invoiceId: created.id }).where(eq(charges.id, charge.id));
-    }
-    const amount = chosen.reduce((sum, charge) => sum + charge.amountCents, 0);
-    const dollars = (amount / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
-    return { id: created.id, message: `${created.number} is open for ${client.name}. ${dollars}.` };
+    const invoice = await this.issueInvoice(principal, job.clientId, job.id);
+    return { message: invoice.message, invoiceId: invoice.id };
   }
 
   async markPaid(principal: Principal, invoiceId: string) {
